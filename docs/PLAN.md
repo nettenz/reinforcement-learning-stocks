@@ -1,5 +1,10 @@
 # Reinforcement Learning Trading Bot - Strategy Plan
 
+## Environment Notes
+- Use a local `.venv` virtual environment for development and execution.
+- Windows setup and run commands are documented in `README.md` and `docs/EXECUTION_PROCESS.md`.
+- macOS/Linux setup and run commands are documented in `README.md` and `docs/EXECUTION_PROCESS.md`.
+
 ## Phase 1: Basic Bot (Completed)
 - [x] Create custom Gymnasium environment (`src/trading_env.py`).
 - [x] Generate mock price data (`data/mock_data.csv`).

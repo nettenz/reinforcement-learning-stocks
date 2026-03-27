@@ -34,16 +34,40 @@ Build a repeatable pipeline that pulls Yahoo Finance OHLCV data for tech stocks,
 ## 4) Commands
 Use the project virtual environment and run the pipeline/training commands below.
 
+### 4.1 Create + activate environment
+
+Windows (PowerShell):
+
+```powershell
+cd D:\code\reinforcement-learning-stocks
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+macOS / Linux (Bash/Zsh):
+
 ```bash
-cd /Users/nettenz/Projects/agentic-dev/reinforcement-learning
-venv_darwin/bin/pip install -r requirements.txt
+cd /path/to/reinforcement-learning-stocks
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
 Refresh and inspect Yahoo Finance tech-stock training data:
 
+Windows (PowerShell):
+
+```powershell
+cd D:\code\reinforcement-learning-stocks
+python -c "from src.market_data import get_tech_training_data; df = get_tech_training_data(cache_path='data/tech_training_data.csv', refresh=True); print('rows:', len(df)); print('columns:', df.columns.tolist()); print(df.head(3).to_string(index=False))"
+```
+
+macOS / Linux (Bash/Zsh):
+
 ```bash
-cd /Users/nettenz/Projects/agentic-dev/reinforcement-learning
-venv_darwin/bin/python - <<'PY'
+cd /path/to/reinforcement-learning-stocks
+python - <<'PY'
 from src.market_data import get_tech_training_data
 
 df = get_tech_training_data(cache_path="data/tech_training_data.csv", refresh=True)
@@ -55,16 +79,34 @@ PY
 
 Run training:
 
+Windows (PowerShell):
+
+```powershell
+cd D:\code\reinforcement-learning-stocks
+python src/train_bot.py
+```
+
+macOS / Linux (Bash/Zsh):
+
 ```bash
-cd /Users/nettenz/Projects/agentic-dev/reinforcement-learning
-venv_darwin/bin/python src/train_bot.py
+cd /path/to/reinforcement-learning-stocks
+python src/train_bot.py
 ```
 
 Run smoke test:
 
+Windows (PowerShell):
+
+```powershell
+cd D:\code\reinforcement-learning-stocks
+python tests/test_script.py
+```
+
+macOS / Linux (Bash/Zsh):
+
 ```bash
-cd /Users/nettenz/Projects/agentic-dev/reinforcement-learning
-venv_darwin/bin/python tests/test_script.py
+cd /path/to/reinforcement-learning-stocks
+python tests/test_script.py
 ```
 
 ## 5) Key Concepts
