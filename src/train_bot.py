@@ -13,8 +13,8 @@ from src.trading_env import TradingEnv
 DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
 
-# Load normalized Yahoo Finance tech basket data (cached locally after first fetch)
-df = get_tech_training_data(cache_path=DATA_PATH)
+# Load normalized Yahoo Finance tech basket data with merged daily news sentiment features
+df = get_tech_training_data(cache_path=DATA_PATH, include_news=True)
 
 # Create the environment
 env = TradingEnv(df)

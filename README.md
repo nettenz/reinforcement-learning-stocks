@@ -10,7 +10,7 @@ This project focuses on building an RL-powered trading bot using **Gymnasium** a
 | macOS / Linux (Bash/Zsh) | `python3 -m venv .venv` | `source .venv/bin/activate` | `python -m pip install -r requirements.txt` | `python tests/test_script.py` |
 
 ## Project Structure
-- `src/`: core Python modules (`market_data.py`, `trading_env.py`, `train_bot.py`)
+- `src/`: core Python modules (`market_data.py`, `news_data.py`, `signal_analytics.py`, `trading_env.py`, `train_bot.py`)
 - `data/`: datasets and cached training frames
 - `models/`: trained model artifacts
 - `tests/`: smoke/integration scripts
@@ -32,13 +32,79 @@ This project focuses on building an RL-powered trading bot using **Gymnasium** a
 5.  **Run Smoke Test:** `python tests/test_script.py`
 6.  **Explore Basics:** Open `notebooks/getting-started.ipynb` in Jupyter.
 
+### Signal Analytics Dashboard (Streamlit)
+Use this dashboard to tune buy/sell signal accuracy against forward returns.
+
+1. Install dependencies (includes Streamlit): `python -m pip install -r requirements.txt`
+2. Run dashboard: `python -m streamlit run src/analytics_dashboard.py`
+3. In the sidebar:
+   - Set data path (`data/tech_training_data.csv` or `data/mock_data.csv`)
+   - Set model path (`models/ppo_trading_bot` or `.zip`)
+   - Tune movement threshold and prediction horizon
+4. Click **Run analytics** to view:
+    - overall/actionable accuracy
+    - buy/sell precision + recall
+    - confusion matrix and signal log
+    - action distribution and recent buy/sell points
+
+Dashboard sections:
+- `Signal Analytics`: evaluate a specific model's buy/sell quality.
+- `Experiments`: run aggressive multi-seed sweeps and inspect leaderboard results.
+
+PowerShell launcher (Windows):
+- Start: `.\run_dashboard.ps1 -Action start`
+- Status: `.\run_dashboard.ps1 -Action status`
+- Stop: `.\run_dashboard.ps1 -Action stop`
+- Custom port: `.\run_dashboard.ps1 -Action start -Port 8502`
+
+Bash launcher (macOS/Linux):
+- Start: `./run_dashboard.sh start 8501`
+- Status: `./run_dashboard.sh status 8501`
+- Stop: `./run_dashboard.sh stop 8501`
+
+### News Sentiment Data Pipeline
+Build daily ticker-level news sentiment features to feed future model training/tuning.
+
+Example (PowerShell):
+`python -c "from src.news_data import get_tech_news_features; df = get_tech_news_features(refresh=True); print(df.tail())"`
+
+Cached output:
+- `data/tech_news_sentiment_data.csv`
+
+Output columns:
+- `Ticker`, `Date`, `NewsCount`
+- `SentimentMean`, `SentimentStd`, `SentimentMin`, `SentimentMax`
+
+### Sentiment Integration in Training
+The training frame now merges daily news sentiment into market features.
+
+- `get_tech_training_data(include_news=True)` merges `tech_news_sentiment_data.csv` into the date-level basket.
+- Missing news days are filled with neutral defaults (`0.0` values).
+- `TradingEnv` automatically includes available sentiment columns in observations.
+- `train_bot.py` uses the merged frame by default.
+
+Reference:
+- `docs/SENTIMENT_INTEGRATION.md`
+
+### Aggressive Experiment Runner
+Run multi-seed PPO sweeps with walk-forward validation and leaderboard ranking.
+
+Example (fast smoke):
+`python src/experiments.py --include-news --seeds 7,13 --timesteps 2000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.0 --max-runs 2`
+
+Default outputs:
+- `data/experiment_leaderboard.csv`
+- `data/experiment_summary.json`
+
 ### macOS / Linux (Bash/Zsh)
 1.  **Create Virtual Env:** `python3 -m venv .venv`
 2.  **Activate Virtual Env:** `source .venv/bin/activate`
 3.  **Install Dependencies:** `python -m pip install -r requirements.txt`
 4.  **Run Training:** `python src/train_bot.py`
 5.  **Run Smoke Test:** `python tests/test_script.py`
-6.  **Explore Basics:** Open `notebooks/getting-started.ipynb` in Jupyter.
+6.  **Run Dashboard Launcher:** `chmod +x run_dashboard.sh && ./run_dashboard.sh start 8501`
+7.  **Run Experiments (example):** `python src/experiments.py --include-news --seeds 7,13 --timesteps 2000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.0 --max-runs 2`
+8.  **Explore Basics:** Open `notebooks/getting-started.ipynb` in Jupyter.
 
 ## Development Strategy:
 The long-term goal is to implement a robust **Shorting Strategy** (see `docs/PLAN.md`).

@@ -25,3 +25,14 @@ npm-debug.log*
 dist/
 build/
 coverage/
+
+# Runtime/dashboard artifacts
+.streamlit_dashboard.pid
+.streamlit_dashboard.log
+data/experiment_leaderboard.csv
+data/experiment_summary.json
+data/tech_news_sentiment_data.csv
+data/tech_training_data_no_news.csv
+data/tech_training_data_with_news.csv
+models/ppo_trading_bot_no_news.zip
+models/ppo_trading_bot_with_news.zip

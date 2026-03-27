@@ -6,11 +6,19 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from src.news_data import get_tech_news_features
 
 
 TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
+NEWS_FEATURE_COLUMNS = [
+    "NewsCount",
+    "SentimentMean",
+    "SentimentStd",
+    "SentimentMin",
+    "SentimentMax",
+]
 
 
 def fetch_yahoo_ohlcv(
@@ -97,21 +105,72 @@ def build_training_frame(normalized: pd.DataFrame) -> pd.DataFrame:
     return basket
 
 
+def merge_news_features(
+    training_data: pd.DataFrame,
+    news_features: pd.DataFrame,
+) -> pd.DataFrame:
+    required_training = {"Date"}
+    missing_training = required_training - set(training_data.columns)
+    if missing_training:
+        raise ValueError(f"Training frame missing fields: {sorted(missing_training)}")
+
+    required_news = {"Date", "NewsCount", "SentimentMean", "SentimentStd", "SentimentMin", "SentimentMax"}
+    missing_news = required_news - set(news_features.columns)
+    if missing_news:
+        raise ValueError(f"News frame missing fields: {sorted(missing_news)}")
+
+    weighted = news_features.copy()
+    weighted["WeightedSentiment"] = weighted["SentimentMean"] * weighted["NewsCount"]
+
+    daily_news = (
+        weighted.groupby("Date", as_index=False)
+        .agg(
+            NewsCount=("NewsCount", "sum"),
+            WeightedSentiment=("WeightedSentiment", "sum"),
+            SentimentStd=("SentimentStd", "mean"),
+            SentimentMin=("SentimentMin", "min"),
+            SentimentMax=("SentimentMax", "max"),
+        )
+        .sort_values("Date")
+        .reset_index(drop=True)
+    )
+    daily_news["SentimentMean"] = np.where(
+        daily_news["NewsCount"] > 0,
+        daily_news["WeightedSentiment"] / daily_news["NewsCount"],
+        0.0,
+    )
+    daily_news = daily_news.drop(columns=["WeightedSentiment"])
+
+    merged = training_data.merge(daily_news, on="Date", how="left")
+    fill_values = {col: 0.0 for col in NEWS_FEATURE_COLUMNS}
+    merged = merged.fillna(fill_values)
+    return merged
+
+
 def get_tech_training_data(
     cache_path: str | Path = DEFAULT_CACHE_PATH,
     tickers: Iterable[str] = TECH_TICKERS,
     start: str = "2018-01-01",
     end: str | None = None,
     interval: str = "1d",
+    include_news: bool = True,
+    news_refresh: bool = False,
     refresh: bool = False,
 ) -> pd.DataFrame:
     cache_file = Path(cache_path)
     if cache_file.exists() and not refresh:
         data = pd.read_csv(cache_file, parse_dates=["Date"])
+        if include_news and not set(NEWS_FEATURE_COLUMNS).issubset(data.columns):
+            news_features = get_tech_news_features(tickers=tickers, refresh=news_refresh)
+            data = merge_news_features(training_data=data, news_features=news_features)
+            data.to_csv(cache_file, index=False)
         return data
 
     raw = fetch_yahoo_ohlcv(tickers=tickers, start=start, end=end, interval=interval)
     normalized = parse_and_normalize_ohlcv(raw)
     training_data = build_training_frame(normalized)
+    if include_news:
+        news_features = get_tech_news_features(tickers=tickers, refresh=news_refresh)
+        training_data = merge_news_features(training_data=training_data, news_features=news_features)
     training_data.to_csv(cache_file, index=False)
     return training_data

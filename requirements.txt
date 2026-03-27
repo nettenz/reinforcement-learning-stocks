@@ -9,3 +9,4 @@ torchaudio
 jupyter
 ipykernel
 yfinance
+streamlit
