@@ -1,9 +1,9 @@
 # Reinforcement Learning Trading Bot - Strategy Plan
 
 ## Phase 1: Basic Bot (Completed)
-- [x] Create custom Gymnasium environment (`trading_env.py`).
-- [x] Generate mock price data (`mock_data.csv`).
-- [x] Implement PPO training script (`train_bot.py`).
+- [x] Create custom Gymnasium environment (`src/trading_env.py`).
+- [x] Generate mock price data (`data/mock_data.csv`).
+- [x] Implement PPO training script (`src/train_bot.py`).
 
 ## Phase 2: Shorting Strategy (Planned)
 ### Action Space (Position-Based)

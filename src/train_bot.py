@@ -1,9 +1,20 @@
+from pathlib import Path
+import sys
+
 from stable_baselines3 import PPO
-from market_data import get_tech_training_data
-from trading_env import TradingEnv
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from src.market_data import get_tech_training_data
+from src.trading_env import TradingEnv
+
+DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
+MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
 
 # Load normalized Yahoo Finance tech basket data (cached locally after first fetch)
-df = get_tech_training_data()
+df = get_tech_training_data(cache_path=DATA_PATH)
 
 # Create the environment
 env = TradingEnv(df)
@@ -16,8 +27,9 @@ print("Training the agent...")
 model.learn(total_timesteps=20000)
 
 # Save the trained model
-model.save("ppo_trading_bot")
-print("Model saved as ppo_trading_bot.zip")
+MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+model.save(MODEL_PATH.as_posix())
+print(f"Model saved as {MODEL_PATH.name}.zip")
 
 # Test the model
 obs, _ = env.reset()

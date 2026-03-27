@@ -4,15 +4,15 @@
 Build a repeatable pipeline that pulls Yahoo Finance OHLCV data for tech stocks, parses and normalizes it, then feeds it into PPO training.
 
 ## 2) Core Components
-- `market_data.py`
+- `src/market_data.py`
   - `fetch_yahoo_ohlcv(...)`: pulls raw OHLCV data per ticker from Yahoo Finance.
   - `parse_and_normalize_ohlcv(...)`: validates columns and normalizes features.
   - `build_training_frame(...)`: aggregates multiple tickers into one date-indexed basket.
-  - `get_tech_training_data(...)`: caches/reuses `tech_training_data.csv`.
-- `train_bot.py`
+  - `get_tech_training_data(...)`: caches/reuses `data/tech_training_data.csv`.
+- `src/train_bot.py`
   - Loads cached/fresh tech-stock training data via `get_tech_training_data()`.
   - Trains PPO with `TradingEnv`.
-- `trading_env.py`
+- `src/trading_env.py`
   - Uses normalized OHLCV values (`Open`, `High`, `Low`, `Close`, `Volume`) for observations.
   - Uses `RawClose` for trading execution price when available.
 
@@ -28,7 +28,7 @@ Build a repeatable pipeline that pulls Yahoo Finance OHLCV data for tech stocks,
    - `CloseNorm = pct_change(Close)`
    - `VolumeNorm = diff(log1p(Volume))`
 4. Aggregate cross-ticker basket by date (mean values).
-5. Save output to `tech_training_data.csv`.
+5. Save output to `data/tech_training_data.csv`.
 6. Train PPO on the resulting dataset.
 
 ## 4) Commands
@@ -44,9 +44,9 @@ Refresh and inspect Yahoo Finance tech-stock training data:
 ```bash
 cd /Users/nettenz/Projects/agentic-dev/reinforcement-learning
 venv_darwin/bin/python - <<'PY'
-from market_data import get_tech_training_data
+from src.market_data import get_tech_training_data
 
-df = get_tech_training_data(refresh=True)
+df = get_tech_training_data(cache_path="data/tech_training_data.csv", refresh=True)
 print("rows:", len(df))
 print("columns:", df.columns.tolist())
 print(df.head(3).to_string(index=False))
@@ -57,19 +57,19 @@ Run training:
 
 ```bash
 cd /Users/nettenz/Projects/agentic-dev/reinforcement-learning
-venv_darwin/bin/python train_bot.py
+venv_darwin/bin/python src/train_bot.py
 ```
 
 Run smoke test:
 
 ```bash
 cd /Users/nettenz/Projects/agentic-dev/reinforcement-learning
-venv_darwin/bin/python test_script.py
+venv_darwin/bin/python tests/test_script.py
 ```
 
 ## 5) Key Concepts
 - **Parsing**: convert raw provider output into consistent column types/shape.
 - **Normalization**: transform features to percentage/log-delta style values so training is less scale-sensitive.
 - **Basket aggregation**: combine multiple tech tickers into a single market signal series.
-- **Caching**: avoid unnecessary repeated network pulls with `tech_training_data.csv`.
+- **Caching**: avoid unnecessary repeated network pulls with `data/tech_training_data.csv`.
 - **Raw execution price**: keep `RawClose` for realistic buy/sell accounting while learning from normalized signals.

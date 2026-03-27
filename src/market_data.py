@@ -9,6 +9,8 @@ import yfinance as yf
 
 
 TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 
 
 def fetch_yahoo_ohlcv(
@@ -96,7 +98,7 @@ def build_training_frame(normalized: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_tech_training_data(
-    cache_path: str | Path = "tech_training_data.csv",
+    cache_path: str | Path = DEFAULT_CACHE_PATH,
     tickers: Iterable[str] = TECH_TICKERS,
     start: str = "2018-01-01",
     end: str | None = None,
