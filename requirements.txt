@@ -1,0 +1,11 @@
+gymnasium[box2d,atari]
+Shimmy[atari]
+numpy
+matplotlib
+stable-baselines3
+torch
+torchvision
+torchaudio
+jupyter
+ipykernel
+yfinance
