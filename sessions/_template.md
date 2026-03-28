@@ -37,6 +37,17 @@ Brief summary of what this session focused on and why.
    - `.\run_dashboard.ps1 -Action start -Port 8501`
 4. Verify behavior and continue from Next Steps.
 
+## Copilot resume prompt (Windows)
+```text
+I just resumed on Windows for reinforcement-learning-stocks.
+Please read sessions/<latest-session-file>.md first, then continue from "Next steps".
+Context:
+- I run the dashboard with .\run_dashboard.ps1 -Action start -Port 8501
+- Focus area: <fill this in>
+- Keep changes cross-platform (Windows + macOS)
+Before coding, summarize your understanding in 5 bullets, then implement.
+```
+
 ## Next steps
 - [ ] Next concrete task
 - [ ] Next concrete task
