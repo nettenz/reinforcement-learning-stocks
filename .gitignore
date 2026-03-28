@@ -29,6 +29,7 @@ coverage/
 # Runtime/dashboard artifacts
 .streamlit_dashboard.pid
 .streamlit_dashboard.log
+screenshots/
 data/experiment_leaderboard.csv
 data/experiment_summary.json
 data/tech_news_sentiment_data.csv

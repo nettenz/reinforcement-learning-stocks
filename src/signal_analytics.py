@@ -11,6 +11,9 @@ from src.trading_env import TradingEnv
 
 
 ACTION_LABELS = {0: "Hold", 1: "Buy", 2: "Sell"}
+MARKET_FEATURE_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
+NEWS_FEATURE_COLUMNS = ["NewsCount", "SentimentMean", "SentimentStd", "SentimentMin", "SentimentMax"]
+BASE_OBSERVATION_DIM = len(MARKET_FEATURE_COLUMNS) + 2  # account + shares held
 
 
 @dataclass(frozen=True)
@@ -42,21 +45,60 @@ def resolve_model_path(model_path: str | Path) -> Path:
     raise FileNotFoundError(f"Model not found at '{path}' or '{zip_path}'.")
 
 
+def _expected_observation_dim(model: PPO) -> int:
+    shape = getattr(model.observation_space, "shape", None)
+    if not shape or len(shape) != 1:
+        raise ValueError(f"Unsupported model observation space shape: {shape}")
+    return int(shape[0])
+
+
+def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> pd.DataFrame:
+    min_dim = BASE_OBSERVATION_DIM
+    max_dim = BASE_OBSERVATION_DIM + len(NEWS_FEATURE_COLUMNS)
+    if expected_obs_dim < min_dim or expected_obs_dim > max_dim:
+        raise ValueError(
+            f"Model expects observation size {expected_obs_dim}, but TradingEnv supports {min_dim}-{max_dim}. "
+            "Use a compatible model or data schema."
+        )
+
+    required_news_count = expected_obs_dim - BASE_OBSERVATION_DIM
+    selected_news_columns = NEWS_FEATURE_COLUMNS[:required_news_count]
+
+    aligned = df.copy()
+    for col in selected_news_columns:
+        if col not in aligned.columns:
+            aligned[col] = 0.0
+
+    extra_news_columns = [col for col in NEWS_FEATURE_COLUMNS if col not in selected_news_columns and col in aligned.columns]
+    if extra_news_columns:
+        aligned = aligned.drop(columns=extra_news_columns)
+
+    return aligned
+
+
 def simulate_agent_signals(
     df: pd.DataFrame,
     model_path: str | Path,
+    deterministic: bool = True,
 ) -> pd.DataFrame:
-    env = TradingEnv(df)
     model = PPO.load(resolve_model_path(model_path).as_posix())
+    expected_obs_dim = _expected_observation_dim(model)
+    aligned_df = _align_features_to_model(df, expected_obs_dim=expected_obs_dim)
+    env = TradingEnv(aligned_df)
+    actual_obs_dim = int(env.observation_space.shape[0])
+    if actual_obs_dim != expected_obs_dim:
+        raise ValueError(
+            f"Model expects observation shape ({expected_obs_dim},), but environment provides ({actual_obs_dim},)."
+        )
 
     obs, _ = env.reset()
     rows: list[dict[str, float | int | str | pd.Timestamp]] = []
 
     while True:
         step_idx = env.current_step
-        action, _ = model.predict(obs, deterministic=True)
-        current_price = float(df.loc[step_idx, env.price_column])
-        date_value = df.loc[step_idx, "Date"] if "Date" in df.columns else step_idx
+        action, _ = model.predict(obs, deterministic=deterministic)
+        current_price = float(aligned_df.loc[step_idx, env.price_column])
+        date_value = aligned_df.loc[step_idx, "Date"] if "Date" in aligned_df.columns else step_idx
 
         obs, reward, terminated, truncated, _ = env.step(int(action))
         rows.append(
@@ -169,4 +211,3 @@ def confusion_matrix(signal_df: pd.DataFrame) -> pd.DataFrame:
     )
     order = [ACTION_LABELS[0], ACTION_LABELS[1], ACTION_LABELS[2]]
     return matrix.reindex(index=order, columns=order, fill_value=0)
-
