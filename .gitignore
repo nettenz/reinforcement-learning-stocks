@@ -30,6 +30,13 @@ coverage/
 .streamlit_dashboard.pid
 .streamlit_dashboard.log
 screenshots/
+
+# Session notes (cross-environment)
+# Keep template and canonical handoff docs tracked.
+# Use sessions/local/ or *-local.md for machine-specific notes.
+sessions/local/
+sessions/*-local.md
+
 data/experiment_leaderboard.csv
 data/experiment_summary.json
 data/tech_news_sentiment_data.csv
