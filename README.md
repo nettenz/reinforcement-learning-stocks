@@ -30,7 +30,8 @@ This project focuses on building an RL-powered trading bot using **Gymnasium** a
 3.  **Install Dependencies:** `python -m pip install -r requirements.txt`
 4.  **Run Training:** `python src/train_bot.py`
 5.  **Run Smoke Test:** `python tests/test_script.py`
-6.  **Explore Basics:** Open `notebooks/getting-started.ipynb` in Jupyter.
+6.  **Run Streamlit Integration (Signal Analytics):** `python -m streamlit run src/analytics_dashboard.py`
+7.  **Explore Basics:** Open `notebooks/getting-started.ipynb` in Jupyter.
 
 ### Signal Analytics Dashboard (Streamlit)
 Use this dashboard to tune buy/sell signal accuracy against forward returns.
@@ -102,9 +103,10 @@ Default outputs:
 3.  **Install Dependencies:** `python -m pip install -r requirements.txt`
 4.  **Run Training:** `python src/train_bot.py`
 5.  **Run Smoke Test:** `python tests/test_script.py`
-6.  **Run Dashboard Launcher:** `chmod +x run_dashboard.sh && ./run_dashboard.sh start 8501`
-7.  **Run Experiments (example):** `python src/experiments.py --include-news --seeds 7,13 --timesteps 2000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.0 --max-runs 2`
-8.  **Explore Basics:** Open `notebooks/getting-started.ipynb` in Jupyter.
+6.  **Run Streamlit Integration (Signal Analytics):** `python -m streamlit run src/analytics_dashboard.py`
+7.  **Run Dashboard Launcher (optional):** `chmod +x run_dashboard.sh && ./run_dashboard.sh start 8501`
+8.  **Run Experiments (example):** `python src/experiments.py --include-news --seeds 7,13 --timesteps 2000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.0 --max-runs 2`
+9.  **Explore Basics:** Open `notebooks/getting-started.ipynb` in Jupyter.
 
 ## Development Strategy:
 The long-term goal is to implement a robust **Shorting Strategy** (see `docs/PLAN.md`).
