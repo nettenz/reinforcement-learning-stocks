@@ -203,4 +203,22 @@ next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-new
 - In Signal Analytics, run shorting-alignment diagnostics using recommended settings: threshold `0.0020`, horizon `1`, chart window `2000`.
 - If shorting misalignment persists, do one controlled A/B on `reward_direction_scale` (`0.35` vs `0.40`) at 20k/ent=0.02.
 
+---
+
+### **DELEGATED_RESULTS (2026-03-29 22:46:08Z)**
+run_label: champion-lock-final-validation
+snapshot_leaderboard_path: data\experiment_snapshots\experiment_leaderboard_20260329-224608Z_champion-lock-final-validation.csv
+best_seed: 34
+best_val_actionable_accuracy: 0.6119
+best_test_actionable_accuracy: 0.5303
+best_ranking_score: 0.5825
+best_test_cumulative_signal_return: 0.1732
+compare_vs_baseline: tied - Perfectly reproduced the previous champion performance (0.5303 test actionable for Seed 34) confirming environment stability and model reliability at 20k timesteps with ent_coef=0.02.
+next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-news --seeds 7,13,21,34,55,89,144,233 --timesteps 20000 --learning-rates 0.0003 --gammas 0.992 --ent-coefs 0.02 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-return-scale 1 --reward-direction-scale 0.40 --reward-hold-penalty-scale 0.04 --reward-drawdown-penalty-scale 0.1 --reward-action-bonus-scale 0.05 --run-label insights-direction-tune-20k --device cpu
+
+- **Champion Confirmed**: The 20k / ent=0.02 configuration reproduced its performance exactly, validating it as a stable baseline for future reward-scale optimizations.
+- **Accuracy Plateau**: Test actionable accuracy remains capped at ~0.53-0.54, suggesting that further gains may require architectural changes or more aggressive directional incentives.
+- **Stability Metrics**: All 8 seeds converged without collapse, confirming that ent_coef=0.02 is the optimal balance for exploration and stability in this state space.
+
+
 
