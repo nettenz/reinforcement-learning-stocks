@@ -51,6 +51,22 @@ Use this dashboard to tune buy/sell signal accuracy against forward returns.
 Dashboard sections:
 - `Signal Analytics`: evaluate a specific model's buy/sell quality.
 - `Experiments`: run aggressive multi-seed sweeps and inspect leaderboard results.
+- `Experiment Insights`: aggregate snapshot history, visualize val/test actionable-accuracy trends, and generate next-run commands.
+
+### Accuracy Improvement Workflow
+
+Follow this loop to iteratively improve actionable accuracy:
+
+1. **Experiment Insights** — run recommended commands (stability, accuracy, generalization)
+2. **Experiment Insights** — check updated trend; did collapse rate drop? did accuracy improve?
+3. **Signal Analytics** — if a run looks promising, inspect that model's buy/sell behavior in detail
+4. **Experiments** — optionally tweak knobs manually and re-run
+5. Repeat from step 1 until val/test actionable accuracy consistently hits target (default 0.55)
+
+**Key metrics to watch:**
+- Collapse rate (seeds with 0% actionable accuracy)
+- Val/test actionable accuracy gap (overfit risk)
+- Trade win rate stability across seeds
 
 PowerShell launcher (Windows):
 - Start: `.\run_dashboard.ps1 -Action start`
@@ -105,6 +121,12 @@ Default outputs:
 - `data/experiment_leaderboard.csv`
 - `data/experiment_reward_leaderboard.csv`
 - `data/experiment_summary.json`
+- Timestamped snapshots in `data/experiment_snapshots/` (enabled by default)
+
+Snapshot controls:
+- `--snapshot-dir`: set a custom snapshot directory
+- `--disable-snapshots`: keep overwrite-only behavior for this run
+- `--run-label`: append a readable suffix to snapshot filenames
 
 ### macOS / Linux (Bash/Zsh)
 1.  **Create Virtual Env:** `python3 -m venv .venv`

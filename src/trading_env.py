@@ -14,6 +14,7 @@ class TradingEnv(gym.Env):
         reward_direction_scale=0.35,
         reward_hold_penalty_scale=0.05,
         reward_drawdown_penalty_scale=0.10,
+        reward_action_bonus_scale=0.02,
         reward_clip=1.0,
         reward_ignore_transaction_cost=True,
     ):
@@ -26,6 +27,7 @@ class TradingEnv(gym.Env):
         self.reward_direction_scale = float(reward_direction_scale)
         self.reward_hold_penalty_scale = float(reward_hold_penalty_scale)
         self.reward_drawdown_penalty_scale = float(reward_drawdown_penalty_scale)
+        self.reward_action_bonus_scale = float(reward_action_bonus_scale)
         self.reward_clip = float(reward_clip)
         self.reward_ignore_transaction_cost = bool(reward_ignore_transaction_cost)
         self.current_step = 0
@@ -144,6 +146,8 @@ class TradingEnv(gym.Env):
 
         hold_penalty = -self.reward_hold_penalty_scale * abs(raw_step_return) if action == 0 else 0.0
 
+        action_bonus = self.reward_action_bonus_scale if action in (1, 2) else 0.0
+
         reward_peak = max(self.reward_peak_net_worth, reward_new_net_worth)
         drawdown = (reward_peak - reward_new_net_worth) / max(reward_peak, 1e-8)
         drawdown_penalty = -self.reward_drawdown_penalty_scale * drawdown
@@ -152,6 +156,7 @@ class TradingEnv(gym.Env):
             (self.reward_return_scale * portfolio_return)
             + (self.reward_direction_scale * directional_reward)
             + hold_penalty
+            + action_bonus
             + drawdown_penalty
         )
         reward = float(np.clip(reward, -self.reward_clip, self.reward_clip))
@@ -169,6 +174,7 @@ class TradingEnv(gym.Env):
             "reward_portfolio_return": float(self.reward_return_scale * portfolio_return),
             "reward_direction": float(self.reward_direction_scale * directional_reward),
             "reward_hold_penalty": float(hold_penalty),
+            "reward_action_bonus": float(action_bonus),
             "reward_drawdown_penalty": float(drawdown_penalty),
             "raw_step_return": float(raw_step_return),
             "reward_drawdown": float(drawdown),

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import itertools
 import json
 from pathlib import Path
+import re
 import sys
 
 import numpy as np
@@ -22,6 +24,7 @@ from src.trading_env import TradingEnv
 DEFAULT_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_leaderboard.csv"
 DEFAULT_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderboard.csv"
 DEFAULT_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary.json"
+DEFAULT_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots"
 
 
 def _parse_float_list(value: str) -> list[float]:
@@ -75,6 +78,7 @@ def _simulate_with_model(model: PPO, df: pd.DataFrame, env_kwargs: dict[str, flo
                 "reward_portfolio_return": float(info.get("reward_portfolio_return", 0.0)),
                 "reward_direction": float(info.get("reward_direction", 0.0)),
                 "reward_hold_penalty": float(info.get("reward_hold_penalty", 0.0)),
+                "reward_action_bonus": float(info.get("reward_action_bonus", 0.0)),
                 "reward_drawdown_penalty": float(info.get("reward_drawdown_penalty", 0.0)),
                 "reward_drawdown": float(info.get("reward_drawdown", 0.0)),
             }
@@ -93,6 +97,7 @@ def _summarize_rewards(signal_df: pd.DataFrame, prefix: str) -> dict[str, float]
             f"{prefix}_reward_portfolio_return_mean": 0.0,
             f"{prefix}_reward_direction_mean": 0.0,
             f"{prefix}_reward_hold_penalty_mean": 0.0,
+            f"{prefix}_reward_action_bonus_mean": 0.0,
             f"{prefix}_reward_drawdown_penalty_mean": 0.0,
             f"{prefix}_reward_drawdown_mean": 0.0,
         }
@@ -103,6 +108,7 @@ def _summarize_rewards(signal_df: pd.DataFrame, prefix: str) -> dict[str, float]
         f"{prefix}_reward_portfolio_return_mean": float(signal_df["reward_portfolio_return"].mean()),
         f"{prefix}_reward_direction_mean": float(signal_df["reward_direction"].mean()),
         f"{prefix}_reward_hold_penalty_mean": float(signal_df["reward_hold_penalty"].mean()),
+        f"{prefix}_reward_action_bonus_mean": float(signal_df.get("reward_action_bonus", pd.Series([0.0])).mean()),
         f"{prefix}_reward_drawdown_penalty_mean": float(signal_df["reward_drawdown_penalty"].mean()),
         f"{prefix}_reward_drawdown_mean": float(signal_df["reward_drawdown"].mean()),
     }
@@ -115,6 +121,65 @@ def _ranking_score(metrics_obj) -> float:
         + 0.30 * metrics_obj.trade_win_rate
         + 0.20 * cumulative_clipped
     )
+
+
+def _timestamp_slug() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+
+
+def _safe_label(label: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("_")
+    return sanitized[:80] if sanitized else "run"
+
+
+def write_experiment_outputs(
+    leaderboard: pd.DataFrame,
+    leaderboard_path: Path,
+    reward_leaderboard_path: Path,
+    summary_path: Path,
+    snapshot_dir: Path | None = DEFAULT_SNAPSHOT_DIR,
+    run_label: str | None = None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
+    reward_leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+
+    leaderboard.to_csv(leaderboard_path, index=False)
+    reward_leaderboard = leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
+    reward_leaderboard.to_csv(reward_leaderboard_path, index=False)
+
+    timestamp = _timestamp_slug()
+    summary: dict[str, object] = {
+        "rows": int(len(leaderboard)),
+        "generated_at_utc": timestamp,
+        "leaderboard_path": str(leaderboard_path),
+        "reward_leaderboard_path": str(reward_leaderboard_path),
+        "top3": leaderboard.head(3).to_dict(orient="records"),
+    }
+
+    if snapshot_dir is not None:
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        suffix = f"{timestamp}_{_safe_label(run_label)}" if run_label else timestamp
+        snapshot_leaderboard_path = snapshot_dir / f"experiment_leaderboard_{suffix}.csv"
+        snapshot_reward_leaderboard_path = snapshot_dir / f"experiment_reward_leaderboard_{suffix}.csv"
+        snapshot_summary_path = snapshot_dir / f"experiment_summary_{suffix}.json"
+
+        leaderboard.to_csv(snapshot_leaderboard_path, index=False)
+        reward_leaderboard.to_csv(snapshot_reward_leaderboard_path, index=False)
+        snapshot_summary = {
+            **summary,
+            "leaderboard_path": str(snapshot_leaderboard_path),
+            "reward_leaderboard_path": str(snapshot_reward_leaderboard_path),
+        }
+        snapshot_summary_path.write_text(json.dumps(snapshot_summary, indent=2), encoding="utf-8")
+        summary["snapshot_paths"] = {
+            "leaderboard": str(snapshot_leaderboard_path),
+            "reward_leaderboard": str(snapshot_reward_leaderboard_path),
+            "summary": str(snapshot_summary_path),
+        }
+
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return reward_leaderboard, summary
 
 
 def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
@@ -138,6 +203,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         "reward_direction_scale": args.reward_direction_scale,
         "reward_hold_penalty_scale": args.reward_hold_penalty_scale,
         "reward_drawdown_penalty_scale": args.reward_drawdown_penalty_scale,
+        "reward_action_bonus_scale": args.reward_action_bonus_scale,
         "reward_clip": args.reward_clip,
         "reward_ignore_transaction_cost": args.reward_ignore_transaction_cost,
     }
@@ -191,6 +257,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "reward_direction_scale": args.reward_direction_scale,
             "reward_hold_penalty_scale": args.reward_hold_penalty_scale,
             "reward_drawdown_penalty_scale": args.reward_drawdown_penalty_scale,
+            "reward_action_bonus_scale": args.reward_action_bonus_scale,
             "reward_clip": args.reward_clip,
             "reward_ignore_transaction_cost": int(args.reward_ignore_transaction_cost),
             "val_overall_accuracy": val_metrics.overall_accuracy,
@@ -231,6 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reward-direction-scale", type=float, default=0.35, help="Weight for directional-alignment reward term.")
     parser.add_argument("--reward-hold-penalty-scale", type=float, default=0.05, help="Penalty scale for hold during movement.")
     parser.add_argument("--reward-drawdown-penalty-scale", type=float, default=0.10, help="Penalty scale for drawdown term.")
+    parser.add_argument("--reward-action-bonus-scale", type=float, default=0.02, help="Bonus for taking Buy/Sell actions (anti-collapse).")
     parser.add_argument("--reward-clip", type=float, default=1.0, help="Reward clip bound applied symmetrically.")
     parser.add_argument(
         "--reward-ignore-transaction-cost",
@@ -242,6 +310,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--leaderboard-path", default=str(DEFAULT_LEADERBOARD_PATH), help="CSV output path.")
     parser.add_argument("--reward-leaderboard-path", default=str(DEFAULT_REWARD_LEADERBOARD_PATH), help="Reward leaderboard CSV output path.")
     parser.add_argument("--summary-path", default=str(DEFAULT_SUMMARY_PATH), help="JSON summary output path.")
+    parser.add_argument(
+        "--snapshot-dir",
+        default=str(DEFAULT_SNAPSHOT_DIR),
+        help="Directory for timestamped leaderboard/reward/summary snapshots.",
+    )
+    parser.add_argument("--disable-snapshots", action="store_true", help="Disable timestamped snapshot output files.")
+    parser.add_argument("--run-label", default="", help="Optional suffix label appended to snapshot filenames.")
     return parser
 
 
@@ -253,29 +328,28 @@ def main() -> None:
     leaderboard_path = Path(args.leaderboard_path)
     reward_leaderboard_path = Path(args.reward_leaderboard_path)
     summary_path = Path(args.summary_path)
-    leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
-    reward_leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-
-    leaderboard.to_csv(leaderboard_path, index=False)
-    reward_leaderboard = leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
-    reward_leaderboard.to_csv(reward_leaderboard_path, index=False)
+    snapshot_dir = None if args.disable_snapshots else Path(args.snapshot_dir)
+    run_label = args.run_label.strip() or None
+    reward_leaderboard, summary = write_experiment_outputs(
+        leaderboard=leaderboard,
+        leaderboard_path=leaderboard_path,
+        reward_leaderboard_path=reward_leaderboard_path,
+        summary_path=summary_path,
+        snapshot_dir=snapshot_dir,
+        run_label=run_label,
+    )
     top = leaderboard.head(3)
-    summary = {
-        "rows": int(len(leaderboard)),
-        "leaderboard_path": str(leaderboard_path),
-        "reward_leaderboard_path": str(reward_leaderboard_path),
-        "top3": top.to_dict(orient="records"),
-    }
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     print(f"Saved leaderboard: {leaderboard_path}")
     print(f"Saved reward leaderboard: {reward_leaderboard_path}")
     print(f"Saved summary: {summary_path}")
+    if "snapshot_paths" in summary:
+        snapshot_paths = summary["snapshot_paths"]
+        if isinstance(snapshot_paths, dict):
+            print(f"Saved snapshots: {snapshot_paths.get('leaderboard')}")
     print("Top run:")
     print(top.head(1).to_string(index=False))
 
 
 if __name__ == "__main__":
     main()
-

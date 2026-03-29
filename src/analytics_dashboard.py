@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
+from datetime import datetime, timezone
 from pathlib import Path
+import re
 
 import altair as alt
 import pandas as pd
@@ -11,8 +12,10 @@ import streamlit as st
 from src.experiments import (
     DEFAULT_LEADERBOARD_PATH,
     DEFAULT_REWARD_LEADERBOARD_PATH,
+    DEFAULT_SNAPSHOT_DIR,
     DEFAULT_SUMMARY_PATH,
     run_experiments,
+    write_experiment_outputs,
 )
 from src.signal_analytics import (
     ACTION_LABELS,
@@ -26,6 +29,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
 DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 FALLBACK_DATA_PATH = ROOT_DIR / "data" / "mock_data.csv"
+DEFAULT_ACTIONABLE_TARGET = 0.55
 
 
 @st.cache_data(show_spinner=False)
@@ -57,6 +61,222 @@ def evaluate_signals(
     enriched = enrich_with_truth_labels(signals, threshold=threshold, horizon_steps=horizon_steps)
     conf = confusion_matrix(enriched)
     return enriched, conf
+
+
+def _parse_snapshot_timestamp(path: Path) -> datetime:
+    match = re.search(r"(\d{8}-\d{6}Z?)", path.stem)
+    if match:
+        raw = match.group(1)
+        parsed_with_zone = pd.to_datetime(raw, format="%Y%m%d-%H%M%SZ", utc=True, errors="coerce")
+        if pd.notna(parsed_with_zone):
+            return parsed_with_zone.to_pydatetime()
+        parsed_without_zone = pd.to_datetime(raw, format="%Y%m%d-%H%M%S", utc=True, errors="coerce")
+        if pd.notna(parsed_without_zone):
+            return parsed_without_zone.to_pydatetime()
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+
+
+def _extract_snapshot_label(path: Path) -> str:
+    stem = path.stem
+    for prefix in ("experiment_leaderboard_", "leaderboard_"):
+        if stem.startswith(prefix):
+            stem = stem[len(prefix) :]
+            break
+    stem = re.sub(r"^\d{8}-\d{6}Z?_?", "", stem)
+    stem = stem.strip("_-")
+    return stem if stem else "unlabeled"
+
+
+def _format_float(value: float) -> str:
+    text = f"{float(value):.6f}".rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def _make_command_from_config(
+    config: dict[str, float | int | bool],
+    seeds: str,
+    run_label: str,
+) -> str:
+    seed_count = max(1, len([s for s in seeds.split(",") if s.strip()]))
+    ignore_cost_flag = (
+        "--reward-ignore-transaction-cost"
+        if bool(config["reward_ignore_transaction_cost"])
+        else "--no-reward-ignore-transaction-cost"
+    )
+    return (
+        "python src/experiments.py "
+        f"--include-news --seeds {seeds} "
+        f"--timesteps {int(config['timesteps'])} "
+        f"--learning-rates {_format_float(float(config['learning_rate']))} "
+        f"--gammas {_format_float(float(config['gamma']))} "
+        f"--ent-coefs {_format_float(float(config['ent_coef']))} "
+        f"--threshold {_format_float(float(config['threshold']))} "
+        f"--horizon {int(config['horizon'])} "
+        f"--transaction-cost-rate {_format_float(float(config['transaction_cost_rate']))} "
+        f"--trade-penalty {_format_float(float(config['trade_penalty']))} "
+        f"--reward-return-scale {_format_float(float(config['reward_return_scale']))} "
+        f"--reward-direction-scale {_format_float(float(config['reward_direction_scale']))} "
+        f"--reward-hold-penalty-scale {_format_float(float(config['reward_hold_penalty_scale']))} "
+        f"--reward-drawdown-penalty-scale {_format_float(float(config['reward_drawdown_penalty_scale']))} "
+        f"--reward-action-bonus-scale {_format_float(float(config['reward_action_bonus_scale']))} "
+        f"--reward-clip {_format_float(float(config['reward_clip']))} "
+        f"{ignore_cost_flag} "
+        f"--max-runs {seed_count} "
+        f"--run-label {run_label}"
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_experiment_history(snapshot_dir: str, leaderboard_path: str) -> pd.DataFrame:
+    snapshot_root = Path(snapshot_dir)
+    current_leaderboard_path = Path(leaderboard_path)
+    files: list[Path] = []
+
+    if snapshot_root.exists():
+        files.extend(sorted(snapshot_root.glob("*leaderboard*.csv")))
+    if current_leaderboard_path.exists():
+        files.append(current_leaderboard_path)
+
+    seen: set[Path] = set()
+    rows: list[pd.DataFrame] = []
+    for file_path in files:
+        if "reward" in file_path.name.lower():
+            continue
+        resolved = file_path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+
+        try:
+            run_df = pd.read_csv(file_path)
+        except Exception:
+            continue
+        if run_df.empty:
+            continue
+        if "ranking_score" in run_df.columns:
+            run_df = run_df.sort_values("ranking_score", ascending=False).reset_index(drop=True)
+
+        snapshot_time = _parse_snapshot_timestamp(file_path)
+        run_df["snapshot_id"] = file_path.name
+        run_df["snapshot_time"] = snapshot_time
+        run_df["snapshot_label"] = _extract_snapshot_label(file_path)
+        run_df["source_path"] = str(file_path)
+        run_df["row_rank"] = range(1, len(run_df) + 1)
+        rows.append(run_df)
+
+    if not rows:
+        return pd.DataFrame()
+
+    history = pd.concat(rows, ignore_index=True, sort=False)
+    history["snapshot_time"] = pd.to_datetime(history["snapshot_time"], utc=True, errors="coerce")
+    history = history.sort_values(["snapshot_time", "row_rank"], ascending=[True, True]).reset_index(drop=True)
+    return history
+
+
+def summarize_snapshot_bests(history: pd.DataFrame) -> pd.DataFrame:
+    if history.empty:
+        return history
+    if "ranking_score" in history.columns:
+        idx = history.groupby("snapshot_id")["ranking_score"].idxmax()
+    else:
+        idx = history.groupby("snapshot_id")["row_rank"].idxmin()
+    bests = history.loc[idx].copy().sort_values("snapshot_time").reset_index(drop=True)
+    bests["val_test_gap"] = bests["val_actionable_accuracy"] - bests["test_actionable_accuracy"]
+    return bests
+
+
+def _config_from_row(row: pd.Series) -> dict[str, float | int | bool]:
+    return {
+        "timesteps": int(row.get("timesteps", 5000)),
+        "learning_rate": float(row.get("learning_rate", 0.0003)),
+        "gamma": float(row.get("gamma", 0.99)),
+        "ent_coef": float(row.get("ent_coef", 0.0)),
+        "threshold": float(row.get("threshold", 0.002)),
+        "horizon": int(row.get("horizon", 1)),
+        "transaction_cost_rate": float(row.get("transaction_cost_rate", 0.001)),
+        "trade_penalty": float(row.get("trade_penalty", 0.05)),
+        "reward_return_scale": float(row.get("reward_return_scale", 1.0)),
+        "reward_direction_scale": float(row.get("reward_direction_scale", 0.35)),
+        "reward_hold_penalty_scale": float(row.get("reward_hold_penalty_scale", 0.05)),
+        "reward_drawdown_penalty_scale": float(row.get("reward_drawdown_penalty_scale", 0.10)),
+        "reward_action_bonus_scale": float(row.get("reward_action_bonus_scale", 0.02)),
+        "reward_clip": float(row.get("reward_clip", 1.0)),
+        "reward_ignore_transaction_cost": bool(int(row.get("reward_ignore_transaction_cost", 1))),
+    }
+
+
+def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds: str) -> list[dict[str, str]]:
+    if history.empty:
+        return []
+
+    best_row = history.sort_values("ranking_score", ascending=False).iloc[0]
+    recent = history.sort_values("snapshot_time").tail(min(30, len(history)))
+    recent_bests = summarize_snapshot_bests(history).tail(min(6, max(1, history["snapshot_id"].nunique())))
+
+    avg_val = float(recent_bests["val_actionable_accuracy"].mean())
+    avg_test = float(recent_bests["test_actionable_accuracy"].mean())
+    collapse_rate = float((recent["val_actionable_accuracy"] <= 0.01).mean())
+    avg_gap = float((recent_bests["val_actionable_accuracy"] - recent_bests["test_actionable_accuracy"]).mean())
+
+    base_cfg = _config_from_row(best_row)
+    recs: list[dict[str, str]] = []
+
+    stability_cfg = base_cfg.copy()
+    stability_cfg["timesteps"] = int(max(5000, int(base_cfg["timesteps"])))
+    stability_cfg["ent_coef"] = max(float(base_cfg["ent_coef"]), 0.01)
+    stability_cfg["reward_direction_scale"] = min(float(base_cfg["reward_direction_scale"]), 0.40)
+    stability_cfg["reward_hold_penalty_scale"] = min(float(base_cfg["reward_hold_penalty_scale"]), 0.03)
+    stability_cfg["reward_drawdown_penalty_scale"] = max(float(base_cfg["reward_drawdown_penalty_scale"]), 0.10)
+    stability_cfg["reward_action_bonus_scale"] = max(float(base_cfg["reward_action_bonus_scale"]), 0.03)
+    recs.append(
+        {
+            "title": "Stability-first retry",
+            "why": f"Recent collapse rate is {collapse_rate:.1%}; this setup pushes exploration and softer directional pressure.",
+            "command": _make_command_from_config(stability_cfg, seeds=seeds, run_label="insights-stability"),
+        }
+    )
+
+    accuracy_cfg = base_cfg.copy()
+    accuracy_cfg["timesteps"] = int(max(int(base_cfg["timesteps"]) + 2000, int(base_cfg["timesteps"] * 1.5)))
+    accuracy_cfg["reward_return_scale"] = min(2.0, float(base_cfg["reward_return_scale"]) + 0.10)
+    accuracy_cfg["reward_direction_scale"] = min(0.50, float(base_cfg["reward_direction_scale"]) + 0.05)
+    accuracy_cfg["ent_coef"] = max(0.005, float(base_cfg["ent_coef"]))
+    recs.append(
+        {
+            "title": "Accuracy push",
+            "why": (
+                f"Recent best means are val={avg_val:.3f}, test={avg_test:.3f}; "
+                f"target is {target:.2f}. This extends training while nudging directional signal weight."
+            ),
+            "command": _make_command_from_config(accuracy_cfg, seeds=seeds, run_label="insights-accuracy"),
+        }
+    )
+
+    generalization_cfg = base_cfg.copy()
+    if avg_gap > 0.05:
+        generalization_cfg["reward_direction_scale"] = max(0.25, float(base_cfg["reward_direction_scale"]) - 0.05)
+        generalization_cfg["reward_drawdown_penalty_scale"] = min(0.30, float(base_cfg["reward_drawdown_penalty_scale"]) + 0.03)
+        why_text = f"Val-test gap is {avg_gap:.3f}; this reduces likely overfit to validation dynamics."
+    else:
+        generalization_cfg["gamma"] = min(0.995, float(base_cfg["gamma"]) + 0.002)
+        generalization_cfg["reward_hold_penalty_scale"] = max(0.01, float(base_cfg["reward_hold_penalty_scale"]) - 0.01)
+        why_text = "Val/test are similarly low; this broadens credit assignment and avoids over-penalizing Hold."
+    recs.append(
+        {
+            "title": "Generalization check",
+            "why": why_text,
+            "command": _make_command_from_config(generalization_cfg, seeds=seeds, run_label="insights-generalization"),
+        }
+    )
+
+    unique_recs: list[dict[str, str]] = []
+    seen_cmds: set[str] = set()
+    for rec in recs:
+        if rec["command"] in seen_cmds:
+            continue
+        unique_recs.append(rec)
+        seen_cmds.add(rec["command"])
+    return unique_recs
 
 
 def compute_pnl_summary(enriched: pd.DataFrame) -> tuple[float, float]:
@@ -276,19 +496,64 @@ def render_charts(
     else:
         st.caption("No actionable Buy/Sell markers in the selected chart window.")
 
-    pnl_chart = (
+    # P&L chart with persistent hover label
+    chart_df["pnl_label"] = chart_df.apply(
+        lambda row: f"P&L: ${row['cumulative_pnl']:.2f} | Net worth: ${row['net_worth']:.2f}",
+        axis=1,
+    )
+    # Normalize extreme peaks for readability while preserving raw values in labels/tooltips.
+    pnl_series = chart_df["cumulative_pnl"].astype(float)
+    lower = float(pnl_series.quantile(0.05))
+    upper = float(pnl_series.quantile(0.95))
+    if upper <= lower:
+        chart_df["cumulative_pnl_visual"] = pnl_series
+    else:
+        clipped = pnl_series.clip(lower=lower, upper=upper)
+        chart_df["cumulative_pnl_visual"] = (clipped - lower) / (upper - lower)
+    hover_pnl = alt.selection_point(fields=[x_key], nearest=True, on="mouseover", empty=False, clear=False)
+
+    pnl_area = (
         alt.Chart(chart_df)
-        .mark_line(color="#f39c12")
+        .mark_area(color="#2ecc71", opacity=0.4, line={"color": "#27ae60", "strokeWidth": 2})
         .encode(
             x=alt.X(x_field, title=x_title),
-            y=alt.Y("cumulative_pnl:Q", title="Cumulative P&L"),
+            y=alt.Y("cumulative_pnl_visual:Q", title="Cumulative P&L (normalized)"),
+        )
+    )
+    pnl_points = (
+        alt.Chart(chart_df)
+        .mark_circle(size=0, opacity=0)
+        .encode(
+            x=x_field,
+            y="cumulative_pnl_visual:Q",
             tooltip=[
                 tooltip_x,
                 alt.Tooltip("cumulative_pnl:Q", title="Cumulative P&L", format=".2f"),
                 alt.Tooltip("net_worth:Q", title="Net worth", format=".2f"),
+                alt.Tooltip("action_label:N", title="Action"),
             ],
         )
+        .add_params(hover_pnl)
     )
+    pnl_hover_rule = (
+        alt.Chart(chart_df)
+        .transform_filter(hover_pnl)
+        .mark_rule(color="#9ca3af", strokeDash=[4, 4])
+        .encode(x=x_field)
+    )
+    pnl_hover_point = (
+        alt.Chart(chart_df)
+        .transform_filter(hover_pnl)
+        .mark_circle(size=120, color="#27ae60", stroke="white", strokeWidth=1.5)
+        .encode(x=x_field, y="cumulative_pnl_visual:Q")
+    )
+    pnl_hover_text = (
+        alt.Chart(chart_df)
+        .transform_filter(hover_pnl)
+        .mark_text(align="left", dx=10, dy=-12, fontSize=11, fontWeight="bold", color="#111827")
+        .encode(x=x_field, y="cumulative_pnl_visual:Q", text="pnl_label:N")
+    )
+    pnl_chart = alt.layer(pnl_area, pnl_points, pnl_hover_rule, pnl_hover_point, pnl_hover_text)
     st.altair_chart(pnl_chart.interactive(), width="stretch")
 
     if show_horizon_panel:
@@ -428,14 +693,21 @@ def render_experiments_page() -> None:
         reward_direction_scale = st.number_input("Reward: directional scale", min_value=0.0, max_value=5.0, value=0.35, step=0.05)
         reward_hold_penalty_scale = st.number_input("Reward: hold penalty scale", min_value=0.0, max_value=5.0, value=0.05, step=0.01)
         reward_drawdown_penalty_scale = st.number_input("Reward: drawdown penalty scale", min_value=0.0, max_value=5.0, value=0.10, step=0.01)
+        reward_action_bonus_scale = st.number_input("Reward: action bonus (anti-collapse)", min_value=0.0, max_value=1.0, value=0.02, step=0.01)
         reward_clip = st.number_input("Reward clip (+/-)", min_value=0.01, max_value=10.0, value=1.0, step=0.05)
         reward_ignore_transaction_cost = st.checkbox("Ignore transaction cost in reward", value=True)
+        run_label = st.text_input(
+            "Run label (for snapshot naming)",
+            value="dashboard",
+            help="Used in snapshot filenames to keep experiment themes clear (example: stability-ent001).",
+        )
         max_runs = st.number_input("Max runs (0=all)", min_value=0, max_value=200, value=10, step=1)
         run_experiment = st.button("Run experiments", type="primary", width="stretch", key="run_experiments")
 
     leaderboard_path = DEFAULT_LEADERBOARD_PATH
     reward_leaderboard_path = DEFAULT_REWARD_LEADERBOARD_PATH
     summary_path = DEFAULT_SUMMARY_PATH
+    snapshot_dir = DEFAULT_SNAPSHOT_DIR
 
     if run_experiment:
         args = argparse.Namespace(
@@ -457,6 +729,7 @@ def render_experiments_page() -> None:
             reward_direction_scale=float(reward_direction_scale),
             reward_hold_penalty_scale=float(reward_hold_penalty_scale),
             reward_drawdown_penalty_scale=float(reward_drawdown_penalty_scale),
+            reward_action_bonus_scale=float(reward_action_bonus_scale),
             reward_clip=float(reward_clip),
             reward_ignore_transaction_cost=bool(reward_ignore_transaction_cost),
             max_runs=int(max_runs),
@@ -469,16 +742,14 @@ def render_experiments_page() -> None:
             leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
             reward_leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
             summary_path.parent.mkdir(parents=True, exist_ok=True)
-            leaderboard.to_csv(leaderboard_path, index=False)
-            reward_leaderboard = leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
-            reward_leaderboard.to_csv(reward_leaderboard_path, index=False)
-            summary = {
-                "rows": int(len(leaderboard)),
-                "leaderboard_path": str(leaderboard_path),
-                "reward_leaderboard_path": str(reward_leaderboard_path),
-                "top3": leaderboard.head(3).to_dict(orient="records"),
-            }
-            summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            write_experiment_outputs(
+                leaderboard=leaderboard,
+                leaderboard_path=leaderboard_path,
+                reward_leaderboard_path=reward_leaderboard_path,
+                summary_path=summary_path,
+                snapshot_dir=snapshot_dir,
+                run_label=run_label.strip() or "dashboard",
+            )
         st.success(f"Experiments completed. Saved to `{leaderboard_path}`.")
 
     if not leaderboard_path.exists():
@@ -514,6 +785,145 @@ def render_experiments_page() -> None:
         st.code(summary_path.read_text(encoding="utf-8"), language="json")
 
 
+def render_experiment_insights_page() -> None:
+    st.header("Experiment Insights")
+    st.caption("Visualize snapshot history and generate next experiment commands to improve actionable accuracy.")
+
+    leaderboard_path = DEFAULT_LEADERBOARD_PATH
+    snapshot_dir = DEFAULT_SNAPSHOT_DIR
+
+    with st.sidebar:
+        st.subheader("Insights controls")
+        target_actionable = st.slider(
+            "Target actionable accuracy",
+            min_value=0.40,
+            max_value=0.80,
+            value=DEFAULT_ACTIONABLE_TARGET,
+            step=0.01,
+        )
+        recommendation_seeds = st.text_input("Recommendation seeds", value="7,13,21")
+
+    history = load_experiment_history(snapshot_dir=str(snapshot_dir), leaderboard_path=str(leaderboard_path))
+    if history.empty:
+        st.info("No experiment history found yet. Run experiments first to populate snapshots.")
+        return
+
+    bests = summarize_snapshot_bests(history)
+    if bests.empty:
+        st.info("History is present but no ranked rows were found.")
+        return
+
+    latest = bests.iloc[-1]
+    best_global = history.sort_values("ranking_score", ascending=False).iloc[0]
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Snapshots loaded", f"{bests['snapshot_id'].nunique()}")
+    c2.metric("Best val actionable", f"{float(best_global['val_actionable_accuracy']) * 100:.2f}%")
+    c3.metric("Best test actionable", f"{float(best_global['test_actionable_accuracy']) * 100:.2f}%")
+    c4.metric("Latest val/test", f"{float(latest['val_actionable_accuracy']) * 100:.2f}% / {float(latest['test_actionable_accuracy']) * 100:.2f}%")
+
+    trend_df = bests[
+        [
+            "snapshot_time",
+            "snapshot_label",
+            "val_actionable_accuracy",
+            "test_actionable_accuracy",
+            "ranking_score",
+            "val_trade_win_rate",
+            "test_trade_win_rate",
+        ]
+    ].copy()
+    trend_long = trend_df.melt(
+        id_vars=["snapshot_time", "snapshot_label"],
+        value_vars=["val_actionable_accuracy", "test_actionable_accuracy"],
+        var_name="split",
+        value_name="actionable_accuracy",
+    )
+    trend_long["split"] = trend_long["split"].map(
+        {
+            "val_actionable_accuracy": "Validation",
+            "test_actionable_accuracy": "Test",
+        }
+    )
+
+    st.subheader("1) Actionable Accuracy Trend (Best per Snapshot)")
+    trend_chart = (
+        alt.Chart(trend_long)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("snapshot_time:T", title="Snapshot time (UTC)"),
+            y=alt.Y("actionable_accuracy:Q", title="Actionable accuracy", scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color("split:N", title="Split"),
+            tooltip=[
+                alt.Tooltip("snapshot_time:T", title="Snapshot"),
+                alt.Tooltip("snapshot_label:N", title="Label"),
+                alt.Tooltip("split:N", title="Split"),
+                alt.Tooltip("actionable_accuracy:Q", title="Accuracy", format=".4f"),
+            ],
+        )
+    )
+    target_rule = (
+        alt.Chart(pd.DataFrame({"target": [target_actionable]}))
+        .mark_rule(color="#e74c3c", strokeDash=[4, 4])
+        .encode(y="target:Q")
+    )
+    st.altair_chart((trend_chart + target_rule).interactive(), width="stretch")
+
+    st.subheader("2) Ranking and Win-Rate Stability")
+    stability_long = trend_df.melt(
+        id_vars=["snapshot_time", "snapshot_label"],
+        value_vars=["ranking_score", "val_trade_win_rate", "test_trade_win_rate"],
+        var_name="metric",
+        value_name="value",
+    )
+    stability_chart = (
+        alt.Chart(stability_long)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("snapshot_time:T", title="Snapshot time (UTC)"),
+            y=alt.Y("value:Q", title="Metric value"),
+            color=alt.Color("metric:N", title="Metric"),
+            tooltip=[
+                alt.Tooltip("snapshot_time:T", title="Snapshot"),
+                alt.Tooltip("snapshot_label:N", title="Label"),
+                alt.Tooltip("metric:N", title="Metric"),
+                alt.Tooltip("value:Q", title="Value", format=".4f"),
+            ],
+        )
+    )
+    st.altair_chart(stability_chart.interactive(), width="stretch")
+
+    st.subheader("3) Recent Best Configs")
+    display_cols = [
+        "snapshot_time",
+        "snapshot_label",
+        "seed",
+        "timesteps",
+        "learning_rate",
+        "gamma",
+        "ent_coef",
+        "reward_return_scale",
+        "reward_direction_scale",
+        "reward_hold_penalty_scale",
+        "reward_drawdown_penalty_scale",
+        "val_actionable_accuracy",
+        "test_actionable_accuracy",
+        "ranking_score",
+    ]
+    visible_cols = [c for c in display_cols if c in bests.columns]
+    st.dataframe(bests[visible_cols].sort_values("snapshot_time", ascending=False), width="stretch")
+
+    st.subheader("4) Recommended Next Steps")
+    recs = build_next_step_recommendations(history=history, target=target_actionable, seeds=recommendation_seeds)
+    if not recs:
+        st.info("Not enough history to generate recommendations yet.")
+        return
+    for idx, rec in enumerate(recs, start=1):
+        st.markdown(f"**{idx}. {rec['title']}**")
+        st.write(rec["why"])
+        st.code(rec["command"], language="bash")
+
+
 def main() -> None:
     st.set_page_config(page_title="RL Signal Analytics Dashboard", layout="wide")
     st.title("RL Buy/Sell Signal Analytics")
@@ -522,7 +932,7 @@ def main() -> None:
     default_data = DEFAULT_DATA_PATH if DEFAULT_DATA_PATH.exists() else FALLBACK_DATA_PATH
     with st.sidebar:
         st.header("Global inputs")
-        page = st.radio("Section", options=["Signal Analytics", "Experiments"], index=0)
+        page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights"], index=0)
         data_path = st.text_input("Data CSV path", value=str(default_data))
         model_path = st.text_input("Model path (.zip optional)", value=str(DEFAULT_MODEL_PATH))
         threshold = st.slider("Movement threshold", min_value=0.0, max_value=0.05, value=0.002, step=0.001)
@@ -541,6 +951,10 @@ def main() -> None:
             horizon_steps=horizon_steps,
             deterministic_policy=deterministic_policy,
         )
+        return
+
+    if page == "Experiment Insights":
+        render_experiment_insights_page()
         return
 
     render_experiments_page()
