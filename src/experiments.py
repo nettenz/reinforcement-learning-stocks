@@ -20,6 +20,7 @@ from src.trading_env import TradingEnv
 
 
 DEFAULT_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_leaderboard.csv"
+DEFAULT_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderboard.csv"
 DEFAULT_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary.json"
 
 
@@ -51,7 +52,7 @@ def _split_walk_forward(df: pd.DataFrame, train_ratio: float, val_ratio: float) 
     return train_df, val_df, test_df
 
 
-def _simulate_with_model(model: PPO, df: pd.DataFrame, env_kwargs: dict[str, float]) -> pd.DataFrame:
+def _simulate_with_model(model: PPO, df: pd.DataFrame, env_kwargs: dict[str, float | bool]) -> pd.DataFrame:
     env = TradingEnv(df, **env_kwargs)
     obs, _ = env.reset()
     rows: list[dict[str, float | int | pd.Timestamp]] = []
@@ -62,7 +63,7 @@ def _simulate_with_model(model: PPO, df: pd.DataFrame, env_kwargs: dict[str, flo
         price = float(df.loc[step_idx, env.price_column])
         date_value = pd.to_datetime(df.loc[step_idx, "Date"]) if "Date" in df.columns else step_idx
 
-        obs, reward, terminated, truncated, _ = env.step(int(action))
+        obs, reward, terminated, truncated, info = env.step(int(action))
         rows.append(
             {
                 "step": step_idx,
@@ -71,12 +72,40 @@ def _simulate_with_model(model: PPO, df: pd.DataFrame, env_kwargs: dict[str, flo
                 "action": int(action),
                 "reward": float(reward),
                 "net_worth": float(env.net_worth),
+                "reward_portfolio_return": float(info.get("reward_portfolio_return", 0.0)),
+                "reward_direction": float(info.get("reward_direction", 0.0)),
+                "reward_hold_penalty": float(info.get("reward_hold_penalty", 0.0)),
+                "reward_drawdown_penalty": float(info.get("reward_drawdown_penalty", 0.0)),
+                "reward_drawdown": float(info.get("reward_drawdown", 0.0)),
             }
         )
         if terminated or truncated:
             break
 
     return pd.DataFrame(rows)
+
+
+def _summarize_rewards(signal_df: pd.DataFrame, prefix: str) -> dict[str, float]:
+    if signal_df.empty:
+        return {
+            f"{prefix}_reward_total_mean": 0.0,
+            f"{prefix}_reward_total_sum": 0.0,
+            f"{prefix}_reward_portfolio_return_mean": 0.0,
+            f"{prefix}_reward_direction_mean": 0.0,
+            f"{prefix}_reward_hold_penalty_mean": 0.0,
+            f"{prefix}_reward_drawdown_penalty_mean": 0.0,
+            f"{prefix}_reward_drawdown_mean": 0.0,
+        }
+
+    return {
+        f"{prefix}_reward_total_mean": float(signal_df["reward"].mean()),
+        f"{prefix}_reward_total_sum": float(signal_df["reward"].sum()),
+        f"{prefix}_reward_portfolio_return_mean": float(signal_df["reward_portfolio_return"].mean()),
+        f"{prefix}_reward_direction_mean": float(signal_df["reward_direction"].mean()),
+        f"{prefix}_reward_hold_penalty_mean": float(signal_df["reward_hold_penalty"].mean()),
+        f"{prefix}_reward_drawdown_penalty_mean": float(signal_df["reward_drawdown_penalty"].mean()),
+        f"{prefix}_reward_drawdown_mean": float(signal_df["reward_drawdown"].mean()),
+    }
 
 
 def _ranking_score(metrics_obj) -> float:
@@ -102,9 +131,15 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     )
     train_df, val_df, test_df = _split_walk_forward(df, train_ratio=args.train_ratio, val_ratio=args.val_ratio)
 
-    env_kwargs = {
+    env_kwargs: dict[str, float | bool] = {
         "transaction_cost_rate": args.transaction_cost_rate,
         "trade_penalty": args.trade_penalty,
+        "reward_return_scale": args.reward_return_scale,
+        "reward_direction_scale": args.reward_direction_scale,
+        "reward_hold_penalty_scale": args.reward_hold_penalty_scale,
+        "reward_drawdown_penalty_scale": args.reward_drawdown_penalty_scale,
+        "reward_clip": args.reward_clip,
+        "reward_ignore_transaction_cost": args.reward_ignore_transaction_cost,
     }
 
     configs = list(itertools.product(seeds, timesteps_list, learning_rates, gammas, ent_coefs))
@@ -138,30 +173,39 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         test_enriched = enrich_with_truth_labels(test_signals, threshold=args.threshold, horizon_steps=args.horizon)
         val_metrics = compute_metrics(val_enriched)
         test_metrics = compute_metrics(test_enriched)
+        val_reward = _summarize_rewards(val_signals, prefix="val")
+        test_reward = _summarize_rewards(test_signals, prefix="test")
 
-        rows.append(
-            {
-                "seed": seed,
-                "timesteps": timesteps,
-                "learning_rate": learning_rate,
-                "gamma": gamma,
-                "ent_coef": ent_coef,
-                "include_news": int(args.include_news),
-                "threshold": args.threshold,
-                "horizon": args.horizon,
-                "transaction_cost_rate": args.transaction_cost_rate,
-                "trade_penalty": args.trade_penalty,
-                "val_overall_accuracy": val_metrics.overall_accuracy,
-                "val_actionable_accuracy": val_metrics.actionable_accuracy,
-                "val_trade_win_rate": val_metrics.trade_win_rate,
-                "val_cumulative_signal_return": val_metrics.cumulative_signal_return,
-                "test_overall_accuracy": test_metrics.overall_accuracy,
-                "test_actionable_accuracy": test_metrics.actionable_accuracy,
-                "test_trade_win_rate": test_metrics.trade_win_rate,
-                "test_cumulative_signal_return": test_metrics.cumulative_signal_return,
-                "ranking_score": _ranking_score(val_metrics),
-            }
-        )
+        row: dict[str, float | int] = {
+            "seed": seed,
+            "timesteps": timesteps,
+            "learning_rate": learning_rate,
+            "gamma": gamma,
+            "ent_coef": ent_coef,
+            "include_news": int(args.include_news),
+            "threshold": args.threshold,
+            "horizon": args.horizon,
+            "transaction_cost_rate": args.transaction_cost_rate,
+            "trade_penalty": args.trade_penalty,
+            "reward_return_scale": args.reward_return_scale,
+            "reward_direction_scale": args.reward_direction_scale,
+            "reward_hold_penalty_scale": args.reward_hold_penalty_scale,
+            "reward_drawdown_penalty_scale": args.reward_drawdown_penalty_scale,
+            "reward_clip": args.reward_clip,
+            "reward_ignore_transaction_cost": int(args.reward_ignore_transaction_cost),
+            "val_overall_accuracy": val_metrics.overall_accuracy,
+            "val_actionable_accuracy": val_metrics.actionable_accuracy,
+            "val_trade_win_rate": val_metrics.trade_win_rate,
+            "val_cumulative_signal_return": val_metrics.cumulative_signal_return,
+            "test_overall_accuracy": test_metrics.overall_accuracy,
+            "test_actionable_accuracy": test_metrics.actionable_accuracy,
+            "test_trade_win_rate": test_metrics.trade_win_rate,
+            "test_cumulative_signal_return": test_metrics.cumulative_signal_return,
+            "ranking_score": _ranking_score(val_metrics),
+        }
+        row.update(val_reward)
+        row.update(test_reward)
+        rows.append(row)
 
     leaderboard = pd.DataFrame(rows).sort_values("ranking_score", ascending=False).reset_index(drop=True)
     return leaderboard
@@ -183,8 +227,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--val-ratio", type=float, default=0.15, help="Walk-forward validation ratio.")
     parser.add_argument("--transaction-cost-rate", type=float, default=0.001, help="Fee rate per executed trade.")
     parser.add_argument("--trade-penalty", type=float, default=0.05, help="Flat penalty per executed trade.")
+    parser.add_argument("--reward-return-scale", type=float, default=1.0, help="Weight for portfolio-return reward term.")
+    parser.add_argument("--reward-direction-scale", type=float, default=0.35, help="Weight for directional-alignment reward term.")
+    parser.add_argument("--reward-hold-penalty-scale", type=float, default=0.05, help="Penalty scale for hold during movement.")
+    parser.add_argument("--reward-drawdown-penalty-scale", type=float, default=0.10, help="Penalty scale for drawdown term.")
+    parser.add_argument("--reward-clip", type=float, default=1.0, help="Reward clip bound applied symmetrically.")
+    parser.add_argument(
+        "--reward-ignore-transaction-cost",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Exclude transaction costs/penalties from reward shaping while keeping execution unchanged.",
+    )
     parser.add_argument("--max-runs", type=int, default=0, help="Limit number of experiment runs (0 = all).")
     parser.add_argument("--leaderboard-path", default=str(DEFAULT_LEADERBOARD_PATH), help="CSV output path.")
+    parser.add_argument("--reward-leaderboard-path", default=str(DEFAULT_REWARD_LEADERBOARD_PATH), help="Reward leaderboard CSV output path.")
     parser.add_argument("--summary-path", default=str(DEFAULT_SUMMARY_PATH), help="JSON summary output path.")
     return parser
 
@@ -195,20 +251,26 @@ def main() -> None:
 
     leaderboard = run_experiments(args)
     leaderboard_path = Path(args.leaderboard_path)
+    reward_leaderboard_path = Path(args.reward_leaderboard_path)
     summary_path = Path(args.summary_path)
     leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
+    reward_leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
     leaderboard.to_csv(leaderboard_path, index=False)
+    reward_leaderboard = leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
+    reward_leaderboard.to_csv(reward_leaderboard_path, index=False)
     top = leaderboard.head(3)
     summary = {
         "rows": int(len(leaderboard)),
         "leaderboard_path": str(leaderboard_path),
+        "reward_leaderboard_path": str(reward_leaderboard_path),
         "top3": top.to_dict(orient="records"),
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     print(f"Saved leaderboard: {leaderboard_path}")
+    print(f"Saved reward leaderboard: {reward_leaderboard_path}")
     print(f"Saved summary: {summary_path}")
     print("Top run:")
     print(top.head(1).to_string(index=False))

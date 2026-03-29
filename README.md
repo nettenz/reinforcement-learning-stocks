@@ -93,8 +93,17 @@ Run multi-seed PPO sweeps with walk-forward validation and leaderboard ranking.
 Example (fast smoke):
 `python src/experiments.py --include-news --seeds 7,13 --timesteps 2000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.0 --max-runs 2`
 
+Reward design knobs (optional):
+- `--reward-return-scale`: weight on portfolio return term
+- `--reward-direction-scale`: weight on directional alignment with next-step movement
+- `--reward-hold-penalty-scale`: penalty for Hold during high-movement steps
+- `--reward-drawdown-penalty-scale`: penalty proportional to drawdown from reward-portfolio peak
+- `--reward-clip`: symmetric reward clipping bound
+- `--reward-ignore-transaction-cost` / `--no-reward-ignore-transaction-cost`: include or exclude fee/penalty effects in reward shaping
+
 Default outputs:
 - `data/experiment_leaderboard.csv`
+- `data/experiment_reward_leaderboard.csv`
 - `data/experiment_summary.json`
 
 ### macOS / Linux (Bash/Zsh)

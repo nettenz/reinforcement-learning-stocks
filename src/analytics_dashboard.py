@@ -8,7 +8,12 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from src.experiments import DEFAULT_LEADERBOARD_PATH, DEFAULT_SUMMARY_PATH, run_experiments
+from src.experiments import (
+    DEFAULT_LEADERBOARD_PATH,
+    DEFAULT_REWARD_LEADERBOARD_PATH,
+    DEFAULT_SUMMARY_PATH,
+    run_experiments,
+)
 from src.signal_analytics import (
     ACTION_LABELS,
     compute_metrics,
@@ -265,7 +270,7 @@ def render_charts(
         )
         layers.append(error_marks)
 
-    st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+    st.altair_chart(alt.layer(*layers).interactive(), width="stretch")
     if len(signal_df):
         st.caption("Tip: hover any Buy/Sell marker to pin the annotation; hover another marker to update it.")
     else:
@@ -284,7 +289,7 @@ def render_charts(
             ],
         )
     )
-    st.altair_chart(pnl_chart.interactive(), use_container_width=True)
+    st.altair_chart(pnl_chart.interactive(), width="stretch")
 
     if show_horizon_panel:
         horizon_chart = (
@@ -302,7 +307,7 @@ def render_charts(
                 ],
             )
         )
-        st.altair_chart(horizon_chart.interactive(), use_container_width=True)
+        st.altair_chart(horizon_chart.interactive(), width="stretch")
 
     display_time_col = "date" if has_valid_dates else "step"
     buy_points = chart_df[chart_df["action_label"] == ACTION_LABELS[1]][[display_time_col, "price"]].tail(20)
@@ -314,13 +319,13 @@ def render_charts(
         if buy_points.empty:
             st.info("No Buy signals were produced for this run.")
         else:
-            st.dataframe(buy_points, use_container_width=True)
+            st.dataframe(buy_points, width="stretch")
     with sell_col:
         st.write("Recent Sell signals")
         if sell_points.empty:
             st.info("No Sell signals were produced for this run.")
         else:
-            st.dataframe(sell_points, use_container_width=True)
+            st.dataframe(sell_points, width="stretch")
 
 
 def render_signal_analytics_page(
@@ -333,7 +338,7 @@ def render_signal_analytics_page(
     st.header("Signal Analytics")
     st.caption("Evaluate one trained policy against forward-move labels.")
     with st.sidebar:
-        run = st.button("Run analytics", type="primary", use_container_width=True, key="run_signal_analytics")
+        run = st.button("Run analytics", type="primary", width="stretch", key="run_signal_analytics")
         chart_window_rows = st.slider("Chart window (latest rows)", min_value=100, max_value=5000, value=1000, step=100)
         show_horizon_panel = st.toggle("Show horizon-return panel", value=True)
         show_error_markers = st.toggle("Highlight incorrect actionable signals", value=True)
@@ -375,12 +380,12 @@ def render_signal_analytics_page(
 
     st.subheader("4) Classification Quality")
     st.subheader("Confusion matrix (true signal vs predicted action)")
-    st.dataframe(conf, use_container_width=True)
+    st.dataframe(conf, width="stretch")
 
     st.subheader("5) Action Mix and P&L")
     st.write("Action distribution and P&L contribution by action")
     action_distribution = build_action_mix_table(enriched_view)
-    st.dataframe(action_distribution, use_container_width=True)
+    st.dataframe(action_distribution, width="stretch")
 
     st.subheader("6) Detailed Signal Log")
     st.dataframe(
@@ -399,7 +404,7 @@ def render_signal_analytics_page(
                 "is_correct",
             ]
         ],
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -419,10 +424,17 @@ def render_experiments_page() -> None:
         horizon = st.number_input("Eval horizon", min_value=1, max_value=10, value=1, step=1)
         transaction_cost_rate = st.number_input("Transaction cost rate", min_value=0.0, max_value=0.02, value=0.001, step=0.0005, format="%.4f")
         trade_penalty = st.number_input("Trade penalty", min_value=0.0, max_value=1.0, value=0.05, step=0.01)
+        reward_return_scale = st.number_input("Reward: portfolio-return scale", min_value=0.0, max_value=5.0, value=1.0, step=0.05)
+        reward_direction_scale = st.number_input("Reward: directional scale", min_value=0.0, max_value=5.0, value=0.35, step=0.05)
+        reward_hold_penalty_scale = st.number_input("Reward: hold penalty scale", min_value=0.0, max_value=5.0, value=0.05, step=0.01)
+        reward_drawdown_penalty_scale = st.number_input("Reward: drawdown penalty scale", min_value=0.0, max_value=5.0, value=0.10, step=0.01)
+        reward_clip = st.number_input("Reward clip (+/-)", min_value=0.01, max_value=10.0, value=1.0, step=0.05)
+        reward_ignore_transaction_cost = st.checkbox("Ignore transaction cost in reward", value=True)
         max_runs = st.number_input("Max runs (0=all)", min_value=0, max_value=200, value=10, step=1)
-        run_experiment = st.button("Run experiments", type="primary", use_container_width=True, key="run_experiments")
+        run_experiment = st.button("Run experiments", type="primary", width="stretch", key="run_experiments")
 
     leaderboard_path = DEFAULT_LEADERBOARD_PATH
+    reward_leaderboard_path = DEFAULT_REWARD_LEADERBOARD_PATH
     summary_path = DEFAULT_SUMMARY_PATH
 
     if run_experiment:
@@ -441,18 +453,29 @@ def render_experiments_page() -> None:
             val_ratio=0.15,
             transaction_cost_rate=float(transaction_cost_rate),
             trade_penalty=float(trade_penalty),
+            reward_return_scale=float(reward_return_scale),
+            reward_direction_scale=float(reward_direction_scale),
+            reward_hold_penalty_scale=float(reward_hold_penalty_scale),
+            reward_drawdown_penalty_scale=float(reward_drawdown_penalty_scale),
+            reward_clip=float(reward_clip),
+            reward_ignore_transaction_cost=bool(reward_ignore_transaction_cost),
             max_runs=int(max_runs),
             leaderboard_path=str(leaderboard_path),
+            reward_leaderboard_path=str(reward_leaderboard_path),
             summary_path=str(summary_path),
         )
         with st.spinner("Running experiments..."):
             leaderboard = run_experiments(args)
             leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
+            reward_leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
             summary_path.parent.mkdir(parents=True, exist_ok=True)
             leaderboard.to_csv(leaderboard_path, index=False)
+            reward_leaderboard = leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
+            reward_leaderboard.to_csv(reward_leaderboard_path, index=False)
             summary = {
                 "rows": int(len(leaderboard)),
                 "leaderboard_path": str(leaderboard_path),
+                "reward_leaderboard_path": str(reward_leaderboard_path),
                 "top3": leaderboard.head(3).to_dict(orient="records"),
             }
             summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -464,7 +487,7 @@ def render_experiments_page() -> None:
 
     leaderboard = pd.read_csv(leaderboard_path)
     st.subheader("1) Leaderboard")
-    st.dataframe(leaderboard, use_container_width=True)
+    st.dataframe(leaderboard, width="stretch")
 
     if len(leaderboard):
         st.subheader("2) Best Run Snapshot")
@@ -474,8 +497,20 @@ def render_experiments_page() -> None:
         c2.metric("Best val actionable acc", f"{best['val_actionable_accuracy'] * 100:.2f}%")
         c3.metric("Best test cumulative return", f"{best['test_cumulative_signal_return'] * 100:.2f}%")
 
+    if reward_leaderboard_path.exists():
+        reward_leaderboard = pd.read_csv(reward_leaderboard_path)
+        st.subheader("3) Reward Leaderboard")
+        st.dataframe(reward_leaderboard, width="stretch")
+        if len(reward_leaderboard):
+            st.subheader("4) Best Reward Snapshot")
+            best_reward = reward_leaderboard.iloc[0]
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Best val reward mean", f"{best_reward['val_reward_total_mean']:.5f}")
+            r2.metric("Best val direction reward", f"{best_reward['val_reward_direction_mean']:.5f}")
+            r3.metric("Best val drawdown", f"{best_reward['val_reward_drawdown_mean']:.5f}")
+
     if summary_path.exists():
-        st.subheader("3) Summary JSON")
+        st.subheader("5) Summary JSON")
         st.code(summary_path.read_text(encoding="utf-8"), language="json")
 
 
