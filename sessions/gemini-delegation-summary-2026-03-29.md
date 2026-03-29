@@ -95,3 +95,75 @@
 4. **Documentation**: Full methodology and results preserved in experiment snapshots
 
 **Delegation Status**: ✅ **COMPLETE & INTEGRATED**
+
+---
+
+### **DELEGATED_RESULTS (2026-03-29 20:15:00Z)**
+run_label: insights-generalization-15k
+snapshot_leaderboard_path: data\experiment_snapshots\experiment_leaderboard_20260329-200835Z_insights-generalization-15k.csv
+best_seed: 21
+best_val_actionable_accuracy: 0.5283
+best_test_actionable_accuracy: 0.5131
+best_ranking_score: 0.4698
+best_test_cumulative_signal_return: 0.3858
+compare_vs_baseline: mixed - Significantly higher test returns (0.38 vs 0.03) but slightly lower accuracy and ranking score compared to 10k baseline.
+next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-news --seeds 21,34,55,89 --timesteps 15000 --learning-rates 0.0003 --gammas 0.992 --ent-coefs 0.01 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-return-scale 1 --reward-direction-scale 0.35 --reward-hold-penalty-scale 0.04 --reward-drawdown-penalty-scale 0.1 --reward-action-bonus-scale 0.05 --run-label insights-expanded-15k --device cpu
+
+- Increased training time to 15k timesteps resulted in a dramatic improvement in test cumulative signal returns (10x increase for Seed 21), suggesting better exploitation of learned signals.
+- Stability remains a challenge as Seeds 7 and 13 continued to collapse, indicating that longer training alone does not resolve initialization-dependent convergence issues in this configuration.
+- The tradeoff between slightly lower actionable accuracy and significantly higher returns suggests the model is becoming more selective or effective in the trades it does execute at this horizon.
+
+---
+
+### **DELEGATED_RESULTS (2026-03-29 20:14:04Z)**
+run_label: insights-expanded-15k
+snapshot_leaderboard_path: data\experiment_snapshots\experiment_leaderboard_20260329-201404Z_insights-expanded-15k.csv
+best_seed: 89
+best_val_actionable_accuracy: 0.5957
+best_test_actionable_accuracy: 0.5303
+best_ranking_score: 0.5943
+best_test_cumulative_signal_return: 0.1732
+compare_vs_baseline: better - Improved test actionable accuracy to 0.5303 with stronger ranking score while maintaining positive test returns.
+next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-news --seeds 7,13,21,34,55,89,144,233 --timesteps 15000 --learning-rates 0.0003 --gammas 0.992 --ent-coefs 0.01 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-return-scale 1 --reward-direction-scale 0.35 --reward-hold-penalty-scale 0.04 --reward-drawdown-penalty-scale 0.1 --reward-action-bonus-scale 0.05 --run-label insights-expanded-15k-8seeds --device cpu
+
+- Lock `insights-expanded-15k` as the current champion and validate with 8 seeds to measure mean/std stability.
+- Keep this exact hyperparameter set fixed and run `timesteps=20000` after the 8-seed validation to test for additional actionable-accuracy lift.
+- Run a single entropy A/B (`ent_coef 0.01` vs `0.02`) on the same seed set to check if collapse frequency decreases without hurting test actionable.
+- Promote a new default only if mean `test_actionable_accuracy` improves and std drops; otherwise keep `insights-expanded-15k` as champion.
+
+---
+
+### **DELEGATED_RESULTS (2026-03-29 20:25:00Z)**
+run_label: insights-expanded-15k-8seeds
+snapshot_leaderboard_path: data\experiment_snapshots\experiment_leaderboard_20260329-201837Z_insights-expanded-15k-8seeds.csv
+best_seed: 233
+best_val_actionable_accuracy: 0.5957
+best_test_actionable_accuracy: 0.5385
+best_ranking_score: 0.5943
+best_test_cumulative_signal_return: 0.4219
+compare_vs_baseline: better - Increased best test actionable accuracy to 0.5385 and maintained strong test returns across more seeds.
+next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-news --seeds 7,13,21,34,55,89,144,233 --timesteps 20000 --learning-rates 0.0003 --gammas 0.992 --ent-coefs 0.01 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-return-scale 1 --reward-direction-scale 0.35 --reward-hold-penalty-scale 0.04 --reward-drawdown-penalty-scale 0.1 --reward-action-bonus-scale 0.05 --run-label insights-expanded-20k-8seeds --device cpu
+
+- **Scale to 20k timesteps**: Execute the `next_single_command` to test if the 15k champion configuration continues to gain actionable accuracy with more training time.
+- **Entropy Sensitivity Check**: Run a parallel 8-seed experiment with `ent_coef 0.02` to see if higher exploration improves the mean `test_actionable_accuracy` or further stabilizes the bottom-performing seeds.
+- **Horizon/Threshold Sensitivity**: If 20k plateaues, test a slightly higher `threshold` (0.003) or `horizon` (2) to see if the model can capture larger, more reliable moves.
+- **Production Deployment**: Given the zero-collapse 8-seed performance, update the project defaults in `src\train_bot.py` and `src\experiments.py` to match the `insights-expanded-15k` hyperparameters.
+
+---
+
+### **DELEGATED_RESULTS (2026-03-29 20:33:27Z)**
+run_label: insights-expanded-20k-8seeds-ent002
+snapshot_leaderboard_path: data\experiment_snapshots\experiment_leaderboard_20260329-203327Z_insights-expanded-20k-8seeds-ent002.csv
+best_seed: 34
+best_val_actionable_accuracy: 0.6070
+best_test_actionable_accuracy: 0.5381
+best_ranking_score: 0.6162
+best_test_cumulative_signal_return: 0.3904
+compare_vs_baseline: better - Mean test actionable improved over ent=0.01 at 20k with substantially higher mean ranking score; stability change is small and slightly mixed.
+next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-news --seeds 7,13,21,34,55,89,144,233 --timesteps 20000 --learning-rates 0.0003 --gammas 0.992 --ent-coefs 0.02 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-return-scale 1 --reward-direction-scale 0.35 --reward-hold-penalty-scale 0.04 --reward-drawdown-penalty-scale 0.1 --reward-action-bonus-scale 0.05 --run-label insights-expanded-20k-8seeds-ent002-retest --device cpu
+
+- Promote **candidate** entropy setting to `ent_coef=0.02` for the current 20k pipeline and run one explicit retest for confirmation.
+- Keep dashboard evaluation settings fixed for comparability: threshold `0.0020`, horizon `1`, chart window `2000`.
+- If retest confirms equal-or-better mean test actionable with stable std, set this as the champion experiment config; otherwise revert to `ent_coef=0.01`.
+- After champion confirmation, run one focused shorting-alignment check in Signal Analytics (Buy/Sell mix vs up/down moves) before changing reward scales.
+

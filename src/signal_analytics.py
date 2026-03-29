@@ -54,14 +54,16 @@ def _expected_observation_dim(model: PPO) -> int:
 
 def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> pd.DataFrame:
     min_dim = BASE_OBSERVATION_DIM
-    max_dim = BASE_OBSERVATION_DIM + len(NEWS_FEATURE_COLUMNS)
+    max_dim = BASE_OBSERVATION_DIM + len(NEWS_FEATURE_COLUMNS) + 1  # optional position feature
     if expected_obs_dim < min_dim or expected_obs_dim > max_dim:
         raise ValueError(
             f"Model expects observation size {expected_obs_dim}, but TradingEnv supports {min_dim}-{max_dim}. "
             "Use a compatible model or data schema."
         )
 
-    required_news_count = expected_obs_dim - BASE_OBSERVATION_DIM
+    includes_position = expected_obs_dim >= (BASE_OBSERVATION_DIM + 1)
+    required_news_count = expected_obs_dim - BASE_OBSERVATION_DIM - (1 if includes_position else 0)
+    required_news_count = max(0, required_news_count)
     selected_news_columns = NEWS_FEATURE_COLUMNS[:required_news_count]
 
     aligned = df.copy()
@@ -84,7 +86,8 @@ def simulate_agent_signals(
     model = PPO.load(resolve_model_path(model_path).as_posix())
     expected_obs_dim = _expected_observation_dim(model)
     aligned_df = _align_features_to_model(df, expected_obs_dim=expected_obs_dim)
-    env = TradingEnv(aligned_df)
+    include_position_in_observation = expected_obs_dim >= (BASE_OBSERVATION_DIM + 1)
+    env = TradingEnv(aligned_df, include_position_in_observation=include_position_in_observation)
     actual_obs_dim = int(env.observation_space.shape[0])
     if actual_obs_dim != expected_obs_dim:
         raise ValueError(

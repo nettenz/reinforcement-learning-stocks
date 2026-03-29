@@ -130,6 +130,39 @@ python tests\test_script.py
 4. Recommended default runtime config for next production run.
 5. Explicit “what to run next” command list (3–5 commands max).
 
+### Delegated experiments only (strict mode)
+If the delegation is intended to run experiments only, use this strict deliverable instead:
+
+1. **No code changes**. Do not edit files under `src\`, `tests\`, or configs.
+2. Run only the provided experiment commands exactly as written.
+3. Return a compact, machine-readable block named `DELEGATED_RESULTS` with:
+   - `run_label`
+   - `snapshot_leaderboard_path`
+   - `best_seed`
+   - `best_val_actionable_accuracy`
+   - `best_test_actionable_accuracy`
+   - `best_ranking_score`
+   - `best_test_cumulative_signal_return`
+   - `compare_vs_baseline` (better/worse/tied + one-line reason)
+   - `next_single_command` (exact command)
+4. Include no extra analysis outside `DELEGATED_RESULTS` except a 3-bullet plain-English summary.
+5. **Always append the latest `DELEGATED_RESULTS` block and 4 actionable next-step bullets to `sessions\gemini-delegation-summary-YYYY-MM-DD.md`** (create the date file if missing).
+
+Template:
+
+```text
+DELEGATED_RESULTS
+run_label: <value>
+snapshot_leaderboard_path: <value>
+best_seed: <value>
+best_val_actionable_accuracy: <value>
+best_test_actionable_accuracy: <value>
+best_ranking_score: <value>
+best_test_cumulative_signal_return: <value>
+compare_vs_baseline: <better|worse|tied> - <one line>
+next_single_command: <exact command>
+```
+
 ---
 
 ## Success criteria

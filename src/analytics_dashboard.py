@@ -30,6 +30,9 @@ DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
 DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 FALLBACK_DATA_PATH = ROOT_DIR / "data" / "mock_data.csv"
 DEFAULT_ACTIONABLE_TARGET = 0.55
+RECOMMENDED_THRESHOLD = 0.0020
+RECOMMENDED_HORIZON = 1
+RECOMMENDED_CHART_WINDOW = 2000
 
 
 @st.cache_data(show_spinner=False)
@@ -277,6 +280,65 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
         unique_recs.append(rec)
         seen_cmds.add(rec["command"])
     return unique_recs
+
+
+def build_experiment_interpretation(history: pd.DataFrame, target: float) -> dict[str, object]:
+    bests = summarize_snapshot_bests(history)
+    if bests.empty:
+        return {
+            "stage": "insufficient-history",
+            "summary": "Not enough experiment snapshots to infer trends.",
+            "findings": [],
+            "focus": "Run more snapshots before interpreting model behavior.",
+        }
+
+    recent_bests = bests.tail(min(6, len(bests)))
+    recent_rows = history.tail(min(30, len(history)))
+
+    latest = recent_bests.iloc[-1]
+    avg_val = float(recent_bests["val_actionable_accuracy"].mean())
+    avg_test = float(recent_bests["test_actionable_accuracy"].mean())
+    avg_gap = float((recent_bests["val_actionable_accuracy"] - recent_bests["test_actionable_accuracy"]).mean())
+    test_std = float(recent_bests["test_actionable_accuracy"].std(ddof=0)) if len(recent_bests) > 1 else 0.0
+    collapse_rate = float((recent_rows["val_actionable_accuracy"] <= 0.01).mean())
+
+    findings: list[str] = [
+        f"Recent best mean accuracy: val={avg_val:.3f}, test={avg_test:.3f}.",
+        f"Latest snapshot accuracy: val={float(latest['val_actionable_accuracy']):.3f}, test={float(latest['test_actionable_accuracy']):.3f}.",
+        f"Recent val-test gap: {avg_gap:+.3f}.",
+        f"Recent test stability (std): {test_std:.3f}.",
+    ]
+
+    if collapse_rate > 0:
+        findings.append(f"Collapse signatures (val actionable <= 1%) appeared in {collapse_rate:.1%} of recent runs.")
+
+    if avg_test >= target and abs(avg_gap) <= 0.03 and test_std <= 0.05:
+        stage = "healthy"
+        summary = "Model behavior looks healthy: near-target accuracy with stable generalization."
+        focus = "Prioritize scale-up (more timesteps/seeds) and stress-test across market regimes."
+    elif collapse_rate >= 0.20:
+        stage = "collapse-risk"
+        summary = "Model behavior suggests collapse risk: actionable decisions are dropping too often."
+        focus = "Run the stability-focused recommendation first, then re-check action mix."
+    elif avg_gap > 0.05:
+        stage = "overfit-risk"
+        summary = "Validation outperforms test by a meaningful margin; likely overfitting to split dynamics."
+        focus = "Run the generalization-focused recommendation first and tighten drawdown controls."
+    elif avg_test < target:
+        stage = "under-target"
+        summary = "Model is below target actionable accuracy and needs stronger signal extraction."
+        focus = "Run the accuracy-push recommendation first, then compare win-rate drift."
+    else:
+        stage = "mixed"
+        summary = "Signals are mixed: some progress, but stability and transfer are inconsistent."
+        focus = "Alternate stability and generalization recommendations before larger sweeps."
+
+    return {
+        "stage": stage,
+        "summary": summary,
+        "findings": findings,
+        "focus": focus,
+    }
 
 
 def compute_pnl_summary(enriched: pd.DataFrame) -> tuple[float, float]:
@@ -630,9 +692,20 @@ def render_signal_analytics_page(
 ) -> None:
     st.header("Signal Analytics")
     st.caption("Evaluate one trained policy against forward-move labels.")
+    st.info(
+        "Recommended dashboard settings: "
+        f"threshold={RECOMMENDED_THRESHOLD:.4f}, horizon={RECOMMENDED_HORIZON}, "
+        f"chart window={RECOMMENDED_CHART_WINDOW} rows."
+    )
     with st.sidebar:
         run = st.button("Run analytics", type="primary", width="stretch", key="run_signal_analytics")
-        chart_window_rows = st.slider("Chart window (latest rows)", min_value=100, max_value=5000, value=1000, step=100)
+        chart_window_rows = st.slider(
+            "Chart window (latest rows)",
+            min_value=100,
+            max_value=5000,
+            value=RECOMMENDED_CHART_WINDOW,
+            step=100,
+        )
         show_signal_labels = st.toggle("Show Buy/Sell text labels", value=False)
         signal_label_budget = st.slider("Signal label density", min_value=4, max_value=40, value=12, step=2)
         show_horizon_panel = st.toggle("Show horizon-return panel", value=True)
@@ -717,7 +790,14 @@ def render_experiments_page() -> None:
         learning_rates = st.text_input("Learning rates", value="0.0003,0.0001")
         gammas = st.text_input("Gammas", value="0.99,0.995")
         ent_coefs = st.text_input("Entropy coeffs", value="0.0,0.01")
-        threshold = st.number_input("Eval threshold", min_value=0.0, max_value=0.05, value=0.002, step=0.001)
+        threshold = st.number_input(
+            "Eval threshold",
+            min_value=0.0,
+            max_value=0.05,
+            value=RECOMMENDED_THRESHOLD,
+            step=0.0001,
+            format="%.4f",
+        )
         horizon = st.number_input("Eval horizon", min_value=1, max_value=10, value=1, step=1)
         transaction_cost_rate = st.number_input("Transaction cost rate", min_value=0.0, max_value=0.02, value=0.001, step=0.0005, format="%.4f")
         trade_penalty = st.number_input("Trade penalty", min_value=0.0, max_value=1.0, value=0.05, step=0.01)
@@ -945,7 +1025,22 @@ def render_experiment_insights_page() -> None:
     visible_cols = [c for c in display_cols if c in bests.columns]
     st.dataframe(bests[visible_cols].sort_values("snapshot_time", ascending=False), width="stretch")
 
-    st.subheader("4) Recommended Next Steps")
+    st.subheader("4) Model Interpretation")
+    interpretation = build_experiment_interpretation(history=history, target=target_actionable)
+    stage = str(interpretation["stage"])
+    summary = str(interpretation["summary"])
+    if stage == "healthy":
+        st.success(summary)
+    elif stage in {"collapse-risk", "overfit-risk"}:
+        st.warning(summary)
+    else:
+        st.info(summary)
+
+    for finding in interpretation["findings"]:
+        st.write(f"- {finding}")
+    st.caption(f"Recommended focus: {interpretation['focus']}")
+
+    st.subheader("5) Recommended Next Steps")
     recs = build_next_step_recommendations(history=history, target=target_actionable, seeds=recommendation_seeds)
     if not recs:
         st.info("Not enough history to generate recommendations yet.")
@@ -967,8 +1062,20 @@ def main() -> None:
         page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights"], index=0)
         data_path = st.text_input("Data CSV path", value=str(default_data))
         model_path = st.text_input("Model path (.zip optional)", value=str(DEFAULT_MODEL_PATH))
-        threshold = st.slider("Movement threshold", min_value=0.0, max_value=0.05, value=0.002, step=0.001)
-        horizon_steps = st.slider("Prediction horizon (steps)", min_value=1, max_value=10, value=1, step=1)
+        threshold = st.number_input(
+            "Movement threshold",
+            min_value=0.0,
+            max_value=0.05,
+            value=RECOMMENDED_THRESHOLD,
+            step=0.0001,
+            format="%.4f",
+            help="Higher precision enabled for threshold tuning.",
+        )
+        horizon_steps = st.slider("Prediction horizon (steps)", min_value=1, max_value=10, value=RECOMMENDED_HORIZON, step=1)
+        st.caption(
+            f"Recommended settings: threshold={RECOMMENDED_THRESHOLD:.4f}, "
+            f"horizon={RECOMMENDED_HORIZON}, chart window={RECOMMENDED_CHART_WINDOW}."
+        )
         deterministic_policy = st.toggle(
             "Deterministic policy (argmax action)",
             value=True,

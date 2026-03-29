@@ -12,6 +12,7 @@ import sys
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 import torch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -130,9 +131,31 @@ def _timestamp_slug() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
 
 
+def linear_schedule(initial_value: float):
+    """
+    Linear learning rate schedule.
+    :param initial_value: Initial learning rate.
+    :return: schedule that computes current learning rate depending on remaining progress
+    """
+    def func(progress_remaining: float) -> float:
+        """
+        Progress will decrease from 1 (beginning) to 0.
+        :param progress_remaining:
+        :return: current learning rate
+        """
+        return progress_remaining * initial_value
+    return func
+
+
 def _safe_label(label: str) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("_")
     return sanitized[:80] if sanitized else "run"
+
+
+def make_env(df, env_kwargs):
+    def _init():
+        return TradingEnv(df, **env_kwargs)
+    return _init
 
 
 def write_experiment_outputs(
@@ -223,18 +246,27 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             f"[{idx}/{len(configs)}] seed={seed} timesteps={timesteps} lr={learning_rate} "
             f"gamma={gamma} ent_coef={ent_coef}"
         )
-        env_train = TradingEnv(train_df, **env_kwargs)
+        lr_arg = linear_schedule(learning_rate) if args.use_lr_schedule else learning_rate
+        
+        if args.n_envs > 1:
+            env_train = SubprocVecEnv([make_env(train_df, env_kwargs) for _ in range(args.n_envs)])
+        else:
+            env_train = TradingEnv(train_df, **env_kwargs)
+            
         model = PPO(
             "MlpPolicy",
             env_train,
             verbose=0,
             seed=seed,
-            learning_rate=learning_rate,
+            learning_rate=lr_arg,
             gamma=gamma,
             ent_coef=ent_coef,
             device=DEFAULT_PPO_DEVICE,
         )
         model.learn(total_timesteps=timesteps)
+        
+        if args.n_envs > 1:
+            env_train.close()
 
         val_signals = _simulate_with_model(model, val_df, env_kwargs=env_kwargs)
         test_signals = _simulate_with_model(model, test_df, env_kwargs=env_kwargs)
@@ -322,6 +354,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-snapshots", action="store_true", help="Disable timestamped snapshot output files.")
     parser.add_argument("--run-label", default="", help="Optional suffix label appended to snapshot filenames.")
     parser.add_argument("--device", default=DEFAULT_PPO_DEVICE, help="PPO device (auto, cuda, cpu).")
+    parser.add_argument("--use-lr-schedule", action="store_true", help="Use linear learning rate decay.")
+    parser.add_argument("--n-envs", type=int, default=1, help="Number of parallel environments for vectorized training.")
     return parser
 
 

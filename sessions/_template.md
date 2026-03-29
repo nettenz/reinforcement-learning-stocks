@@ -69,6 +69,20 @@ Before coding, summarize your understanding in 5 bullets, then implement.
 - [ ] Next concrete task
 - [ ] Next concrete task
 
+## Dashboard Next Steps (standard format)
+Use this exact structure whenever dashboard tuning or experiment interpretation is part of the handoff.
+
+### Recommended dashboard settings
+- Threshold: `0.0020`
+- Prediction horizon: `1`
+- Chart window: `2000`
+
+### Actionable next steps (4 bullets)
+- [ ] Lock current best run label and compare against the immediate prior baseline snapshot.
+- [ ] Run one focused stability validation on expanded seeds before changing multiple hyperparameters.
+- [ ] Run one single-variable A/B (for example `ent_coef` or `timesteps`) and compare mean + std, not best seed only.
+- [ ] Promote defaults only if test actionable accuracy improves with equal or better stability.
+
 ## Commands reference
 - Start dashboard: `./run_dashboard.sh start 8501`
 - Stop dashboard: `./run_dashboard.sh stop 8501`
