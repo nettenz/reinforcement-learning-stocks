@@ -361,6 +361,8 @@ def render_charts(
     chart_window_rows: int,
     show_horizon_panel: bool,
     show_error_markers: bool,
+    show_signal_labels: bool,
+    signal_label_budget: int,
 ) -> None:
     st.subheader("Price and agent actions")
     chart_df = enriched[
@@ -397,10 +399,11 @@ def render_charts(
         x=alt.X(x_field, title=x_title),
         y=alt.Y("price:Q", title="Price"),
     )
-    line = base.mark_line(color="#7ecbff")
+    line = base.mark_line(color="#7ecbff", strokeWidth=1.8)
 
     signal_df = chart_df[chart_df["action_label"].isin([ACTION_LABELS[1], ACTION_LABELS[2]])].copy()
-    label_stride = max(1, len(signal_df) // 40) if len(signal_df) else 1
+    label_budget = max(1, int(signal_label_budget))
+    label_stride = max(1, len(signal_df) // label_budget) if len(signal_df) else 1
     label_df = signal_df.iloc[::label_stride].copy()
     if len(signal_df):
         label_df = pd.concat([label_df, signal_df.tail(1)], ignore_index=True).drop_duplicates(subset=[x_key], keep="last")
@@ -408,7 +411,7 @@ def render_charts(
     hover_signal = alt.selection_point(fields=[x_key], nearest=True, on="mouseover", empty=False, clear=False)
     signal_points = (
         alt.Chart(signal_df)
-        .mark_circle(size=70)
+        .mark_circle(size=44, opacity=0.78)
         .encode(
             x=x_field,
             y="price:Q",
@@ -428,22 +431,23 @@ def render_charts(
         )
         .add_params(hover_signal)
     )
-    signal_labels = (
-        alt.Chart(label_df)
-        .mark_text(dy=-10, fontSize=10)
-        .encode(
-            x=x_field,
-            y="price:Q",
-            text="action_label:N",
-            color=alt.Color(
-                "action_label:N",
-                legend=None,
-                scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#2ecc71", "#e74c3c"]),
-            ),
+    layers: list[alt.Chart] = [line, signal_points]
+    if show_signal_labels and len(label_df):
+        signal_labels = (
+            alt.Chart(label_df)
+            .mark_text(dy=-10, fontSize=10, fontWeight="bold")
+            .encode(
+                x=x_field,
+                y="price:Q",
+                text="action_label:N",
+                color=alt.Color(
+                    "action_label:N",
+                    legend=None,
+                    scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#2ecc71", "#e74c3c"]),
+                ),
+            )
         )
-    )
-
-    layers: list[alt.Chart] = [line, signal_points, signal_labels]
+        layers.append(signal_labels)
     if len(signal_df):
         hover_rule = alt.Chart(signal_df).transform_filter(hover_signal).mark_rule(color="#9ca3af", strokeDash=[4, 4]).encode(x=x_field)
         hover_point = (
@@ -501,24 +505,39 @@ def render_charts(
         lambda row: f"P&L: ${row['cumulative_pnl']:.2f} | Net worth: ${row['net_worth']:.2f}",
         axis=1,
     )
-    # Normalize extreme peaks for readability while preserving raw values in labels/tooltips.
-    pnl_series = chart_df["cumulative_pnl"].astype(float)
-    lower = float(pnl_series.quantile(0.05))
-    upper = float(pnl_series.quantile(0.95))
-    if upper <= lower:
-        chart_df["cumulative_pnl_visual"] = pnl_series
-    else:
-        clipped = pnl_series.clip(lower=lower, upper=upper)
-        chart_df["cumulative_pnl_visual"] = (clipped - lower) / (upper - lower)
+    chart_df["cumulative_pnl_visual"] = chart_df["cumulative_pnl"].astype(float)
+    chart_df["cumulative_pnl_positive"] = chart_df["cumulative_pnl_visual"].clip(lower=0)
+    chart_df["cumulative_pnl_negative"] = chart_df["cumulative_pnl_visual"].clip(upper=0)
     hover_pnl = alt.selection_point(fields=[x_key], nearest=True, on="mouseover", empty=False, clear=False)
 
-    pnl_area = (
+    pnl_area_positive = (
         alt.Chart(chart_df)
-        .mark_area(color="#2ecc71", opacity=0.4, line={"color": "#27ae60", "strokeWidth": 2})
+        .mark_area(color="#2ecc71", opacity=0.28)
         .encode(
             x=alt.X(x_field, title=x_title),
-            y=alt.Y("cumulative_pnl_visual:Q", title="Cumulative P&L (normalized)"),
+            y=alt.Y("cumulative_pnl_positive:Q", title="Cumulative P&L"),
         )
+    )
+    pnl_area_negative = (
+        alt.Chart(chart_df)
+        .mark_area(color="#e74c3c", opacity=0.20)
+        .encode(
+            x=alt.X(x_field, title=x_title),
+            y=alt.Y("cumulative_pnl_negative:Q", title="Cumulative P&L"),
+        )
+    )
+    pnl_line = (
+        alt.Chart(chart_df)
+        .mark_line(color="#27ae60", strokeWidth=2)
+        .encode(
+            x=alt.X(x_field, title=x_title),
+            y=alt.Y("cumulative_pnl_visual:Q", title="Cumulative P&L"),
+        )
+    )
+    pnl_zero = (
+        alt.Chart(pd.DataFrame({"zero": [0]}))
+        .mark_rule(color="#9ca3af", opacity=0.45, strokeDash=[5, 4])
+        .encode(y="zero:Q")
     )
     pnl_points = (
         alt.Chart(chart_df)
@@ -553,7 +572,16 @@ def render_charts(
         .mark_text(align="left", dx=10, dy=-12, fontSize=11, fontWeight="bold", color="#111827")
         .encode(x=x_field, y="cumulative_pnl_visual:Q", text="pnl_label:N")
     )
-    pnl_chart = alt.layer(pnl_area, pnl_points, pnl_hover_rule, pnl_hover_point, pnl_hover_text)
+    pnl_chart = alt.layer(
+        pnl_zero,
+        pnl_area_negative,
+        pnl_area_positive,
+        pnl_line,
+        pnl_points,
+        pnl_hover_rule,
+        pnl_hover_point,
+        pnl_hover_text,
+    )
     st.altair_chart(pnl_chart.interactive(), width="stretch")
 
     if show_horizon_panel:
@@ -605,6 +633,8 @@ def render_signal_analytics_page(
     with st.sidebar:
         run = st.button("Run analytics", type="primary", width="stretch", key="run_signal_analytics")
         chart_window_rows = st.slider("Chart window (latest rows)", min_value=100, max_value=5000, value=1000, step=100)
+        show_signal_labels = st.toggle("Show Buy/Sell text labels", value=False)
+        signal_label_budget = st.slider("Signal label density", min_value=4, max_value=40, value=12, step=2)
         show_horizon_panel = st.toggle("Show horizon-return panel", value=True)
         show_error_markers = st.toggle("Highlight incorrect actionable signals", value=True)
 
@@ -633,6 +663,8 @@ def render_signal_analytics_page(
         chart_window_rows=chart_window_rows,
         show_horizon_panel=show_horizon_panel,
         show_error_markers=show_error_markers,
+        show_signal_labels=show_signal_labels,
+        signal_label_budget=signal_label_budget,
     )
 
     st.subheader("2) Performance Summary")
