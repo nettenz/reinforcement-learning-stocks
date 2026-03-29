@@ -167,3 +167,40 @@ next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-new
 - If retest confirms equal-or-better mean test actionable with stable std, set this as the champion experiment config; otherwise revert to `ent_coef=0.01`.
 - After champion confirmation, run one focused shorting-alignment check in Signal Analytics (Buy/Sell mix vs up/down moves) before changing reward scales.
 
+---
+
+### **DELEGATED_RESULTS (2026-03-29 20:45:00Z)**
+run_label: insights-expanded-20k-8seeds-ent002-retest
+snapshot_leaderboard_path: data\experiment_snapshots\experiment_leaderboard_20260329-203754Z_insights-expanded-20k-8seeds-ent002-retest.csv
+best_seed: 34
+best_val_actionable_accuracy: 0.6070
+best_test_actionable_accuracy: 0.5381
+best_ranking_score: 0.6162
+best_test_cumulative_signal_return: 0.3904
+compare_vs_baseline: tied - Retest perfectly reproduced the previous champion performance (0.5381 test actionable) confirming the 20k/ent=0.02 config is highly reliable.
+next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-news --seeds 7,13,21,34,55,89,144,233 --timesteps 30000 --learning-rates 0.0003 --gammas 0.992 --ent-coefs 0.02 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-return-scale 1 --reward-direction-scale 0.35 --reward-hold-penalty-scale 0.04 --reward-drawdown-penalty-scale 0.1 --reward-action-bonus-scale 0.05 --run-label insights-expanded-30k-8seeds-ent002 --device cpu
+
+- **Scale to 30k timesteps**: Run the `next_single_command` to determine if the 20k champion configuration continues to improve or if it reaches a performance plateau.
+- **Shorting Alignment Check**: Analyze the top-performing seeds (34, 7, 233) in the Signal Analytics dashboard to verify if the Buy/Sell distribution correctly aligns with market directionality (Bull/Bear splits).
+- **Reward Scale Exploration**: If 30k timesteps do not show a significant lift, consider testing a slightly higher `reward_direction_scale` (0.40) to further incentivize directional accuracy.
+- **Update Production Defaults**: Formally update the `ent_coef` default to 0.02 in `src\train_bot.py` and `src\experiments.py` as it has proven superior in two consecutive 8-seed 20k runs.
+
+---
+
+### **DELEGATED_RESULTS (2026-03-29 20:50:27Z)**
+run_label: insights-expanded-30k-8seeds-ent002
+snapshot_leaderboard_path: data\experiment_snapshots\experiment_leaderboard_20260329-205027Z_insights-expanded-30k-8seeds-ent002.csv
+best_seed: 34
+best_val_actionable_accuracy: 0.6082
+best_test_actionable_accuracy: 0.5381
+best_ranking_score: 0.6150
+best_test_cumulative_signal_return: 0.3904
+compare_vs_baseline: mixed - Best-seed metrics stayed strong, but mean test actionable dropped vs 20k ent=0.02 retest (0.5256 vs 0.5304).
+next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-news --seeds 7,13,21,34,55,89,144,233 --timesteps 20000 --learning-rates 0.0003 --gammas 0.992 --ent-coefs 0.02 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-return-scale 1 --reward-direction-scale 0.35 --reward-hold-penalty-scale 0.04 --reward-drawdown-penalty-scale 0.1 --reward-action-bonus-scale 0.05 --run-label insights-expanded-20k-8seeds-ent002-champion-lock --device cpu
+
+- Keep **20k / ent=0.02** as champion since it has better mean test actionable and slightly better stability than 30k.
+- Run one explicit champion-lock rerun at 20k/ent=0.02 (same 8 seeds) before any reward-scale changes.
+- In Signal Analytics, run shorting-alignment diagnostics using recommended settings: threshold `0.0020`, horizon `1`, chart window `2000`.
+- If shorting misalignment persists, do one controlled A/B on `reward_direction_scale` (`0.35` vs `0.40`) at 20k/ent=0.02.
+
+
