@@ -18,6 +18,9 @@ NEWS_FEATURE_COLUMNS = [
     "SentimentStd",
     "SentimentMin",
     "SentimentMax",
+    "SentimentConfidenceMean",
+    "SentimentGeminiShare",
+    "SentimentOllamaShare",
 ]
 
 
@@ -114,11 +117,22 @@ def merge_news_features(
     if missing_training:
         raise ValueError(f"Training frame missing fields: {sorted(missing_training)}")
 
-    required_news = {"Date", "NewsCount", "SentimentMean", "SentimentStd", "SentimentMin", "SentimentMax"}
+    required_news = {
+        "Date",
+        "NewsCount",
+        "SentimentMean",
+        "SentimentStd",
+        "SentimentMin",
+        "SentimentMax",
+        "SentimentConfidenceMean",
+        "SentimentGeminiShare",
+        "SentimentOllamaShare",
+    }
     missing_news = required_news - set(news_features.columns)
     if missing_news:
         raise ValueError(f"News frame missing fields: {sorted(missing_news)}")
 
+    base_training = training_data.drop(columns=[c for c in NEWS_FEATURE_COLUMNS if c in training_data.columns]).copy()
     weighted = news_features.copy()
     weighted["WeightedSentiment"] = weighted["SentimentMean"] * weighted["NewsCount"]
 
@@ -130,6 +144,9 @@ def merge_news_features(
             SentimentStd=("SentimentStd", "mean"),
             SentimentMin=("SentimentMin", "min"),
             SentimentMax=("SentimentMax", "max"),
+            SentimentConfidenceMean=("SentimentConfidenceMean", "mean"),
+            SentimentGeminiShare=("SentimentGeminiShare", "mean"),
+            SentimentOllamaShare=("SentimentOllamaShare", "mean"),
         )
         .sort_values("Date")
         .reset_index(drop=True)
@@ -141,7 +158,7 @@ def merge_news_features(
     )
     daily_news = daily_news.drop(columns=["WeightedSentiment"])
 
-    merged = training_data.merge(daily_news, on="Date", how="left")
+    merged = base_training.merge(daily_news, on="Date", how="left")
     fill_values = {col: 0.0 for col in NEWS_FEATURE_COLUMNS}
     merged = merged.fillna(fill_values)
     return merged

@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import itertools
 import json
+import platform
 from pathlib import Path
 import re
 import sys
@@ -11,6 +12,7 @@ import sys
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
+import torch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -25,6 +27,7 @@ DEFAULT_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_leaderboard.csv"
 DEFAULT_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderboard.csv"
 DEFAULT_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary.json"
 DEFAULT_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots"
+DEFAULT_PPO_DEVICE = "cuda" if platform.system() == "Windows" and torch.cuda.is_available() else "auto"
 
 
 def _parse_float_list(value: str) -> list[float]:
@@ -229,6 +232,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             learning_rate=learning_rate,
             gamma=gamma,
             ent_coef=ent_coef,
+            device=DEFAULT_PPO_DEVICE,
         )
         model.learn(total_timesteps=timesteps)
 
@@ -296,7 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trade-penalty", type=float, default=0.05, help="Flat penalty per executed trade.")
     parser.add_argument("--reward-return-scale", type=float, default=1.0, help="Weight for portfolio-return reward term.")
     parser.add_argument("--reward-direction-scale", type=float, default=0.35, help="Weight for directional-alignment reward term.")
-    parser.add_argument("--reward-hold-penalty-scale", type=float, default=0.05, help="Penalty scale for hold during movement.")
+    parser.add_argument("--reward-hold-penalty-scale", type=float, default=0.10, help="Penalty scale for hold during movement.")
     parser.add_argument("--reward-drawdown-penalty-scale", type=float, default=0.10, help="Penalty scale for drawdown term.")
     parser.add_argument("--reward-action-bonus-scale", type=float, default=0.02, help="Bonus for taking Buy/Sell actions (anti-collapse).")
     parser.add_argument("--reward-clip", type=float, default=1.0, help="Reward clip bound applied symmetrically.")
@@ -317,12 +321,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--disable-snapshots", action="store_true", help="Disable timestamped snapshot output files.")
     parser.add_argument("--run-label", default="", help="Optional suffix label appended to snapshot filenames.")
+    parser.add_argument("--device", default=DEFAULT_PPO_DEVICE, help="PPO device (auto, cuda, cpu).")
     return parser
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+
+    # Update global device if provided
+    global DEFAULT_PPO_DEVICE
+    DEFAULT_PPO_DEVICE = args.device
 
     leaderboard = run_experiments(args)
     leaderboard_path = Path(args.leaderboard_path)

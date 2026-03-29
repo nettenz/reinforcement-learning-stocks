@@ -1,7 +1,9 @@
 from pathlib import Path
+import platform
 import sys
 
 from stable_baselines3 import PPO
+import torch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -12,6 +14,7 @@ from src.trading_env import TradingEnv
 
 DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
+DEFAULT_PPO_DEVICE = "cuda" if platform.system() == "Windows" and torch.cuda.is_available() else "auto"
 
 # Load normalized Yahoo Finance tech basket data with merged daily news sentiment features
 df = get_tech_training_data(cache_path=DATA_PATH, include_news=True)
@@ -20,7 +23,7 @@ df = get_tech_training_data(cache_path=DATA_PATH, include_news=True)
 env = TradingEnv(df)
 
 # Initialize the RL model (PPO)
-model = PPO("MlpPolicy", env, verbose=1)
+model = PPO("MlpPolicy", env, verbose=1, device=DEFAULT_PPO_DEVICE)
 
 # Train the model
 print("Training the agent...")

@@ -418,7 +418,7 @@ def render_charts(
             color=alt.Color(
                 "action_label:N",
                 title="Signal",
-                scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#2ecc71", "#e74c3c"]),
+                scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#3b82f6", "#1e40af"]),
             ),
             tooltip=[
                 tooltip_x,
@@ -443,7 +443,7 @@ def render_charts(
                 color=alt.Color(
                     "action_label:N",
                     legend=None,
-                    scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#2ecc71", "#e74c3c"]),
+                    scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#3b82f6", "#1e40af"]),
                 ),
             )
         )
@@ -460,7 +460,7 @@ def render_charts(
                 color=alt.Color(
                     "action_label:N",
                     legend=None,
-                    scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#2ecc71", "#e74c3c"]),
+                    scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#3b82f6", "#1e40af"]),
                 ),
             )
         )
@@ -591,7 +591,7 @@ def render_charts(
             .encode(
                 x=alt.X(x_field, title=x_title),
                 y=alt.Y("horizon_return:Q", title="Horizon return"),
-                color=alt.condition("datum.horizon_return >= 0", alt.value("#2ecc71"), alt.value("#e74c3c")),
+                color=alt.condition("datum.horizon_return >= 0", alt.value("#3b82f6"), alt.value("#1e3a8a")),
                 tooltip=[
                     tooltip_x,
                     alt.Tooltip("horizon_return:Q", title="Horizon return", format=".4%"),

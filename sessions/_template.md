@@ -19,6 +19,22 @@ Brief summary of what this session focused on and why.
 - `path/to/file.py`
 - `path/to/another_file.py`
 
+## Gemini CLI delegations
+*Use this section when work is delegated to Gemini CLI for parallel execution.*
+
+### Standard Delegation Workflow
+**Always start with context reading:**
+```text
+Please read sessions\[delegation-file].md first to understand the context, then proceed with the specific tasks.
+```
+
+### Delegation: [Brief title]
+- **Instruction file**: `sessions/gemini-cli-[task]-delegation.md`
+- **Goal**: Brief description of the delegated task
+- **Status**: [Queued/Running/Completed/Failed]
+- **Key deliverables**: What Gemini CLI should produce
+- **Integration notes**: How to merge results back into main workflow
+
 ## Validation performed
 - Commands run:
   - `python tests/test_script.py`

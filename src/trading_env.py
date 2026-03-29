@@ -12,7 +12,7 @@ class TradingEnv(gym.Env):
         trade_penalty=0.0,
         reward_return_scale=1.0,
         reward_direction_scale=0.35,
-        reward_hold_penalty_scale=0.05,
+        reward_hold_penalty_scale=0.10,
         reward_drawdown_penalty_scale=0.10,
         reward_action_bonus_scale=0.02,
         reward_clip=1.0,
@@ -139,14 +139,17 @@ class TradingEnv(gym.Env):
         portfolio_return = (reward_new_net_worth / reward_prev_net_worth) - 1.0
 
         directional_reward = 0.0
-        if action == 1:  # Buy should align with positive next return
+        if trade_executed and action == 1:  # Buy should align with positive next return
             directional_reward = raw_step_return
-        elif action == 2:  # Sell should align with negative next return
+        elif trade_executed and action == 2:  # Sell should align with negative next return
             directional_reward = -raw_step_return
 
-        hold_penalty = -self.reward_hold_penalty_scale * abs(raw_step_return) if action == 0 else 0.0
+        # Invalid Buy/Sell attempts behave like Hold for reward shaping.
+        effective_hold = (action == 0) or (action in (1, 2) and not trade_executed)
+        hold_penalty = -self.reward_hold_penalty_scale * abs(raw_step_return) if effective_hold else 0.0
 
-        action_bonus = self.reward_action_bonus_scale if action in (1, 2) else 0.0
+        # Only reward actionable trades that actually executed.
+        action_bonus = self.reward_action_bonus_scale if (action in (1, 2) and trade_executed) else 0.0
 
         reward_peak = max(self.reward_peak_net_worth, reward_new_net_worth)
         drawdown = (reward_peak - reward_new_net_worth) / max(reward_peak, 1e-8)
