@@ -28,7 +28,14 @@ DEFAULT_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_leaderboard.csv"
 DEFAULT_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderboard.csv"
 DEFAULT_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary.json"
 DEFAULT_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots"
-DEFAULT_PPO_DEVICE = "cuda" if platform.system() == "Windows" and torch.cuda.is_available() else "auto"
+
+# Use M4 GPU (MPS) if available, otherwise CUDA for Windows, fallback to auto
+if torch.backends.mps.is_available():
+    DEFAULT_PPO_DEVICE = "mps"  # Apple Silicon GPU acceleration
+elif platform.system() == "Windows" and torch.cuda.is_available():
+    DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU
+else:
+    DEFAULT_PPO_DEVICE = "auto"  # CPU fallback
 
 
 def _parse_float_list(value: str) -> list[float]:
@@ -85,6 +92,7 @@ def _simulate_with_model(model: PPO, df: pd.DataFrame, env_kwargs: dict[str, flo
                 "reward_action_bonus": float(info.get("reward_action_bonus", 0.0)),
                 "reward_drawdown_penalty": float(info.get("reward_drawdown_penalty", 0.0)),
                 "reward_drawdown": float(info.get("reward_drawdown", 0.0)),
+                "realized_return": float(info.get("realized_return", 0.0)),  # No look-ahead bias
             }
         )
         if terminated or truncated:
@@ -219,39 +227,55 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         include_news=args.include_news,
         refresh=args.refresh_data,
         news_refresh=args.refresh_news,
+        use_stationary_features=args.use_stationary_features,
     )
     train_df, val_df, test_df = _split_walk_forward(df, train_ratio=args.train_ratio, val_ratio=args.val_ratio)
 
     env_kwargs: dict[str, float | bool] = {
         "transaction_cost_rate": args.transaction_cost_rate,
         "trade_penalty": args.trade_penalty,
-        "reward_return_scale": args.reward_return_scale,
-        "reward_direction_scale": args.reward_direction_scale,
-        "reward_hold_penalty_scale": args.reward_hold_penalty_scale,
-        "reward_drawdown_penalty_scale": args.reward_drawdown_penalty_scale,
-        "reward_action_bonus_scale": args.reward_action_bonus_scale,
         "reward_clip": args.reward_clip,
         "reward_ignore_transaction_cost": args.reward_ignore_transaction_cost,
     }
 
-    configs = list(itertools.product(seeds, timesteps_list, learning_rates, gammas, ent_coefs))
+    reward_return_scales = _parse_float_list(args.reward_return_scale)
+    reward_direction_scales = _parse_float_list(args.reward_direction_scale)
+    reward_hold_penalty_scales = _parse_float_list(args.reward_hold_penalty_scale)
+    reward_drawdown_penalty_scales = _parse_float_list(args.reward_drawdown_penalty_scale)
+    reward_action_bonus_scales = _parse_float_list(args.reward_action_bonus_scale)
+
+    configs = list(itertools.product(
+        seeds, timesteps_list, learning_rates, gammas, ent_coefs,
+        reward_return_scales, reward_direction_scales, reward_hold_penalty_scales,
+        reward_drawdown_penalty_scales, reward_action_bonus_scales
+    ))
     if args.max_runs > 0:
         configs = configs[: args.max_runs]
 
     rows: list[dict[str, float | int]] = []
     print(f"Running {len(configs)} experiment runs...")
 
-    for idx, (seed, timesteps, learning_rate, gamma, ent_coef) in enumerate(configs, start=1):
+    for idx, (seed, timesteps, learning_rate, gamma, ent_coef, 
+              ret_scale, dir_scale, hold_scale, dd_scale, bonus_scale) in enumerate(configs, start=1):
         print(
             f"[{idx}/{len(configs)}] seed={seed} timesteps={timesteps} lr={learning_rate} "
-            f"gamma={gamma} ent_coef={ent_coef}"
+            f"gamma={gamma} ent_coef={ent_coef} dir_scale={dir_scale}"
         )
         lr_arg = linear_schedule(learning_rate) if args.use_lr_schedule else learning_rate
         
+        env_kwargs_run = env_kwargs.copy()
+        env_kwargs_run.update({
+            "reward_return_scale": ret_scale,
+            "reward_direction_scale": dir_scale,
+            "reward_hold_penalty_scale": hold_scale,
+            "reward_drawdown_penalty_scale": dd_scale,
+            "reward_action_bonus_scale": bonus_scale,
+        })
+
         if args.n_envs > 1:
-            env_train = SubprocVecEnv([make_env(train_df, env_kwargs) for _ in range(args.n_envs)])
+            env_train = SubprocVecEnv([make_env(train_df, env_kwargs_run) for _ in range(args.n_envs)])
         else:
-            env_train = TradingEnv(train_df, **env_kwargs)
+            env_train = TradingEnv(train_df, **env_kwargs_run)
             
         model = PPO(
             "MlpPolicy",
@@ -268,8 +292,8 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         if args.n_envs > 1:
             env_train.close()
 
-        val_signals = _simulate_with_model(model, val_df, env_kwargs=env_kwargs)
-        test_signals = _simulate_with_model(model, test_df, env_kwargs=env_kwargs)
+        val_signals = _simulate_with_model(model, val_df, env_kwargs=env_kwargs_run)
+        test_signals = _simulate_with_model(model, test_df, env_kwargs=env_kwargs_run)
 
         val_enriched = enrich_with_truth_labels(val_signals, threshold=args.threshold, horizon_steps=args.horizon)
         test_enriched = enrich_with_truth_labels(test_signals, threshold=args.threshold, horizon_steps=args.horizon)
@@ -289,11 +313,11 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "horizon": args.horizon,
             "transaction_cost_rate": args.transaction_cost_rate,
             "trade_penalty": args.trade_penalty,
-            "reward_return_scale": args.reward_return_scale,
-            "reward_direction_scale": args.reward_direction_scale,
-            "reward_hold_penalty_scale": args.reward_hold_penalty_scale,
-            "reward_drawdown_penalty_scale": args.reward_drawdown_penalty_scale,
-            "reward_action_bonus_scale": args.reward_action_bonus_scale,
+            "reward_return_scale": ret_scale,
+            "reward_direction_scale": dir_scale,
+            "reward_hold_penalty_scale": hold_scale,
+            "reward_drawdown_penalty_scale": dd_scale,
+            "reward_action_bonus_scale": bonus_scale,
             "reward_clip": args.reward_clip,
             "reward_ignore_transaction_cost": int(args.reward_ignore_transaction_cost),
             "val_overall_accuracy": val_metrics.overall_accuracy,
@@ -330,11 +354,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--val-ratio", type=float, default=0.15, help="Walk-forward validation ratio.")
     parser.add_argument("--transaction-cost-rate", type=float, default=0.001, help="Fee rate per executed trade.")
     parser.add_argument("--trade-penalty", type=float, default=0.05, help="Flat penalty per executed trade.")
-    parser.add_argument("--reward-return-scale", type=float, default=1.0, help="Weight for portfolio-return reward term.")
-    parser.add_argument("--reward-direction-scale", type=float, default=0.35, help="Weight for directional-alignment reward term.")
-    parser.add_argument("--reward-hold-penalty-scale", type=float, default=0.10, help="Penalty scale for hold during movement.")
-    parser.add_argument("--reward-drawdown-penalty-scale", type=float, default=0.10, help="Penalty scale for drawdown term.")
-    parser.add_argument("--reward-action-bonus-scale", type=float, default=0.02, help="Bonus for taking Buy/Sell actions (anti-collapse).")
+    parser.add_argument("--reward-return-scale", default="1.0", help="Weight for portfolio-return reward term (list).")
+    parser.add_argument("--reward-direction-scale", default="0.35", help="Weight for directional-alignment reward term (list).")
+    parser.add_argument("--reward-hold-penalty-scale", default="0.10", help="Penalty scale for hold during movement (list).")
+    parser.add_argument("--reward-drawdown-penalty-scale", default="0.10", help="Penalty scale for drawdown term (list).")
+    parser.add_argument("--reward-action-bonus-scale", default="0.02", help="Bonus for taking Buy/Sell actions (list).")
+
     parser.add_argument("--reward-clip", type=float, default=1.0, help="Reward clip bound applied symmetrically.")
     parser.add_argument(
         "--reward-ignore-transaction-cost",
@@ -342,6 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Exclude transaction costs/penalties from reward shaping while keeping execution unchanged.",
     )
+    parser.add_argument("--use-stationary-features", action="store_true", help="Use log returns and normalized technical indicators.")
     parser.add_argument("--max-runs", type=int, default=0, help="Limit number of experiment runs (0 = all).")
     parser.add_argument("--leaderboard-path", default=str(DEFAULT_LEADERBOARD_PATH), help="CSV output path.")
     parser.add_argument("--reward-leaderboard-path", default=str(DEFAULT_REWARD_LEADERBOARD_PATH), help="Reward leaderboard CSV output path.")

@@ -802,7 +802,14 @@ def render_experiments_page() -> None:
         transaction_cost_rate = st.number_input("Transaction cost rate", min_value=0.0, max_value=0.02, value=0.001, step=0.0005, format="%.4f")
         trade_penalty = st.number_input("Trade penalty", min_value=0.0, max_value=1.0, value=0.05, step=0.01)
         reward_return_scale = st.number_input("Reward: portfolio-return scale", min_value=0.0, max_value=5.0, value=1.0, step=0.05)
-        reward_direction_scale = st.number_input("Reward: directional scale", min_value=0.0, max_value=5.0, value=0.35, step=0.05)
+        reward_direction_scale = st.number_input(
+            "Reward: directional scale", 
+            min_value=0.0, 
+            max_value=5.0, 
+            value=0.40, 
+            step=0.05,
+            help="Weights reward based on realized return alignment with position (no look-ahead bias). Tuned to 0.40 after bias fix."
+        )
         reward_hold_penalty_scale = st.number_input("Reward: hold penalty scale", min_value=0.0, max_value=5.0, value=0.05, step=0.01)
         reward_drawdown_penalty_scale = st.number_input("Reward: drawdown penalty scale", min_value=0.0, max_value=5.0, value=0.10, step=0.01)
         reward_action_bonus_scale = st.number_input("Reward: action bonus (anti-collapse)", min_value=0.0, max_value=1.0, value=0.02, step=0.01)

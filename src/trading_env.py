@@ -4,6 +4,32 @@ import numpy as np
 
 
 class TradingEnv(gym.Env):
+    """
+    Trading environment with multi-component reward function (NO LOOK-AHEAD BIAS).
+    
+    Reward Components:
+    1. Portfolio Return: Actual P&L from position changes
+    2. Directional Reward: Rewards position alignment with REALIZED price movement
+       - Uses (current_price / prev_price) - 1, NOT future prices
+       - Long position + positive realized return = positive reward
+       - Short position + positive realized return = negative reward
+    3. Hold Penalty: Penalizes staying neutral when market is moving
+    4. Action Bonus: Small bonus for taking positions (anti-collapse)
+    5. Drawdown Penalty: Penalizes portfolio drawdown from peak
+    
+    All reward components use ONLY prices at timestep t or earlier.
+    NO future price information is used in the reward calculation.
+    
+    Action Space: Discrete(3)
+        0 = Neutral (no position)
+        1 = Long (buy and hold)
+        2 = Short (sell short)
+    
+    Observation Space: Box
+        - OHLCV market features
+        - News sentiment features (if available)
+        - Account state: balance, shares_held, position (optional)
+    """
     def __init__(
         self,
         df,
@@ -12,12 +38,13 @@ class TradingEnv(gym.Env):
         transaction_cost_rate=0.0,
         trade_penalty=0.0,
         reward_return_scale=1.0,
-        reward_direction_scale=0.35,
+        reward_direction_scale=0.40,
         reward_hold_penalty_scale=0.10,
         reward_drawdown_penalty_scale=0.10,
         reward_action_bonus_scale=0.02,
         reward_clip=1.0,
         reward_ignore_transaction_cost=True,
+        market_feature_columns=None,
     ):
         super(TradingEnv, self).__init__()
         self.df = df
@@ -45,13 +72,17 @@ class TradingEnv(gym.Env):
         # Action space: 0 = Neutral, 1 = Long, 2 = Short
         self.action_space = spaces.Discrete(3)
 
-        self.market_feature_columns = [
-            "Open",
-            "High",
-            "Low",
-            "Close",
-            "Volume",
-        ]
+        if market_feature_columns is None:
+            # Default to original columns if they exist
+            if all(col in self.df.columns for col in ["Open", "High", "Low", "Close", "Volume"]):
+                self.market_feature_columns = ["Open", "High", "Low", "Close", "Volume"]
+            else:
+                # Auto-detect stationary columns
+                potential_cols = ["LogReturn", "VolLogDiff", "RelRange", "RelOpen", "RelMACD", "RSI_Centered"]
+                self.market_feature_columns = [col for col in potential_cols if col in self.df.columns]
+        else:
+            self.market_feature_columns = market_feature_columns
+
         self.news_feature_columns = [
             "NewsCount",
             "SentimentMean",
@@ -92,9 +123,12 @@ class TradingEnv(gym.Env):
 
     def step(self, action):
         current_price = max(float(self.df.loc[self.current_step, self.price_column]), 1e-8)
-        next_step = min(self.current_step + 1, len(self.df) - 1)
-        next_price = max(float(self.df.loc[next_step, self.price_column]), 1e-8)
-        raw_step_return = (next_price / current_price) - 1.0
+        
+        # Calculate REALIZED return using only past/current prices (NO LOOK-AHEAD)
+        # This is the return we've already observed from the previous step to current step
+        prev_step = max(0, self.current_step - 1)
+        prev_price = max(float(self.df.loc[prev_step, self.price_column]), 1e-8)
+        realized_return = (current_price / prev_price) - 1.0 if self.current_step > 0 else 0.0
         
         # Map action to position: 0=Neutral, 1=Long, 2=Short
         # position_mapping: 0 -> 0, 1 -> 1, 2 -> -1
@@ -178,15 +212,17 @@ class TradingEnv(gym.Env):
         new_net_worth = self.balance + (self.shares_held * current_price)
         self.net_worth = new_net_worth
 
+        # Reward shaping portfolio uses CURRENT price (no look-ahead)
         reward_prev_net_worth = max(self.reward_net_worth, 1e-8)
-        reward_new_net_worth = self.reward_balance + (self.reward_shares_held * next_price)
+        reward_new_net_worth = self.reward_balance + (self.reward_shares_held * current_price)
         portfolio_return = (reward_new_net_worth / reward_prev_net_worth) - 1.0
 
-        # Primary directional reward based on target position
-        directional_reward = target_position_value * raw_step_return
+        # Directional reward based on REALIZED return (what actually happened)
+        # Rewards the position we held during the price movement we just observed
+        directional_reward = target_position_value * realized_return
 
-        # Hold penalty: only applied when in Neutral (0) position and market is moving.
-        hold_penalty = -self.reward_hold_penalty_scale * abs(raw_step_return) if target_position_value == 0 else 0.0
+        # Hold penalty: penalize staying neutral when market is moving (uses realized return)
+        hold_penalty = -self.reward_hold_penalty_scale * abs(realized_return) if target_position_value == 0 else 0.0
 
         # Only reward actionable trades that actually executed.
         action_bonus = self.reward_action_bonus_scale if trade_executed else 0.0
@@ -219,7 +255,7 @@ class TradingEnv(gym.Env):
             "reward_hold_penalty": float(hold_penalty),
             "reward_action_bonus": float(action_bonus),
             "reward_drawdown_penalty": float(drawdown_penalty),
-            "raw_step_return": float(raw_step_return),
+            "realized_return": float(realized_return),  # Changed from raw_step_return (was look-ahead)
             "reward_drawdown": float(drawdown),
             "reward_net_worth": float(reward_new_net_worth),
         }

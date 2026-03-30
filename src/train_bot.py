@@ -14,7 +14,14 @@ from src.trading_env import TradingEnv
 
 DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
-DEFAULT_PPO_DEVICE = "cuda" if platform.system() == "Windows" and torch.cuda.is_available() else "auto"
+
+# Use M4 GPU (MPS) if available, otherwise CUDA for Windows, fallback to auto
+if torch.backends.mps.is_available():
+    DEFAULT_PPO_DEVICE = "mps"  # Apple Silicon GPU acceleration
+elif torch.cuda.is_available():
+    DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU
+else:
+    DEFAULT_PPO_DEVICE = "cpu"  # CPU fallback
 
 # Load normalized Yahoo Finance tech basket data with merged daily news sentiment features
 df = get_tech_training_data(cache_path=DATA_PATH, include_news=True)

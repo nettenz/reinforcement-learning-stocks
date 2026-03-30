@@ -120,6 +120,8 @@ def simulate_agent_signals(
             break
 
     result = pd.DataFrame(rows)
+    # Note: future_return is ONLY for evaluation/backtesting labeling.
+    # It is NEVER used in the training reward function (which now uses realized_return).
     result["next_price"] = result["price"].shift(-1)
     result["future_return"] = (result["next_price"] / result["price"]) - 1.0
     result["future_return"] = result["future_return"].replace([np.inf, -np.inf], np.nan).fillna(0.0)

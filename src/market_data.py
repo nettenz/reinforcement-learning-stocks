@@ -7,11 +7,13 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from src.news_data import get_tech_news_features
+from src.feature_engineering import compute_stationary_features
 
 
 TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
+STATIONARY_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.csv"
 NEWS_FEATURE_COLUMNS = [
     "NewsCount",
     "SentimentMean",
@@ -165,7 +167,7 @@ def merge_news_features(
 
 
 def get_tech_training_data(
-    cache_path: str | Path = DEFAULT_CACHE_PATH,
+    cache_path: str | Path | None = None,
     tickers: Iterable[str] = TECH_TICKERS,
     start: str = "2018-01-01",
     end: str | None = None,
@@ -173,10 +175,15 @@ def get_tech_training_data(
     include_news: bool = True,
     news_refresh: bool = False,
     refresh: bool = False,
+    use_stationary_features: bool = False,
 ) -> pd.DataFrame:
+    if cache_path is None:
+        cache_path = STATIONARY_CACHE_PATH if use_stationary_features else DEFAULT_CACHE_PATH
+    
     cache_file = Path(cache_path)
     if cache_file.exists() and not refresh:
         data = pd.read_csv(cache_file, parse_dates=["Date"])
+        # If cache exists but missing news columns, merge them
         if include_news and not set(NEWS_FEATURE_COLUMNS).issubset(data.columns):
             news_features = get_tech_news_features(tickers=tickers, refresh=news_refresh)
             data = merge_news_features(training_data=data, news_features=news_features)
@@ -184,10 +191,29 @@ def get_tech_training_data(
         return data
 
     raw = fetch_yahoo_ohlcv(tickers=tickers, start=start, end=end, interval=interval)
-    normalized = parse_and_normalize_ohlcv(raw)
-    training_data = build_training_frame(normalized)
+    
+    if use_stationary_features:
+        # Stationary flow: fetch raw, compute stationary, keep RawClose
+        # build_training_frame aggregates by date, let's do it before stationary for simplicity
+        # or do it on individual tickers then aggregate. 
+        # Current build_training_frame aggregates normalized OHLCV.
+        normalized = parse_and_normalize_ohlcv(raw)
+        base_training = build_training_frame(normalized)
+        # base_training has Open, High, Low, Close (normalized) and RawClose
+        stationary = compute_stationary_features(base_training)
+        # Keep RawClose and Date for environment/evaluation
+        training_data = stationary.copy()
+        training_data["RawClose"] = base_training["RawClose"]
+        # Add original Open, High, Low, Close for backward compat if needed by TradingEnv
+        for col in ["Open", "High", "Low", "Close"]:
+            training_data[f"Orig{col}"] = base_training[col]
+    else:
+        normalized = parse_and_normalize_ohlcv(raw)
+        training_data = build_training_frame(normalized)
+
     if include_news:
         news_features = get_tech_news_features(tickers=tickers, refresh=news_refresh)
         training_data = merge_news_features(training_data=training_data, news_features=news_features)
+    
     training_data.to_csv(cache_file, index=False)
     return training_data
