@@ -94,3 +94,20 @@ Increase timesteps to 50k-100k for the first SAC runs.
 ## Autonomy Status
 - [ ] Continuing autonomously
 - [X] **ESCALATING TO COPILOT** — Reason: SAC and Continuous Action Space implementation required.
+
+---
+
+### DELEGATED_RESULTS (2026-03-30 07:26:15Z)
+run_label: insights-generalization
+snapshot_leaderboard_path: data\experiment_snapshots\experiment_leaderboard_20260330-063455Z_insights-generalization.csv
+best_seed: 7
+best_val_actionable_accuracy: 0.5957
+best_test_actionable_accuracy: 0.5303
+best_ranking_score: 0.5943
+best_test_cumulative_signal_return: 0.1732
+compare_vs_baseline: tied - Actionable accuracy remained around ~0.53 with stable multi-seed behavior and positive test returns.
+next_single_command: .\.venv\Scripts\python.exe src\experiments.py --include-news --seeds 7,13,21,42,99 --timesteps 50000 --learning-rates 0.0003,0.0001 --gammas 0.994,0.997 --ent-coefs 0.01,0.02 --reward-action-bonus-scale 0.005,0.01,0.02 --reward-drawdown-penalty-scale 0.1,0.2,0.4 --max-runs 30 --run-label sharpe-sortino-qqq-refresh --device cpu
+
+- Integrated Sharpe/Sortino/Max Drawdown + QQQ benchmark into `src\experiments.py`; current snapshot above predates these new columns.
+- Next experiment should refresh leaderboard outputs to include risk-adjusted metrics and alpha-vs-QQQ columns.
+- Keep stationary features and CPU for comparability with prior Gemini sweeps.

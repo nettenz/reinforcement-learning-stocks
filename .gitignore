@@ -31,6 +31,12 @@ coverage/
 .streamlit_dashboard.log
 screenshots/
 
+# Analysis Context/Reports
+*_CONTEXT.md
+*_INTERPRETATION.md
+*_SUMMARY.md
+*_Analysis.md
+
 # Session notes (cross-environment)
 # Keep template and canonical handoff docs tracked.
 # Use sessions/local/ or *-local.md for machine-specific notes.

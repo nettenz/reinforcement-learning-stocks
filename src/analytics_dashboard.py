@@ -707,9 +707,13 @@ def render_charts(
         )
         st.altair_chart(horizon_chart.interactive(), width="stretch")
 
-    display_time_col = "date" if has_valid_dates else "step"
-    buy_points = chart_df[chart_df["action_label"] == ACTION_LABELS[1]][[display_time_col, "price"]].tail(20)
-    sell_points = chart_df[chart_df["action_label"] == ACTION_LABELS[2]][[display_time_col, "price"]].tail(20)
+    # Keep recent-signal tables based on the full evaluated run, not the chart window slice.
+    recent_df = enriched[["step", "date", "price", "action_label"]].copy()
+    recent_df["date"] = pd.to_datetime(recent_df["date"], errors="coerce")
+    recent_has_valid_dates = not recent_df["date"].isna().all()
+    display_time_col = "date" if recent_has_valid_dates else "step"
+    buy_points = recent_df[recent_df["action_label"] == ACTION_LABELS[1]][[display_time_col, "price"]].tail(20)
+    sell_points = recent_df[recent_df["action_label"] == ACTION_LABELS[2]][[display_time_col, "price"]].tail(20)
 
     buy_col, sell_col = st.columns(2)
     with buy_col:

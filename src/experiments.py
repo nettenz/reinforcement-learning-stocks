@@ -22,6 +22,7 @@ if str(ROOT_DIR) not in sys.path:
 from src.market_data import get_tech_training_data
 from src.signal_analytics import compute_metrics, enrich_with_truth_labels
 from src.trading_env import TradingEnv
+from src.market_data import fetch_yahoo_ohlcv
 
 
 DEFAULT_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_leaderboard.csv"
@@ -141,6 +142,79 @@ def _timestamp_slug() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
 
 
+def _annualized_sharpe(returns: pd.Series) -> float:
+    clean = pd.Series(returns).replace([np.inf, -np.inf], np.nan).dropna()
+    if clean.empty:
+        return 0.0
+    std = float(clean.std(ddof=0))
+    if std <= 1e-12:
+        return 0.0
+    return float(np.sqrt(252.0) * clean.mean() / std)
+
+
+def _annualized_sortino(returns: pd.Series) -> float:
+    clean = pd.Series(returns).replace([np.inf, -np.inf], np.nan).dropna()
+    if clean.empty:
+        return 0.0
+    downside = clean[clean < 0.0]
+    downside_std = float(downside.std(ddof=0)) if not downside.empty else 0.0
+    if downside_std <= 1e-12:
+        return 0.0
+    return float(np.sqrt(252.0) * clean.mean() / downside_std)
+
+
+def _risk_metrics_from_equity(equity: pd.Series, prefix: str) -> dict[str, float]:
+    curve = pd.Series(equity).replace([np.inf, -np.inf], np.nan).dropna()
+    if curve.empty:
+        return {
+            f"{prefix}_cumulative_return": 0.0,
+            f"{prefix}_sharpe_ratio": 0.0,
+            f"{prefix}_sortino_ratio": 0.0,
+            f"{prefix}_max_drawdown": 0.0,
+        }
+
+    returns = curve.pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    peak = curve.cummax().replace(0.0, np.nan)
+    drawdown = (curve / peak) - 1.0
+    max_drawdown = float(drawdown.min()) if not drawdown.empty else 0.0
+    cumulative_return = float((curve.iloc[-1] / max(curve.iloc[0], 1e-8)) - 1.0)
+
+    return {
+        f"{prefix}_cumulative_return": cumulative_return,
+        f"{prefix}_sharpe_ratio": _annualized_sharpe(returns),
+        f"{prefix}_sortino_ratio": _annualized_sortino(returns),
+        f"{prefix}_max_drawdown": max_drawdown,
+    }
+
+
+def _fetch_qqq_prices(start_date: pd.Timestamp, end_date: pd.Timestamp) -> pd.DataFrame:
+    raw = fetch_yahoo_ohlcv(
+        tickers=("QQQ",),
+        start=pd.to_datetime(start_date).strftime("%Y-%m-%d"),
+        end=(pd.to_datetime(end_date) + pd.Timedelta(days=5)).strftime("%Y-%m-%d"),
+        interval="1d",
+    )
+    qqq = raw[["Date", "Close"]].copy()
+    qqq["Date"] = pd.to_datetime(qqq["Date"]).dt.tz_localize(None).dt.normalize()
+    qqq = qqq.sort_values("Date").drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
+    return qqq
+
+
+def _benchmark_equity_curve(period_df: pd.DataFrame, qqq_prices: pd.DataFrame, initial_balance: float = 1000.0) -> pd.Series:
+    if "Date" not in period_df.columns:
+        raise ValueError("QQQ benchmark requires a Date column in the period dataframe.")
+
+    period_dates = pd.to_datetime(period_df["Date"]).dt.tz_localize(None).dt.normalize()
+    aligned = pd.DataFrame({"Date": period_dates}).merge(qqq_prices, on="Date", how="left")
+    aligned["Close"] = aligned["Close"].ffill().bfill()
+
+    if aligned["Close"].isna().any():
+        raise ValueError("Unable to align QQQ prices to experiment dates for benchmark computation.")
+
+    first_price = max(float(aligned["Close"].iloc[0]), 1e-8)
+    return float(initial_balance) * (aligned["Close"] / first_price)
+
+
 def linear_schedule(initial_value: float):
     """
     Linear learning rate schedule.
@@ -232,6 +306,14 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         use_stationary_features=args.use_stationary_features,
     )
     train_df, val_df, test_df = _split_walk_forward(df, train_ratio=args.train_ratio, val_ratio=args.val_ratio)
+    qqq_prices = _fetch_qqq_prices(
+        start_date=pd.to_datetime(val_df["Date"]).min(),
+        end_date=pd.to_datetime(test_df["Date"]).max(),
+    )
+    val_benchmark_equity = _benchmark_equity_curve(val_df, qqq_prices=qqq_prices)
+    test_benchmark_equity = _benchmark_equity_curve(test_df, qqq_prices=qqq_prices)
+    val_benchmark_risk = _risk_metrics_from_equity(val_benchmark_equity, prefix="val_benchmark")
+    test_benchmark_risk = _risk_metrics_from_equity(test_benchmark_equity, prefix="test_benchmark")
 
     env_kwargs: dict[str, float | bool] = {
         "transaction_cost_rate": args.transaction_cost_rate,
@@ -303,6 +385,8 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         test_metrics = compute_metrics(test_enriched)
         val_reward = _summarize_rewards(val_signals, prefix="val")
         test_reward = _summarize_rewards(test_signals, prefix="test")
+        val_strategy_risk = _risk_metrics_from_equity(val_signals["net_worth"], prefix="val")
+        test_strategy_risk = _risk_metrics_from_equity(test_signals["net_worth"], prefix="test")
 
         row: dict[str, float | int] = {
             "seed": seed,
@@ -330,10 +414,16 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "test_actionable_accuracy": test_metrics.actionable_accuracy,
             "test_trade_win_rate": test_metrics.trade_win_rate,
             "test_cumulative_signal_return": test_metrics.cumulative_signal_return,
+            "val_alpha_vs_qqq": float(val_strategy_risk["val_cumulative_return"] - val_benchmark_risk["val_benchmark_cumulative_return"]),
+            "test_alpha_vs_qqq": float(test_strategy_risk["test_cumulative_return"] - test_benchmark_risk["test_benchmark_cumulative_return"]),
             "ranking_score": _ranking_score(val_metrics),
         }
         row.update(val_reward)
         row.update(test_reward)
+        row.update(val_strategy_risk)
+        row.update(test_strategy_risk)
+        row.update(val_benchmark_risk)
+        row.update(test_benchmark_risk)
         rows.append(row)
 
     leaderboard = pd.DataFrame(rows).sort_values("ranking_score", ascending=False).reset_index(drop=True)

@@ -10,8 +10,8 @@ from src.news_data import get_tech_news_features
 from src.feature_engineering import compute_stationary_features
 
 
-TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")
 ROOT_DIR = Path(__file__).resolve().parents[1]
+TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")
 DEFAULT_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 STATIONARY_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.csv"
 NEWS_FEATURE_COLUMNS = [
