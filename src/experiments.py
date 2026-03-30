@@ -315,11 +315,14 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     val_benchmark_risk = _risk_metrics_from_equity(val_benchmark_equity, prefix="val_benchmark")
     test_benchmark_risk = _risk_metrics_from_equity(test_benchmark_equity, prefix="test_benchmark")
 
-    env_kwargs: dict[str, float | bool] = {
+    env_kwargs: dict[str, float | bool | str | int] = {
         "transaction_cost_rate": args.transaction_cost_rate,
         "trade_penalty": args.trade_penalty,
         "reward_clip": args.reward_clip,
         "reward_ignore_transaction_cost": args.reward_ignore_transaction_cost,
+        "reward_mode": args.reward_mode,
+        "rolling_reward_window": args.rolling_reward_window,
+        "reward_epsilon": args.reward_epsilon,
     }
 
     reward_return_scales = _parse_float_list(args.reward_return_scale)
@@ -336,14 +339,14 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     if args.max_runs > 0:
         configs = configs[: args.max_runs]
 
-    rows: list[dict[str, float | int]] = []
+    rows: list[dict[str, float | int | str]] = []
     print(f"Running {len(configs)} experiment runs...")
 
     for idx, (seed, timesteps, learning_rate, gamma, ent_coef, 
               ret_scale, dir_scale, hold_scale, dd_scale, bonus_scale) in enumerate(configs, start=1):
         print(
             f"[{idx}/{len(configs)}] seed={seed} timesteps={timesteps} lr={learning_rate} "
-            f"gamma={gamma} ent_coef={ent_coef} dir_scale={dir_scale}"
+            f"gamma={gamma} ent_coef={ent_coef} dir_scale={dir_scale} mode={args.reward_mode}"
         )
         lr_arg = linear_schedule(learning_rate) if args.use_lr_schedule else learning_rate
         
@@ -388,7 +391,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         val_strategy_risk = _risk_metrics_from_equity(val_signals["net_worth"], prefix="val")
         test_strategy_risk = _risk_metrics_from_equity(test_signals["net_worth"], prefix="test")
 
-        row: dict[str, float | int] = {
+        row: dict[str, float | int | str] = {
             "seed": seed,
             "timesteps": timesteps,
             "learning_rate": learning_rate,
@@ -399,6 +402,9 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "horizon": args.horizon,
             "transaction_cost_rate": args.transaction_cost_rate,
             "trade_penalty": args.trade_penalty,
+            "reward_mode": args.reward_mode,
+            "rolling_reward_window": args.rolling_reward_window,
+            "reward_epsilon": args.reward_epsilon,
             "reward_return_scale": ret_scale,
             "reward_direction_scale": dir_scale,
             "reward_hold_penalty_scale": hold_scale,
@@ -451,6 +457,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reward-hold-penalty-scale", default="0.10", help="Penalty scale for hold during movement (list).")
     parser.add_argument("--reward-drawdown-penalty-scale", default="0.10", help="Penalty scale for drawdown term (list).")
     parser.add_argument("--reward-action-bonus-scale", default="0.02", help="Bonus for taking Buy/Sell actions (list).")
+
+    parser.add_argument("--reward-mode", default="legacy", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
+    parser.add_argument("--rolling-reward-window", type=int, default=100, help="Window size for rolling rewards.")
+    parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
 
     parser.add_argument("--reward-clip", type=float, default=1.0, help="Reward clip bound applied symmetrically.")
     parser.add_argument(
@@ -508,8 +518,8 @@ def main() -> None:
         snapshot_paths = summary["snapshot_paths"]
         if isinstance(snapshot_paths, dict):
             print(f"Saved snapshots: {snapshot_paths.get('leaderboard')}")
-    print("Top run:")
-    print(top.head(1).to_string(index=False))
+    print("Top run (Transposed for readability):")
+    print(top.head(1).T.to_string(header=False))
 
 
 if __name__ == "__main__":

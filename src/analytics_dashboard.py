@@ -96,7 +96,7 @@ def _format_float(value: float) -> str:
 
 
 def _make_command_from_config(
-    config: dict[str, float | int | bool],
+    config: dict[str, float | int | bool | str],
     seeds: str,
     run_label: str,
 ) -> str:
@@ -117,6 +117,9 @@ def _make_command_from_config(
         f"--horizon {int(config['horizon'])} "
         f"--transaction-cost-rate {_format_float(float(config['transaction_cost_rate']))} "
         f"--trade-penalty {_format_float(float(config['trade_penalty']))} "
+        f"--reward-mode {str(config.get('reward_mode', 'legacy'))} "
+        f"--rolling-reward-window {int(config.get('rolling_reward_window', 100))} "
+        f"--reward-epsilon {_format_float(float(config.get('reward_epsilon', 1e-6)))} "
         f"--reward-return-scale {_format_float(float(config['reward_return_scale']))} "
         f"--reward-direction-scale {_format_float(float(config['reward_direction_scale']))} "
         f"--reward-hold-penalty-scale {_format_float(float(config['reward_hold_penalty_scale']))} "
@@ -216,23 +219,31 @@ def summarize_snapshot_bests(history: pd.DataFrame) -> pd.DataFrame:
     return bests
 
 
-def _config_from_row(row: pd.Series) -> dict[str, float | int | bool]:
+def _safe_get(row: pd.Series, key: str, default: object) -> object:
+    val = row.get(key, default)
+    return default if pd.isna(val) else val
+
+
+def _config_from_row(row: pd.Series) -> dict[str, float | int | bool | str]:
     return {
-        "timesteps": int(row.get("timesteps", 5000)),
-        "learning_rate": float(row.get("learning_rate", 0.0003)),
-        "gamma": float(row.get("gamma", 0.99)),
-        "ent_coef": float(row.get("ent_coef", 0.0)),
-        "threshold": float(row.get("threshold", 0.002)),
-        "horizon": int(row.get("horizon", 1)),
-        "transaction_cost_rate": float(row.get("transaction_cost_rate", 0.001)),
-        "trade_penalty": float(row.get("trade_penalty", 0.05)),
-        "reward_return_scale": float(row.get("reward_return_scale", 1.0)),
-        "reward_direction_scale": float(row.get("reward_direction_scale", 0.35)),
-        "reward_hold_penalty_scale": float(row.get("reward_hold_penalty_scale", 0.05)),
-        "reward_drawdown_penalty_scale": float(row.get("reward_drawdown_penalty_scale", 0.10)),
-        "reward_action_bonus_scale": float(row.get("reward_action_bonus_scale", 0.02)),
-        "reward_clip": float(row.get("reward_clip", 1.0)),
-        "reward_ignore_transaction_cost": bool(int(row.get("reward_ignore_transaction_cost", 1))),
+        "timesteps": int(_safe_get(row, "timesteps", 5000)),
+        "learning_rate": float(_safe_get(row, "learning_rate", 0.0003)),
+        "gamma": float(_safe_get(row, "gamma", 0.99)),
+        "ent_coef": float(_safe_get(row, "ent_coef", 0.0)),
+        "threshold": float(_safe_get(row, "threshold", 0.002)),
+        "horizon": int(_safe_get(row, "horizon", 1)),
+        "transaction_cost_rate": float(_safe_get(row, "transaction_cost_rate", 0.001)),
+        "trade_penalty": float(_safe_get(row, "trade_penalty", 0.05)),
+        "reward_mode": str(_safe_get(row, "reward_mode", "legacy")),
+        "rolling_reward_window": int(_safe_get(row, "rolling_reward_window", 100)),
+        "reward_epsilon": float(_safe_get(row, "reward_epsilon", 1e-6)),
+        "reward_return_scale": float(_safe_get(row, "reward_return_scale", 1.0)),
+        "reward_direction_scale": float(_safe_get(row, "reward_direction_scale", 0.35)),
+        "reward_hold_penalty_scale": float(_safe_get(row, "reward_hold_penalty_scale", 0.05)),
+        "reward_drawdown_penalty_scale": float(_safe_get(row, "reward_drawdown_penalty_scale", 0.10)),
+        "reward_action_bonus_scale": float(_safe_get(row, "reward_action_bonus_scale", 0.02)),
+        "reward_clip": float(_safe_get(row, "reward_clip", 1.0)),
+        "reward_ignore_transaction_cost": bool(int(_safe_get(row, "reward_ignore_transaction_cost", 1))),
     }
 
 
@@ -860,6 +871,9 @@ def render_experiments_page() -> None:
         reward_hold_penalty_scale = st.number_input("Reward: hold penalty scale", min_value=0.0, max_value=5.0, value=0.05, step=0.01)
         reward_drawdown_penalty_scale = st.number_input("Reward: drawdown penalty scale", min_value=0.0, max_value=5.0, value=0.10, step=0.01)
         reward_action_bonus_scale = st.number_input("Reward: action bonus (anti-collapse)", min_value=0.0, max_value=1.0, value=0.02, step=0.01)
+        reward_mode = st.selectbox("Reward mode", options=["legacy", "sharpe", "sortino"], index=0)
+        rolling_reward_window = st.number_input("Rolling reward window", min_value=5, max_value=1000, value=100, step=5)
+        reward_epsilon = st.number_input("Reward epsilon", min_value=1e-9, max_value=1e-3, value=1e-6, format="%.9f")
         reward_clip = st.number_input("Reward clip (+/-)", min_value=0.01, max_value=10.0, value=1.0, step=0.05)
         reward_ignore_transaction_cost = st.checkbox("Ignore transaction cost in reward", value=True)
         run_label = st.text_input(
@@ -896,12 +910,22 @@ def render_experiments_page() -> None:
             reward_hold_penalty_scale=float(reward_hold_penalty_scale),
             reward_drawdown_penalty_scale=float(reward_drawdown_penalty_scale),
             reward_action_bonus_scale=float(reward_action_bonus_scale),
+            reward_mode=reward_mode,
+            rolling_reward_window=int(rolling_reward_window),
+            reward_epsilon=float(reward_epsilon),
             reward_clip=float(reward_clip),
             reward_ignore_transaction_cost=bool(reward_ignore_transaction_cost),
+            use_stationary_features=False, # Default to False in dashboard for now
             max_runs=int(max_runs),
             leaderboard_path=str(leaderboard_path),
             reward_leaderboard_path=str(reward_leaderboard_path),
             summary_path=str(summary_path),
+            disable_snapshots=False,
+            snapshot_dir=str(snapshot_dir),
+            run_label=run_label.strip(),
+            device="auto", # Use auto in dashboard
+            use_lr_schedule=False,
+            n_envs=1,
         )
         with st.spinner("Running experiments..."):
             leaderboard = run_experiments(args)

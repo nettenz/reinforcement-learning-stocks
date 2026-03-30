@@ -45,8 +45,12 @@ class TradingEnv(gym.Env):
         reward_clip=1.0,
         reward_ignore_transaction_cost=True,
         market_feature_columns=None,
+        reward_mode="legacy",
+        rolling_reward_window=100,
+        reward_epsilon=1e-6,
     ):
         super(TradingEnv, self).__init__()
+        from collections import deque
         self.df = df
         self.initial_balance = initial_balance
         self.include_position_in_observation = bool(include_position_in_observation)
@@ -59,6 +63,10 @@ class TradingEnv(gym.Env):
         self.reward_action_bonus_scale = float(reward_action_bonus_scale)
         self.reward_clip = float(reward_clip)
         self.reward_ignore_transaction_cost = bool(reward_ignore_transaction_cost)
+        self.reward_mode = str(reward_mode).lower()
+        self.rolling_reward_window = int(rolling_reward_window)
+        self.reward_epsilon = float(reward_epsilon)
+        self.returns_buffer = deque(maxlen=self.rolling_reward_window)
         self.current_step = 0
         self.balance = initial_balance
         self.shares_held = 0
@@ -119,7 +127,32 @@ class TradingEnv(gym.Env):
         self.reward_net_worth = float(self.initial_balance)
         self.reward_peak_net_worth = float(self.initial_balance)
         self.position = 0
+        self.returns_buffer.clear()
         return self._get_obs(), {}
+
+    def _calculate_sharpe(self):
+        if len(self.returns_buffer) < 2:
+            return 0.0
+        rets = np.array(self.returns_buffer)
+        mean = np.mean(rets)
+        std = np.std(rets)
+        if std < self.reward_epsilon:
+            return 0.0
+        return mean / std
+
+    def _calculate_sortino(self):
+        if len(self.returns_buffer) < 2:
+            return 0.0
+        rets = np.array(self.returns_buffer)
+        mean = np.mean(rets)
+        downside_rets = rets[rets < 0]
+        if len(downside_rets) < 1:
+            # If no negative returns, sortino is high but let's cap it or use mean/epsilon
+            return mean / self.reward_epsilon if mean > 0 else 0.0
+        downside_std = np.std(downside_rets)
+        if downside_std < self.reward_epsilon:
+            return mean / self.reward_epsilon if mean > 0 else 0.0
+        return mean / downside_std
 
     def step(self, action):
         current_price = max(float(self.df.loc[self.current_step, self.price_column]), 1e-8)
@@ -219,7 +252,11 @@ class TradingEnv(gym.Env):
 
         # Directional reward based on REALIZED return (what actually happened)
         # Rewards the position we held during the price movement we just observed
-        directional_reward = target_position_value * realized_return
+        strategy_realized_return = target_position_value * realized_return
+        directional_reward = strategy_realized_return
+
+        # Maintain rolling returns for risk-adjusted modes
+        self.returns_buffer.append(strategy_realized_return)
 
         # Hold penalty: penalize staying neutral when market is moving (uses realized return)
         hold_penalty = -self.reward_hold_penalty_scale * abs(realized_return) if target_position_value == 0 else 0.0
@@ -231,9 +268,23 @@ class TradingEnv(gym.Env):
         drawdown = (reward_peak - reward_new_net_worth) / max(reward_peak, 1e-8)
         drawdown_penalty = -self.reward_drawdown_penalty_scale * drawdown
 
+        # Select base reward components based on mode
+        risk_metric = 0.0
+        if self.reward_mode == "sharpe":
+            risk_metric = self._calculate_sharpe()
+            base_reward = self.reward_return_scale * risk_metric
+        elif self.reward_mode == "sortino":
+            risk_metric = self._calculate_sortino()
+            base_reward = self.reward_return_scale * risk_metric
+        else:
+            # legacy mode
+            base_reward = (
+                (self.reward_return_scale * portfolio_return)
+                + (self.reward_direction_scale * directional_reward)
+            )
+
         reward = (
-            (self.reward_return_scale * portfolio_return)
-            + (self.reward_direction_scale * directional_reward)
+            base_reward
             + hold_penalty
             + action_bonus
             + drawdown_penalty
@@ -258,6 +309,8 @@ class TradingEnv(gym.Env):
             "realized_return": float(realized_return),  # Changed from raw_step_return (was look-ahead)
             "reward_drawdown": float(drawdown),
             "reward_net_worth": float(reward_new_net_worth),
+            "reward_mode": self.reward_mode,
+            "reward_risk_metric": float(risk_metric),
         }
 
         return self._get_obs(), reward, terminated, truncated, info
