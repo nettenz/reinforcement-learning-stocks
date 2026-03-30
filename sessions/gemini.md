@@ -1,7 +1,7 @@
 # Gemini Experiment Session
 
 ## Last Updated
-2026-03-30 — Stationary Sweep Complete: GENERALIZATION IMPROVED, ALPHA PENDING
+2026-03-30 — CPU PPO Follow-up Sweeps Completed (stability/accuracy/generalization)
 
 ## Project State
 - Algorithm: PPO (Transitioning to SAC)
@@ -10,14 +10,14 @@
 - Look-ahead bias: FIXED
 - Reward direction scale: 0.40 (Optimal in sweep, but returns still near zero)
 
-## Latest Run: stationary-direction-sweep
+## Latest Run: insights-generalization (CPU)
 **Configuration:**
 - Seeds: 3 (7, 13, 42)
 - Timesteps: 20k per run
 - Features: Log returns, RelRange, RelMACD, RSI_Centered (Stationary)
 - Device: **CPU** (Verified 10x faster than MPS for this architecture)
 
-**Results:**
+**Results (previous stationary-direction-sweep baseline):**
 | Metric | Value | Status |
 |---|---|---|
 | Mean test accuracy | 0.517 ± 0.005 | **STABLE** |
@@ -28,6 +28,21 @@
 
 **Interpretation:**
 The migration to stationary features was a success for generalization. The catastrophic val/test gap dropped from ~0.37 to ~0.06. However, the model now lacks the "conviction" to generate positive returns in a discrete action space. The agent is either over-cautious or the Buy/Sell signals are too noisy at this resolution.
+
+## New CPU Follow-up Runs (Completed)
+All three recommendation sweeps were executed on Windows with `--device cpu`.
+
+| Run Label | Top Seed | Ranking Score | Val Actionable | Test Actionable | Test Cumulative Return | Collapse Rate |
+|---|---:|---:|---:|---:|---:|---:|
+| insights-stability | 13 | 0.5739 | 0.6061 | 0.5308 | 0.2036 | 0.0% |
+| insights-accuracy | 13 | 0.5739 | 0.6061 | 0.5303 | 0.1732 | 0.0% |
+| insights-generalization | 7 | **0.5943** | 0.5957 | 0.5303 | 0.1732 | 0.0% |
+
+**Outcome Summary:**
+- Collapse signatures were eliminated in these 3-seed sweeps (0%).
+- Test actionable accuracy held around ~0.53 across all three variants.
+- Generalization run produced the best ranking score among the follow-ups.
+- Positive test cumulative signal returns were observed in all follow-ups (17%–20%).
 
 ## Root Cause Analysis (Updated)
 

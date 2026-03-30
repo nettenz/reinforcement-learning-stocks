@@ -15,11 +15,13 @@ from src.trading_env import TradingEnv
 DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
 
-# Use M4 GPU (MPS) if available, otherwise CUDA for Windows, fallback to auto
+# Use M4 GPU (MPS) if available for Mac, default to CPU on Windows for stability
 if torch.backends.mps.is_available():
     DEFAULT_PPO_DEVICE = "mps"  # Apple Silicon GPU acceleration
+elif platform.system() == "Windows":
+    DEFAULT_PPO_DEVICE = "cpu"  # Force CPU on Windows for stability
 elif torch.cuda.is_available():
-    DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU
+    DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU on Linux
 else:
     DEFAULT_PPO_DEVICE = "cpu"  # CPU fallback
 

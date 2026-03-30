@@ -29,13 +29,15 @@ DEFAULT_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderb
 DEFAULT_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary.json"
 DEFAULT_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots"
 
-# Use M4 GPU (MPS) if available, otherwise CUDA for Windows, fallback to auto
+# Use M4 GPU (MPS) if available for Mac, default to CPU on Windows for stability
 if torch.backends.mps.is_available():
     DEFAULT_PPO_DEVICE = "mps"  # Apple Silicon GPU acceleration
-elif platform.system() == "Windows" and torch.cuda.is_available():
-    DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU
+elif platform.system() == "Windows":
+    DEFAULT_PPO_DEVICE = "cpu"  # Force CPU on Windows for stability
+elif torch.cuda.is_available():
+    DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU on Linux
 else:
-    DEFAULT_PPO_DEVICE = "auto"  # CPU fallback
+    DEFAULT_PPO_DEVICE = "cpu"  # CPU fallback
 
 
 def _parse_float_list(value: str) -> list[float]:

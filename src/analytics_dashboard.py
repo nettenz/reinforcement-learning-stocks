@@ -130,7 +130,8 @@ def _make_command_from_config(
 
 
 @st.cache_data(show_spinner=False)
-def load_experiment_history(snapshot_dir: str, leaderboard_path: str) -> pd.DataFrame:
+def load_experiment_history(snapshot_dir: str, leaderboard_path: str, cache_buster: str = "") -> pd.DataFrame:
+    _ = cache_buster
     snapshot_root = Path(snapshot_dir)
     current_leaderboard_path = Path(leaderboard_path)
     files: list[Path] = []
@@ -176,6 +177,33 @@ def load_experiment_history(snapshot_dir: str, leaderboard_path: str) -> pd.Data
     return history
 
 
+def build_history_cache_buster(snapshot_dir: str, leaderboard_path: str) -> str:
+    snapshot_root = Path(snapshot_dir)
+    leaderboard_file = Path(leaderboard_path)
+    files: list[Path] = []
+
+    if snapshot_root.exists():
+        files.extend(sorted(snapshot_root.glob("*leaderboard*.csv")))
+    if leaderboard_file.exists():
+        files.append(leaderboard_file)
+
+    fingerprints: list[str] = []
+    seen: set[Path] = set()
+    for file_path in files:
+        if "reward" in file_path.name.lower():
+            continue
+        resolved = file_path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
+        fingerprints.append(f"{resolved}:{int(stat.st_mtime_ns)}:{stat.st_size}")
+    return "|".join(fingerprints)
+
+
 def summarize_snapshot_bests(history: pd.DataFrame) -> pd.DataFrame:
     if history.empty:
         return history
@@ -208,7 +236,7 @@ def _config_from_row(row: pd.Series) -> dict[str, float | int | bool]:
     }
 
 
-def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds: str) -> list[dict[str, str]]:
+def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds: str) -> list[dict[str, object]]:
     if history.empty:
         return []
 
@@ -222,7 +250,7 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
     avg_gap = float((recent_bests["val_actionable_accuracy"] - recent_bests["test_actionable_accuracy"]).mean())
 
     base_cfg = _config_from_row(best_row)
-    recs: list[dict[str, str]] = []
+    recs: list[dict[str, object]] = []
 
     stability_cfg = base_cfg.copy()
     stability_cfg["timesteps"] = int(max(5000, int(base_cfg["timesteps"])))
@@ -235,6 +263,11 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
         {
             "title": "Stability-first retry",
             "why": f"Recent collapse rate is {collapse_rate:.1%}; this setup pushes exploration and softer directional pressure.",
+            "steps": [
+                "Inspect the latest snapshot's action mix and confirm which seeds collapsed into low-action behavior.",
+                "Re-run with higher exploration and stronger anti-collapse bonus while keeping directional pressure capped.",
+                "Compare collapse rate and test actionable accuracy against the previous latest snapshot.",
+            ],
             "command": _make_command_from_config(stability_cfg, seeds=seeds, run_label="insights-stability"),
         }
     )
@@ -251,6 +284,11 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
                 f"Recent best means are val={avg_val:.3f}, test={avg_test:.3f}; "
                 f"target is {target:.2f}. This extends training while nudging directional signal weight."
             ),
+            "steps": [
+                "Increase training horizon and slightly up-weight return/directional reward components.",
+                "Run the updated config on the same seed set for an apples-to-apples comparison.",
+                "Accept this path only if test actionable moves closer to target without widening the val/test gap.",
+            ],
             "command": _make_command_from_config(accuracy_cfg, seeds=seeds, run_label="insights-accuracy"),
         }
     )
@@ -268,11 +306,16 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
         {
             "title": "Generalization check",
             "why": why_text,
+            "steps": [
+                "Adjust generalization-sensitive knobs (gamma/hold penalty or directional/drawdown balance).",
+                "Re-evaluate val/test drift over the newest snapshots instead of single-run results.",
+                "Promote this profile only if transfer improves while keeping stability metrics intact.",
+            ],
             "command": _make_command_from_config(generalization_cfg, seeds=seeds, run_label="insights-generalization"),
         }
     )
 
-    unique_recs: list[dict[str, str]] = []
+    unique_recs: list[dict[str, object]] = []
     seen_cmds: set[str] = set()
     for rec in recs:
         if rec["command"] in seen_cmds:
@@ -922,7 +965,12 @@ def render_experiment_insights_page() -> None:
         )
         recommendation_seeds = st.text_input("Recommendation seeds", value="7,13,21")
 
-    history = load_experiment_history(snapshot_dir=str(snapshot_dir), leaderboard_path=str(leaderboard_path))
+    history_cache_buster = build_history_cache_buster(snapshot_dir=str(snapshot_dir), leaderboard_path=str(leaderboard_path))
+    history = load_experiment_history(
+        snapshot_dir=str(snapshot_dir),
+        leaderboard_path=str(leaderboard_path),
+        cache_buster=history_cache_buster,
+    )
     if history.empty:
         st.info("No experiment history found yet. Run experiments first to populate snapshots.")
         return
@@ -1055,7 +1103,12 @@ def render_experiment_insights_page() -> None:
     for idx, rec in enumerate(recs, start=1):
         st.markdown(f"**{idx}. {rec['title']}**")
         st.write(rec["why"])
-        st.code(rec["command"], language="bash")
+        steps = rec.get("steps", [])
+        if isinstance(steps, list):
+            for step_idx, step in enumerate(steps, start=1):
+                st.write(f"{step_idx}. {step}")
+        with st.expander("Optional: run generated command"):
+            st.code(str(rec["command"]), language="bash")
 
 
 def main() -> None:
