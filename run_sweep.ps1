@@ -1,4 +1,4 @@
-$seeds = 1..5
+$seeds = 2..5
 $modes = @(
     @{mode="legacy"; window=100},
     @{mode="sharpe"; window=50},
@@ -13,7 +13,7 @@ Write-Host "Starting Quant Sweep (35 total runs)..." -ForegroundColor Cyan
 
 foreach ($seed in $seeds) {
     foreach ($cfg in $modes) {
-        $cmd = ".venv\Scripts\python src\experiments.py --reward-mode $($cfg.mode) --rolling-reward-window $($cfg.window) --seed $seed"
+        $cmd = ".venv\Scripts\python src\experiments.py --device cpu --append --reward-mode $($cfg.mode) --rolling-reward-window $($cfg.window) --seed $seed"
         Write-Host "Running: $cmd" -ForegroundColor Yellow
         Invoke-Expression $cmd
     }

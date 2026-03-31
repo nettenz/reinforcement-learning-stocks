@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Array of target seeds
-SEEDS=(1 2 3 4 5)
+SEEDS=(2 3 4 5)
 
 # Configurations formatted as "mode:window"
 CONFIGS=(
@@ -23,7 +23,7 @@ for seed in "${SEEDS[@]}"; do
         
         # Execute the python script. 
         # (Assuming you use 'python' after running `source .venv/bin/activate` on your Mac)
-        CMD="python src/experiments.py --reward-mode $mode --rolling-reward-window $window --seed $seed"
+        CMD="python src/experiments.py --device cpu --append --reward-mode $mode --rolling-reward-window $window --seed $seed"
         
         echo -e "\033[1;33mRunning: $CMD\033[0m"
         

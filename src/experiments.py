@@ -249,10 +249,19 @@ def write_experiment_outputs(
     summary_path: Path,
     snapshot_dir: Path | None = DEFAULT_SNAPSHOT_DIR,
     run_label: str | None = None,
+    append_results: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
     reward_leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if append_results and leaderboard_path.exists():
+        try:
+            existing = pd.read_csv(leaderboard_path)
+            leaderboard = pd.concat([existing, leaderboard], ignore_index=True)
+            leaderboard = leaderboard.sort_values("ranking_score", ascending=False).reset_index(drop=True)
+        except Exception as e:
+            print(f"Warning: could not append to existing leaderboard: {e}")
 
     leaderboard.to_csv(leaderboard_path, index=False)
     reward_leaderboard = leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
@@ -480,6 +489,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for timestamped leaderboard/reward/summary snapshots.",
     )
     parser.add_argument("--disable-snapshots", action="store_true", help="Disable timestamped snapshot output files.")
+    parser.add_argument("--append", action="store_true", help="Append results to existing leaderboard.")
     parser.add_argument("--run-label", default="", help="Optional suffix label appended to snapshot filenames.")
     parser.add_argument("--device", default=DEFAULT_PPO_DEVICE, help="PPO device (auto, cuda, cpu).")
     parser.add_argument("--use-lr-schedule", action="store_true", help="Use linear learning rate decay.")
@@ -508,6 +518,7 @@ def main() -> None:
         summary_path=summary_path,
         snapshot_dir=snapshot_dir,
         run_label=run_label,
+        append_results=args.append,
     )
     top = leaderboard.head(3)
 

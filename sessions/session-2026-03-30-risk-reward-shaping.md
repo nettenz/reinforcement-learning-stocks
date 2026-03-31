@@ -25,6 +25,12 @@ The previous reward function was limited to per-step return and directional shap
 - Integrated `argparse` into both scripts to support `--reward-mode`, `--rolling-reward-window`, and `--reward-epsilon`.
 - Passed new parameters through to the `TradingEnv` instantiation.
 - Updated the experiment logging to include the new reward configuration columns in the resulting CSVs.
+- Added `--device` flag support to `train_bot.py` so CPU training can be enforced.
+- Added `--append` functionality natively to `experiments.py` so large multi-configuration sweeps build a unified leaderboard dataset instead of overwriting intermediate states.
+
+### 3. Sweep Script Updates
+- Refactored `run_sweep.ps1` and `run_sweep.sh` to leverage the `--append` flag and `--device cpu` safely.
+- Allowed resume capabilities (e.g. starting seeds sequentially without data loss).
 
 ### 3. Dashboard Enhancements (`src/analytics_dashboard.py`)
 - Added a "Reward mode" selectbox and "Rolling reward window" / "Reward epsilon" number inputs to the Experiments sidebar.
@@ -48,14 +54,14 @@ The previous reward function was limited to per-step return and directional shap
 
 ## Commands to Run
 
-**To train with Sharpe reward:**
+**To train with Sharpe reward (CPU only):**
 ```bash
-.venv\Scripts\python src/train_bot.py --reward-mode sharpe --rolling-reward-window 50
+.venv\Scripts\python src/train_bot.py --device cpu --reward-mode sharpe --rolling-reward-window 50
 ```
 
-**To run an experiment sweep with Sortino reward:**
+**To run an experiment sweep with Sortino reward (appending to leaderboard, CPU only):**
 ```bash
-.venv\Scripts\python src/experiments.py --reward-mode sortino --rolling-reward-window 100 --timesteps 50000
+.venv\Scripts\python src/experiments.py --device cpu --append --reward-mode sortino --rolling-reward-window 100 --timesteps 50000
 ```
 
 **To start the updated dashboard:**

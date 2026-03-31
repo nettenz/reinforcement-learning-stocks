@@ -22,7 +22,6 @@ def main():
     parser.add_argument("--rolling-reward-window", type=int, default=100, help="Window size for rolling rewards.")
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
     parser.add_argument("--timesteps", type=int, default=20000, help="Total training timesteps.")
-    args = parser.parse_args()
 
     # Use M4 GPU (MPS) if available for Mac, default to CPU on Windows for stability
     if torch.backends.mps.is_available():
@@ -33,6 +32,9 @@ def main():
         DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU on Linux
     else:
         DEFAULT_PPO_DEVICE = "cpu"  # CPU fallback
+
+    parser.add_argument("--device", default=DEFAULT_PPO_DEVICE, help="PPO device (auto, cuda, cpu).")
+    args = parser.parse_args()
 
     # Load normalized Yahoo Finance tech basket data with merged daily news sentiment features
     df = get_tech_training_data(cache_path=DATA_PATH, include_news=True)
@@ -46,7 +48,7 @@ def main():
     env = TradingEnv(df, **env_kwargs)
 
     # Initialize the RL model (PPO)
-    model = PPO("MlpPolicy", env, verbose=1, device=DEFAULT_PPO_DEVICE)
+    model = PPO("MlpPolicy", env, verbose=1, device=args.device)
 
     # Train the model
     print(f"Training the agent (mode={args.reward_mode}, window={args.rolling_reward_window})...")
