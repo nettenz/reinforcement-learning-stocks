@@ -23,13 +23,11 @@ def main():
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
     parser.add_argument("--timesteps", type=int, default=20000, help="Total training timesteps.")
 
-    # Use M4 GPU (MPS) if available for Mac, default to CPU on Windows for stability
-    if torch.backends.mps.is_available():
+    # Prefer CUDA (NVIDIA GPU) first, then MPS (Apple Silicon), then CPU fallback
+    if torch.cuda.is_available():
+        DEFAULT_DEVICE = "cuda"  # NVIDIA GPU (e.g. RTX 5070 Ti)
+    elif torch.backends.mps.is_available():
         DEFAULT_DEVICE = "mps"  # Apple Silicon GPU acceleration
-    elif platform.system() == "Windows":
-        DEFAULT_DEVICE = "cpu"  # Force CPU on Windows for stability
-    elif torch.cuda.is_available():
-        DEFAULT_DEVICE = "cuda"  # NVIDIA GPU on Linux
     else:
         DEFAULT_DEVICE = "cpu"  # CPU fallback
 

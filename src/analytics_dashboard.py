@@ -26,7 +26,7 @@ from src.signal_analytics import (
 )
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
+DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "sac_trading_bot"
 DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 FALLBACK_DATA_PATH = ROOT_DIR / "data" / "mock_data.csv"
 DEFAULT_ACTIONABLE_TARGET = 0.55
@@ -108,7 +108,7 @@ def _make_command_from_config(
     )
     return (
         "python src/experiments.py "
-        f"--include-news --seeds {seeds} "
+        f"--include-news --use-stationary-features --seeds {seeds} "
         f"--timesteps {int(config['timesteps'])} "
         f"--learning-rates {_format_float(float(config['learning_rate']))} "
         f"--gammas {_format_float(float(config['gamma']))} "
@@ -127,6 +127,7 @@ def _make_command_from_config(
         f"--reward-action-bonus-scale {_format_float(float(config['reward_action_bonus_scale']))} "
         f"--reward-clip {_format_float(float(config['reward_clip']))} "
         f"{ignore_cost_flag} "
+        f"--append "
         f"--max-runs {seed_count} "
         f"--run-label {run_label}"
     )
@@ -480,12 +481,16 @@ def render_charts(
     show_signal_labels: bool,
     signal_label_budget: int,
 ) -> None:
-    st.subheader("Price and agent actions")
+    st.subheader("Price, Signals, and Market Velocity")
+    if "volume" not in enriched.columns:
+        enriched["volume"] = 0.0
+
     chart_df = enriched[
         [
             "step",
             "date",
             "price",
+            "volume",
             "net_worth",
             "cumulative_pnl",
             "action_label",
@@ -503,6 +508,10 @@ def render_charts(
     x_title = "Date" if has_valid_dates else "Step"
     tooltip_x = "date:T" if has_valid_dates else "step:Q"
     x_key = "date" if has_valid_dates else "step"
+    
+    # Pre-select shared scale/selection for all sub-charts
+    brush = alt.selection_interval(encodings=['x'])
+    
     chart_df["hover_label"] = chart_df.apply(
         lambda row: (
             f"{row['action_label']} @ {row['price']:.4f} | "
@@ -511,106 +520,91 @@ def render_charts(
         axis=1,
     )
 
-    base = alt.Chart(chart_df).encode(
-        x=alt.X(x_field, title=x_title),
-        y=alt.Y("price:Q", title="Price"),
+    # 1. PRICE & SIGNAL BKG ZONES
+    background_zones = (
+        alt.Chart(chart_df)
+        .mark_rect(opacity=0.08)
+        .encode(
+            x=alt.X(x_field),
+            x2=alt.X2(f"lead({x_key}):T" if has_valid_dates else f"calculate(datum.step + 1):Q"),
+            color=alt.Color(
+                "action_label:N",
+                scale=alt.Scale(
+                    domain=[ACTION_LABELS[0], ACTION_LABELS[1], ACTION_LABELS[2]],
+                    range=["transparent", "#10b981", "#ef4444"], 
+                ),
+                legend=None
+            )
+        )
     )
-    line = base.mark_line(color="#7ecbff", strokeWidth=1.8)
+
+    chart_df["price_legend"] = "Market Price"
+    base = alt.Chart(chart_df).encode(
+        x=alt.X(x_field, title=None, axis=alt.Axis(labels=False, ticks=False)),
+        y=alt.Y("price:Q", title="Price ($)", scale=alt.Scale(zero=False)),
+        color=alt.Color(
+            "price_legend:N",
+            title="Asset",
+            scale=alt.Scale(domain=["Market Price"], range=["#3b82f6"])
+        )
+    )
+    price_area = base.mark_area(opacity=0.25, interpolate="monotone")
+    line = base.mark_line(strokeWidth=2.5, interpolate="monotone")
 
     signal_df = chart_df[chart_df["action_label"].isin([ACTION_LABELS[1], ACTION_LABELS[2]])].copy()
-    label_budget = max(1, int(signal_label_budget))
-    label_stride = max(1, len(signal_df) // label_budget) if len(signal_df) else 1
-    label_df = signal_df.iloc[::label_stride].copy()
-    if len(signal_df):
-        label_df = pd.concat([label_df, signal_df.tail(1)], ignore_index=True).drop_duplicates(subset=[x_key], keep="last")
-
     hover_signal = alt.selection_point(fields=[x_key], nearest=True, on="mouseover", empty=False, clear=False)
     signal_points = (
         alt.Chart(signal_df)
-        .mark_circle(size=44, opacity=0.78)
+        .mark_circle(size=65, opacity=1.0, stroke="white", strokeWidth=1)
         .encode(
             x=x_field,
             y="price:Q",
             color=alt.Color(
                 "action_label:N",
                 title="Signal",
-                scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#3b82f6", "#1e40af"]),
+                scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#059669", "#dc2626"]),
             ),
             tooltip=[
                 tooltip_x,
                 alt.Tooltip("price:Q", title="Price", format=".4f"),
-                alt.Tooltip("action_label:N", title="Predicted"),
-                alt.Tooltip("true_label:N", title="True"),
-                alt.Tooltip("is_correct:N", title="Correct"),
-                alt.Tooltip("cumulative_pnl:Q", title="Cumulative P&L", format=".2f"),
+                alt.Tooltip("action_label:N", title="Agent Decision"),
+                alt.Tooltip("true_label:N", title="Ideal Signal"),
+                alt.Tooltip("cumulative_pnl:Q", title="P&L", format=".2f"),
             ],
         )
         .add_params(hover_signal)
     )
-    layers: list[alt.Chart] = [line, signal_points]
-    if show_signal_labels and len(label_df):
-        signal_labels = (
-            alt.Chart(label_df)
-            .mark_text(dy=-10, fontSize=10, fontWeight="bold")
-            .encode(
-                x=x_field,
-                y="price:Q",
-                text="action_label:N",
-                color=alt.Color(
-                    "action_label:N",
-                    legend=None,
-                    scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#3b82f6", "#1e40af"]),
-                ),
-            )
-        )
-        layers.append(signal_labels)
-    if len(signal_df):
-        hover_rule = alt.Chart(signal_df).transform_filter(hover_signal).mark_rule(color="#9ca3af", strokeDash=[4, 4]).encode(x=x_field)
-        hover_point = (
-            alt.Chart(signal_df)
-            .transform_filter(hover_signal)
-            .mark_circle(size=170, stroke="white", strokeWidth=1.8)
-            .encode(
-                x=x_field,
-                y="price:Q",
-                color=alt.Color(
-                    "action_label:N",
-                    legend=None,
-                    scale=alt.Scale(domain=[ACTION_LABELS[1], ACTION_LABELS[2]], range=["#3b82f6", "#1e40af"]),
-                ),
-            )
-        )
-        hover_text = (
-            alt.Chart(signal_df)
-            .transform_filter(hover_signal)
-            .mark_text(align="left", dx=10, dy=-12, fontSize=11, fontWeight="bold", color="#111827")
-            .encode(
-                x=x_field,
-                y="price:Q",
-                text="hover_label:N",
-            )
-        )
-        layers.extend([hover_rule, hover_point, hover_text])
 
-    if show_error_markers:
-        error_df = chart_df[(chart_df["action_label"].isin([ACTION_LABELS[1], ACTION_LABELS[2]])) & (~chart_df["is_correct"])].copy()
+    # 2. VOLUME SUB-CHART
+    volume_chart = (
+        alt.Chart(chart_df)
+        .mark_bar(opacity=0.4, color="#94a3b8")
+        .encode(
+            x=alt.X(x_field, title=x_title),
+            y=alt.Y("volume:Q", title="Vol", axis=alt.Axis(format=".2s")),
+            tooltip=[tooltip_x, alt.Tooltip("volume:Q", title="Volume", format=",")],
+        )
+        .properties(height=80)
+    )
+
+    # Errors as sharp markers
+    error_df = chart_df[(chart_df["action_label"].isin([ACTION_LABELS[1], ACTION_LABELS[2]])) & (~chart_df["is_correct"])].copy()
+    error_marks = alt.Chart(pd.DataFrame()) # Empty default
+    if not error_df.empty:
+        error_df["error_y"] = error_df.apply(lambda r: r["price"] * 1.025 if r["action_label"] == ACTION_LABELS[2] else r["price"] * 0.975, axis=1)
         error_marks = (
             alt.Chart(error_df)
-            .mark_point(shape="cross", size=140, color="#f7b6b2")
-            .encode(
-                x=x_field,
-                y="price:Q",
-                tooltip=[
-                    tooltip_x,
-                    alt.Tooltip("price:Q", title="Price", format=".4f"),
-                    alt.Tooltip("action_label:N", title="Predicted"),
-                    alt.Tooltip("true_label:N", title="True"),
-                ],
-            )
+            .mark_point(shape="x", size=110, opacity=1.0, strokeWidth=2.5, color="#f43f5e")
+            .encode(x=x_field, y="error_y:Q")
         )
-        layers.append(error_marks)
 
-    st.altair_chart(alt.layer(*layers).interactive(), width="stretch")
+    # Layer and stack
+    price_main = alt.layer(background_zones, price_area, line, signal_points, error_marks).properties(height=350).resolve_scale(color='independent')
+    
+    # Combined dashboard with VConcat
+    combined = alt.vconcat(price_main, volume_chart).resolve_scale(x='shared').configure_view(stroke=None)
+    
+    st.altair_chart(combined, width="stretch")
     if len(signal_df):
         st.caption("Tip: hover any Buy/Sell marker to pin the annotation; hover another marker to update it.")
     else:
@@ -628,7 +622,7 @@ def render_charts(
 
     pnl_area_positive = (
         alt.Chart(chart_df)
-        .mark_area(color="#2ecc71", opacity=0.28)
+        .mark_area(color="#2ecc71", opacity=0.28, interpolate="monotone")
         .encode(
             x=alt.X(x_field, title=x_title),
             y=alt.Y("cumulative_pnl_positive:Q", title="Cumulative P&L"),
@@ -636,7 +630,7 @@ def render_charts(
     )
     pnl_area_negative = (
         alt.Chart(chart_df)
-        .mark_area(color="#e74c3c", opacity=0.20)
+        .mark_area(color="#e74c3c", opacity=0.20, interpolate="monotone")
         .encode(
             x=alt.X(x_field, title=x_title),
             y=alt.Y("cumulative_pnl_negative:Q", title="Cumulative P&L"),
@@ -644,7 +638,7 @@ def render_charts(
     )
     pnl_line = (
         alt.Chart(chart_df)
-        .mark_line(color="#27ae60", strokeWidth=2)
+        .mark_line(color="#27ae60", strokeWidth=2, interpolate="monotone")
         .encode(
             x=alt.X(x_field, title=x_title),
             y=alt.Y("cumulative_pnl_visual:Q", title="Cumulative P&L"),
@@ -701,18 +695,23 @@ def render_charts(
     st.altair_chart(pnl_chart.interactive(), width="stretch")
 
     if show_horizon_panel:
+        st.subheader("2) Horizon Return Analysis")
         horizon_chart = (
             alt.Chart(chart_df)
-            .mark_bar(opacity=0.45)
+            .mark_bar(opacity=0.7)
             .encode(
                 x=alt.X(x_field, title=x_title),
-                y=alt.Y("horizon_return:Q", title="Horizon return"),
-                color=alt.condition("datum.horizon_return >= 0", alt.value("#3b82f6"), alt.value("#1e3a8a")),
+                y=alt.Y("horizon_return:Q", title="Horizon Return", axis=alt.Axis(format=".1%")),
+                color=alt.condition(
+                    "datum.horizon_return >= 0",
+                    alt.value("#2ecc71"),  # Vibrant Green
+                    alt.value("#e74c3c"),  # Vibrant Red
+                ),
                 tooltip=[
                     tooltip_x,
-                    alt.Tooltip("horizon_return:Q", title="Horizon return", format=".4%"),
-                    alt.Tooltip("action_label:N", title="Predicted"),
-                    alt.Tooltip("true_label:N", title="True"),
+                    alt.Tooltip("horizon_return:Q", title="Horizon Return", format=".4%"),
+                    alt.Tooltip("action_label:N", title="Predicted Action"),
+                    alt.Tooltip("true_label:N", title="Market Reality"),
                 ],
             )
         )
@@ -770,11 +769,11 @@ def render_signal_analytics_page(
         show_error_markers = st.toggle("Highlight incorrect actionable signals", value=True)
 
     if not run:
-        st.info("Set your inputs and click **Run analytics**.")
+        st.info("Set your inputs and click **Run analytics** in the sidebar to begin.")
         return
 
     try:
-        with st.spinner("Evaluating model signals..."):
+        with st.spinner("🚀 Running agent simulation..."):
             enriched, conf = evaluate_signals(
                 data_path=data_path,
                 model_path=model_path,
@@ -788,19 +787,37 @@ def render_signal_analytics_page(
 
     enriched_view = add_cumulative_pnl(enriched)
 
-    st.subheader("1) Price and Signals")
-    render_charts(
-        enriched_view,
-        chart_window_rows=chart_window_rows,
-        show_horizon_panel=show_horizon_panel,
-        show_error_markers=show_error_markers,
-        show_signal_labels=show_signal_labels,
-        signal_label_budget=signal_label_budget,
-    )
+    # PREMIUM KPI ROW
+    st.markdown("### 📊 Performance Summary")
+    m1, m2, m3, m4 = st.columns(4)
+    # Calculate summary stats
+    acc = float(enriched_view["is_correct"].mean())
+    actionable_df = enriched_view[enriched_view["action_label"].isin([ACTION_LABELS[1], ACTION_LABELS[2]])]
+    act_acc = float(actionable_df["is_correct"].mean()) if not actionable_df.empty else 0.0
+    total_pnl = float(enriched_view["cumulative_pnl"].iloc[-1])
+    max_dd = float((enriched_view["net_worth"] / enriched_view["net_worth"].cummax() - 1).min())
 
-    st.subheader("2) Performance Summary")
+    m1.metric("Overall Accuracy", f"{acc:.1%}", help="Percentage of correctly predicted high-conviction moves.")
+    m2.metric("Actionable Accuracy", f"{act_acc:.1%}", delta=f"{act_acc - 0.5:.1%}" if act_acc > 0 else None, help="Accuracy on Buy/Sell signals only (ignores Hold).")
+    m3.metric("Total P&L", f"${total_pnl:.2f}", help="Cumulative profit/loss over the evaluated period.")
+    m4.metric("Max Drawdown", f"{max_dd:.1%}", delta_color="inverse", help="Deepest peak-to-trough drop in net worth.")
+
+    st.divider()
+
+    st.subheader("1) Price and Signals Visualization")
+    with st.container():
+        render_charts(
+            enriched_view,
+            chart_window_rows=chart_window_rows,
+            show_horizon_panel=show_horizon_panel,
+            show_error_markers=show_error_markers,
+            show_signal_labels=show_signal_labels,
+            signal_label_budget=signal_label_budget,
+        )
+
+    st.subheader("2) Agent Policy Diagnostics")
     policy_label = "Deterministic (argmax)" if deterministic_policy else "Stochastic (sampled)"
-    st.caption(f"Policy mode: **{policy_label}**")
+    st.caption(f"Current Policy mode: **{policy_label}**")
     render_metrics(enriched_view)
 
     st.subheader("3) Theoretical Improvement Headroom")
@@ -838,7 +855,7 @@ def render_signal_analytics_page(
 
 def render_experiments_page() -> None:
     st.header("Experiments")
-    st.caption("Run multi-seed PPO sweeps and rank configurations on validation performance.")
+    st.caption("Run multi-seed SAC (continuous) sweeps and rank configurations on validation performance.")
 
     with st.sidebar:
         st.subheader("Experiment runner")
@@ -915,7 +932,7 @@ def render_experiments_page() -> None:
             reward_epsilon=float(reward_epsilon),
             reward_clip=float(reward_clip),
             reward_ignore_transaction_cost=bool(reward_ignore_transaction_cost),
-            use_stationary_features=False, # Default to False in dashboard for now
+            use_stationary_features=True,  # SAC models are trained with stationary features
             max_runs=int(max_runs),
             leaderboard_path=str(leaderboard_path),
             reward_leaderboard_path=str(reward_leaderboard_path),
@@ -923,9 +940,10 @@ def render_experiments_page() -> None:
             disable_snapshots=False,
             snapshot_dir=str(snapshot_dir),
             run_label=run_label.strip(),
-            device="auto", # Use auto in dashboard
+            device="cuda" if __import__('torch').cuda.is_available() else "cpu",
             use_lr_schedule=False,
             n_envs=1,
+            append=True,
         )
         with st.spinner("Running experiments..."):
             leaderboard = run_experiments(args)
@@ -939,6 +957,7 @@ def render_experiments_page() -> None:
                 summary_path=summary_path,
                 snapshot_dir=snapshot_dir,
                 run_label=run_label.strip() or "dashboard",
+                append_results=True,
             )
         st.success(f"Experiments completed. Saved to `{leaderboard_path}`.")
 
@@ -958,12 +977,101 @@ def render_experiments_page() -> None:
         c2.metric("Best val actionable acc", f"{best['val_actionable_accuracy'] * 100:.2f}%")
         c3.metric("Best test cumulative return", f"{best['test_cumulative_signal_return'] * 100:.2f}%")
 
+        # Risk-adjusted metrics row
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Val Sharpe", f"{best.get('val_sharpe_ratio', 0):.2f}")
+        r2.metric("Test Sharpe", f"{best.get('test_sharpe_ratio', 0):.2f}")
+        r3.metric("Val Max DD", f"{best.get('val_max_drawdown', 0) * 100:.2f}%")
+        r4.metric("Test Max DD", f"{best.get('test_max_drawdown', 0) * 100:.2f}%")
+
+    # Leaderboard Performance Charts
+    if len(leaderboard) > 1:
+        st.subheader("3) Leaderboard Performance")
+
+        chart_cols = []
+        if "val_sharpe_ratio" in leaderboard.columns:
+            chart_cols.extend(["val_sharpe_ratio", "test_sharpe_ratio"])
+        if "val_cumulative_signal_return" in leaderboard.columns:
+            chart_cols.extend(["val_cumulative_signal_return", "test_cumulative_signal_return"])
+        if "ranking_score" in leaderboard.columns:
+            chart_cols.append("ranking_score")
+
+        if chart_cols:
+            chart_df = leaderboard[chart_cols].reset_index()
+            chart_df = chart_df.rename(columns={"index": "run"})
+            chart_long = chart_df.melt(id_vars=["run"], var_name="metric", value_name="value")
+
+            # Standardize colors for better differentiation: Validation = Sky, Test = Emerald/Green
+            metric_colors = {
+                "val_sharpe_ratio": "#38bdf8",      # Sky 400
+                "test_sharpe_ratio": "#10b981",     # Emerald 500
+                "val_cumulative_signal_return": "#7dd3fc", 
+                "test_cumulative_signal_return": "#34d399",
+                "ranking_score": "#818cf8"          # Indigo
+            }
+
+            perf_chart = (
+                alt.Chart(chart_long)
+                .mark_area(opacity=0.25, interpolate="monotone")
+                .encode(
+                    x=alt.X("run:Q", title="Ranked Performance (Best to Worst)"),
+                    y=alt.Y("value:Q", title="Metric Value"),
+                    color=alt.Color(
+                        "metric:N", 
+                        title="Performance Metric",
+                        scale=alt.Scale(
+                            domain=list(metric_colors.keys()),
+                            range=list(metric_colors.values())
+                        )
+                    ),
+                    tooltip=[
+                        alt.Tooltip("run:Q", title="Rank"),
+                        alt.Tooltip("metric:N", title="Metric"),
+                        alt.Tooltip("value:Q", title="Value", format=".4f"),
+                    ],
+                )
+            )
+            perf_line = (
+                alt.Chart(chart_long)
+                .mark_line(interpolate="monotone", strokeWidth=2.5)
+                .encode(
+                    x="run:Q",
+                    y="value:Q",
+                    color=alt.Color("metric:N", scale=alt.Scale(domain=list(metric_colors.keys()), range=list(metric_colors.values()))),
+                )
+            )
+            st.altair_chart((perf_chart + perf_line).interactive(), width="stretch")
+
+        # 4) Seed comparison scatter
+        if "seed" in leaderboard.columns and "reward_mode" in leaderboard.columns:
+            st.subheader("4) Seed Stability & Reward Efficiency")
+            scatter = (
+                alt.Chart(leaderboard)
+                .mark_circle(size=100, opacity=0.8, stroke="white", strokeWidth=0.5)
+                .encode(
+                    x=alt.X("val_sharpe_ratio:Q", title="Validation Sharpe"),
+                    y=alt.Y("test_sharpe_ratio:Q", title="Test (Forward-Look) Sharpe"),
+                    color=alt.Color("reward_mode:N", title="Reward Strategy", scale=alt.Scale(scheme="set1")),
+                    size=alt.Size("ranking_score:Q", title="Ranking Score"),
+                    tooltip=[
+                        alt.Tooltip("seed:Q", title="Seed"),
+                        alt.Tooltip("reward_mode:N", title="Strategy"),
+                        alt.Tooltip("val_sharpe_ratio:Q", title="Val Sharpe", format=".2f"),
+                        alt.Tooltip("test_sharpe_ratio:Q", title="Test Sharpe", format=".2f"),
+                        alt.Tooltip("ranking_score:Q", title="Overall Score", format=".4f"),
+                    ],
+                )
+            )
+            zero_line_y = alt.Chart(pd.DataFrame({"zero": [0]})).mark_rule(color="#f43f5e", strokeDash=[4, 4]).encode(y="zero:Q")
+            zero_line_x = alt.Chart(pd.DataFrame({"zero": [0]})).mark_rule(color="#f43f5e", strokeDash=[4, 4]).encode(x="zero:Q")
+            st.altair_chart((scatter + zero_line_y + zero_line_x).interactive(), width="stretch")
+
     if reward_leaderboard_path.exists():
         reward_leaderboard = pd.read_csv(reward_leaderboard_path)
-        st.subheader("3) Reward Leaderboard")
+        st.subheader("5) Reward Leaderboard")
         st.dataframe(reward_leaderboard, width="stretch")
         if len(reward_leaderboard):
-            st.subheader("4) Best Reward Snapshot")
+            st.subheader("6) Best Reward Snapshot")
             best_reward = reward_leaderboard.iloc[0]
             r1, r2, r3 = st.columns(3)
             r1.metric("Best val reward mean", f"{best_reward['val_reward_total_mean']:.5f}")
@@ -971,7 +1079,7 @@ def render_experiments_page() -> None:
             r3.metric("Best val drawdown", f"{best_reward['val_reward_drawdown_mean']:.5f}")
 
     if summary_path.exists():
-        st.subheader("5) Summary JSON")
+        st.subheader("7) Summary JSON")
         st.code(summary_path.read_text(encoding="utf-8"), language="json")
 
 

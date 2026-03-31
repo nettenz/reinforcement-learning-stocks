@@ -30,13 +30,11 @@ DEFAULT_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderb
 DEFAULT_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary.json"
 DEFAULT_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots"
 
-# Use M4 GPU (MPS) if available for Mac, default to CPU on Windows for stability
-if torch.backends.mps.is_available():
+# Prefer CUDA (NVIDIA GPU) first, then MPS (Apple Silicon), then CPU fallback
+if torch.cuda.is_available():
+    DEFAULT_DEVICE = "cuda"  # NVIDIA GPU (e.g. RTX 5070 Ti)
+elif torch.backends.mps.is_available():
     DEFAULT_DEVICE = "mps"  # Apple Silicon GPU acceleration
-elif platform.system() == "Windows":
-    DEFAULT_DEVICE = "cpu"  # Force CPU on Windows for stability
-elif torch.cuda.is_available():
-    DEFAULT_DEVICE = "cuda"  # NVIDIA GPU on Linux
 else:
     DEFAULT_DEVICE = "cpu"  # CPU fallback
 
@@ -69,7 +67,7 @@ def _split_walk_forward(df: pd.DataFrame, train_ratio: float, val_ratio: float) 
     return train_df, val_df, test_df
 
 
-def _simulate_with_model(model: PPO, df: pd.DataFrame, env_kwargs: dict[str, float | bool]) -> pd.DataFrame:
+def _simulate_with_model(model, df: pd.DataFrame, env_kwargs: dict[str, float | bool]) -> pd.DataFrame:
     env = TradingEnv(df, **env_kwargs)
     obs, _ = env.reset()
     rows: list[dict[str, float | int | pd.Timestamp]] = []
@@ -80,13 +78,14 @@ def _simulate_with_model(model: PPO, df: pd.DataFrame, env_kwargs: dict[str, flo
         price = float(df.loc[step_idx, env.price_column])
         date_value = pd.to_datetime(df.loc[step_idx, "Date"]) if "Date" in df.columns else step_idx
 
-        obs, reward, terminated, truncated, info = env.step(int(action))
+        obs, reward, terminated, truncated, info = env.step(action)
+        discrete_pos = env.position  # Translate continuous weight to 0/1/2
         rows.append(
             {
                 "step": step_idx,
                 "date": date_value,
                 "price": price,
-                "action": int(action),
+                "action": discrete_pos,
                 "reward": float(reward),
                 "net_worth": float(env.net_worth),
                 "reward_portfolio_return": float(info.get("reward_portfolio_return", 0.0)),

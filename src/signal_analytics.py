@@ -6,14 +6,20 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from stable_baselines3 import SAC
+from stable_baselines3 import PPO
 
 from src.trading_env import TradingEnv
 
 
 ACTION_LABELS = {0: "Hold", 1: "Buy", 2: "Sell"}
 MARKET_FEATURE_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
+STATIONARY_FEATURE_COLUMNS = ["LogReturn", "VolLogDiff", "RelRange", "RelOpen", "RelMACD", "RSI_Centered"]
 NEWS_FEATURE_COLUMNS = ["NewsCount", "SentimentMean", "SentimentStd", "SentimentMin", "SentimentMax"]
-BASE_OBSERVATION_DIM = len(MARKET_FEATURE_COLUMNS) + 2  # account + shares held
+
+# Account state is always [balance, shares_held] = 2
+ACCOUNT_STATE_DIM = 2
+# Position memory is [current_weight, unrealized_pnl, time_in_position] = 3 (when enabled)
+POSITION_MEMORY_DIM = 3
 
 
 @dataclass(frozen=True)
@@ -45,37 +51,78 @@ def resolve_model_path(model_path: str | Path) -> Path:
     raise FileNotFoundError(f"Model not found at '{path}' or '{zip_path}'.")
 
 
-def _expected_observation_dim(model: SAC) -> int:
+def _load_model(model_path: str | Path):
+    """Auto-detect and load either SAC or PPO model."""
+    resolved = resolve_model_path(model_path).as_posix()
+    try:
+        return SAC.load(resolved), "sac"
+    except Exception:
+        return PPO.load(resolved), "ppo"
+
+
+def _expected_observation_dim(model) -> int:
     shape = getattr(model.observation_space, "shape", None)
     if not shape or len(shape) != 1:
         raise ValueError(f"Unsupported model observation space shape: {shape}")
     return int(shape[0])
 
 
-def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> pd.DataFrame:
-    min_dim = BASE_OBSERVATION_DIM
-    max_dim = BASE_OBSERVATION_DIM + len(NEWS_FEATURE_COLUMNS) + 1  # optional position feature
-    if expected_obs_dim < min_dim or expected_obs_dim > max_dim:
+def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> tuple[pd.DataFrame, bool]:
+    """
+    Align the DataFrame columns to match what the model expects.
+    
+    Returns (aligned_df, include_position_in_observation).
+    
+    Observation layout:
+        [market_features] + [news_features] + [balance, shares_held] + [weight, pnl, time]
+         (5 OHLCV or 6 stationary)  (0-5)          (2)                    (0 or 3)
+    """
+    # Determine which market features the data has
+    has_ohlcv = all(col in df.columns for col in MARKET_FEATURE_COLUMNS)
+    has_stationary = any(col in df.columns for col in STATIONARY_FEATURE_COLUMNS)
+    
+    if has_stationary:
+        available_market = [col for col in STATIONARY_FEATURE_COLUMNS if col in df.columns]
+    elif has_ohlcv:
+        available_market = list(MARKET_FEATURE_COLUMNS)
+    else:
+        available_market = []
+    
+    n_market = len(available_market)
+    available_news = [col for col in NEWS_FEATURE_COLUMNS if col in df.columns]
+    
+    # Try to solve: expected = n_market + n_news + ACCOUNT_STATE_DIM [+ POSITION_MEMORY_DIM]
+    remaining_with_pos = expected_obs_dim - n_market - ACCOUNT_STATE_DIM - POSITION_MEMORY_DIM
+    remaining_without_pos = expected_obs_dim - n_market - ACCOUNT_STATE_DIM
+    
+    if 0 <= remaining_with_pos <= len(NEWS_FEATURE_COLUMNS):
+        include_position = True
+        required_news_count = remaining_with_pos
+    elif 0 <= remaining_without_pos <= len(NEWS_FEATURE_COLUMNS):
+        include_position = False
+        required_news_count = remaining_without_pos
+    else:
+        # Possible min/max for diagnostics
+        min_dim = n_market + ACCOUNT_STATE_DIM
+        max_dim = n_market + len(NEWS_FEATURE_COLUMNS) + ACCOUNT_STATE_DIM + POSITION_MEMORY_DIM
         raise ValueError(
-            f"Model expects observation size {expected_obs_dim}, but TradingEnv supports {min_dim}-{max_dim}. "
+            f"Model expects observation size {expected_obs_dim}, but TradingEnv supports "
+            f"{min_dim}-{max_dim} with {n_market} market features. "
             "Use a compatible model or data schema."
         )
-
-    includes_position = expected_obs_dim >= (BASE_OBSERVATION_DIM + 1)
-    required_news_count = expected_obs_dim - BASE_OBSERVATION_DIM - (1 if includes_position else 0)
-    required_news_count = max(0, required_news_count)
-    selected_news_columns = NEWS_FEATURE_COLUMNS[:required_news_count]
-
+    
+    selected_news = NEWS_FEATURE_COLUMNS[:required_news_count]
+    
     aligned = df.copy()
-    for col in selected_news_columns:
+    for col in selected_news:
         if col not in aligned.columns:
             aligned[col] = 0.0
-
-    extra_news_columns = [col for col in NEWS_FEATURE_COLUMNS if col not in selected_news_columns and col in aligned.columns]
-    if extra_news_columns:
-        aligned = aligned.drop(columns=extra_news_columns)
-
-    return aligned
+    
+    extra_news = [col for col in NEWS_FEATURE_COLUMNS if col not in selected_news and col in aligned.columns]
+    if extra_news:
+        aligned = aligned.drop(columns=extra_news)
+    
+    return aligned, include_position
 
 
 def simulate_agent_signals(
@@ -83,11 +130,10 @@ def simulate_agent_signals(
     model_path: str | Path,
     deterministic: bool = True,
 ) -> pd.DataFrame:
-    model = SAC.load(resolve_model_path(model_path).as_posix())
+    model, algo_type = _load_model(model_path)
     expected_obs_dim = _expected_observation_dim(model)
-    aligned_df = _align_features_to_model(df, expected_obs_dim=expected_obs_dim)
-    include_position_in_observation = expected_obs_dim >= (BASE_OBSERVATION_DIM + 1)
-    env = TradingEnv(aligned_df, include_position_in_observation=include_position_in_observation)
+    aligned_df, include_position = _align_features_to_model(df, expected_obs_dim=expected_obs_dim)
+    env = TradingEnv(aligned_df, include_position_in_observation=include_position)
     actual_obs_dim = int(env.observation_space.shape[0])
     if actual_obs_dim != expected_obs_dim:
         raise ValueError(
@@ -108,11 +154,14 @@ def simulate_agent_signals(
         # Translate the raw [-1.0, 1.0] continuous weight into discrete 0/1/2 logic
         discrete_pos = env.position
         
+        current_volume = float(aligned_df.loc[step_idx, "Volume"]) if "Volume" in aligned_df.columns else 0.0
+        
         rows.append(
             {
                 "step": step_idx,
                 "date": pd.to_datetime(date_value) if "Date" in df.columns else date_value,
                 "price": current_price,
+                "volume": current_volume,
                 "action": discrete_pos,
                 "action_label": ACTION_LABELS[discrete_pos],
                 "reward": float(reward),
