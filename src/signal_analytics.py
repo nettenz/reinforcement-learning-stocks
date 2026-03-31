@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
 
 from src.trading_env import TradingEnv
 
@@ -45,7 +45,7 @@ def resolve_model_path(model_path: str | Path) -> Path:
     raise FileNotFoundError(f"Model not found at '{path}' or '{zip_path}'.")
 
 
-def _expected_observation_dim(model: PPO) -> int:
+def _expected_observation_dim(model: SAC) -> int:
     shape = getattr(model.observation_space, "shape", None)
     if not shape or len(shape) != 1:
         raise ValueError(f"Unsupported model observation space shape: {shape}")
@@ -83,7 +83,7 @@ def simulate_agent_signals(
     model_path: str | Path,
     deterministic: bool = True,
 ) -> pd.DataFrame:
-    model = PPO.load(resolve_model_path(model_path).as_posix())
+    model = SAC.load(resolve_model_path(model_path).as_posix())
     expected_obs_dim = _expected_observation_dim(model)
     aligned_df = _align_features_to_model(df, expected_obs_dim=expected_obs_dim)
     include_position_in_observation = expected_obs_dim >= (BASE_OBSERVATION_DIM + 1)
@@ -103,14 +103,18 @@ def simulate_agent_signals(
         current_price = float(aligned_df.loc[step_idx, env.price_column])
         date_value = aligned_df.loc[step_idx, "Date"] if "Date" in aligned_df.columns else step_idx
 
-        obs, reward, terminated, truncated, _ = env.step(int(action))
+        obs, reward, terminated, truncated, _ = env.step(action)
+        
+        # Translate the raw [-1.0, 1.0] continuous weight into discrete 0/1/2 logic
+        discrete_pos = env.position
+        
         rows.append(
             {
                 "step": step_idx,
                 "date": pd.to_datetime(date_value) if "Date" in df.columns else date_value,
                 "price": current_price,
-                "action": int(action),
-                "action_label": ACTION_LABELS[int(action)],
+                "action": discrete_pos,
+                "action_label": ACTION_LABELS[discrete_pos],
                 "reward": float(reward),
                 "net_worth": float(env.net_worth),
             }

@@ -93,7 +93,7 @@ def test_no_future_price_in_reward():
     
     # Step 2: Test Short position
     print("\n[STEP 2] Taking SHORT action at price 111")
-    obs, reward, terminated, truncated, info = env.step(2)  # Short
+    obs, reward, terminated, truncated, info = env.step(-1)  # Short (Weight -1.0)
     
     print(f"  Current step: {env.current_step}")
     print(f"  Reward direction: {info['reward_direction']:.6f}")

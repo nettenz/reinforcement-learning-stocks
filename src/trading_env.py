@@ -1,34 +1,137 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+from collections import deque
+
+class PositionManager:
+    """Handles portfolio math, fractional/integer scaling, and transaction costs."""
+    def __init__(self, initial_balance, transaction_cost_rate, trade_penalty):
+        self.initial_balance = float(initial_balance)
+        self.transaction_cost_rate = float(transaction_cost_rate)
+        self.trade_penalty = float(trade_penalty)
+        self.reset()
+        
+    def reset(self):
+        self.balance = self.initial_balance
+        self.shares_held = 0
+        self.net_worth = self.initial_balance
+        self.peak_net_worth = self.initial_balance
+        self.current_weight = 0.0
+        self.time_in_position = 0
+        self.entry_price = 0.0
+        
+    def step(self, target_weight, current_price):
+        target_weight = float(np.clip(target_weight, -1.0, 1.0))
+        
+        # Debounce: Do not incur fees for micro-adjustments smaller than 5% portfolio shift
+        if abs(target_weight - self.current_weight) < 0.05:
+            target_weight = self.current_weight
+            
+        target_value = target_weight * self.net_worth
+        target_shares = int(target_value // current_price)
+        delta_shares = target_shares - self.shares_held
+        
+        trade_executed = delta_shares != 0
+        
+        if trade_executed:
+            gross_value = abs(delta_shares) * current_price
+            fee = gross_value * self.transaction_cost_rate
+            
+            self.balance -= (delta_shares * current_price) + fee
+            self.shares_held = target_shares
+            
+            if self.trade_penalty > 0:
+                self.balance -= self.trade_penalty
+                
+            if target_weight != 0 and self.current_weight == 0:
+                self.entry_price = current_price
+                self.time_in_position = 0
+                
+        if self.shares_held == 0:
+            self.current_weight = 0.0
+            self.entry_price = 0.0
+            self.time_in_position = 0
+        else:
+            self.current_weight = target_weight
+            self.time_in_position += 1
+            
+        prev_net_worth = self.net_worth
+        self.net_worth = self.balance + (self.shares_held * current_price)
+        self.peak_net_worth = max(self.peak_net_worth, self.net_worth)
+        
+        portfolio_return = (self.net_worth / max(prev_net_worth, 1e-8)) - 1.0
+        drawdown = (self.peak_net_worth - self.net_worth) / max(self.peak_net_worth, 1e-8)
+        
+        # Memory state components
+        unrealized_pnl_pct = 0.0
+        if self.entry_price > 0:
+            ratio = current_price / self.entry_price
+            unrealized_pnl_pct = ratio - 1.0 if self.shares_held > 0 else 1.0 - ratio
+            
+        return trade_executed, portfolio_return, drawdown, unrealized_pnl_pct
+
+
+class RewardEvaluator:
+    """Strategy pattern for varying reward schemas (Legacy, Sharpe, Sortino)."""
+    def __init__(self, mode, rolling_window, epsilon, return_scale, dir_scale, hold_scale, dd_scale, action_scale, clip):
+        self.mode = mode.lower()
+        self.epsilon = epsilon
+        self.return_scale = return_scale
+        self.dir_scale = dir_scale
+        self.hold_scale = hold_scale
+        self.dd_scale = dd_scale
+        self.action_scale = action_scale
+        self.clip = clip
+        self.returns_buffer = deque(maxlen=rolling_window)
+
+    def calculate(self, portfolio_return, realized_return, current_weight, trade_executed, drawdown):
+        strategy_realized_return = current_weight * realized_return
+        self.returns_buffer.append(strategy_realized_return)
+
+        hold_penalty = -self.hold_scale * abs(realized_return) if abs(current_weight) < 0.1 else 0.0
+        action_bonus = self.action_scale if trade_executed else 0.0
+        dd_penalty = -self.dd_scale * drawdown
+        
+        directional_reward = strategy_realized_return
+
+        base_reward = 0.0
+        risk_metric = 0.0
+
+        if self.mode == "sharpe":
+            risk_metric = self._sharpe()
+            base_reward = self.return_scale * risk_metric
+        elif self.mode == "sortino":
+            risk_metric = self._sortino()
+            base_reward = self.return_scale * risk_metric
+        else:
+            base_reward = (self.return_scale * portfolio_return) + (self.dir_scale * directional_reward)
+
+        total = base_reward + hold_penalty + action_bonus + dd_penalty
+        return float(np.clip(total, -self.clip, self.clip)), risk_metric, strategy_realized_return, directional_reward, hold_penalty, action_bonus, dd_penalty
+
+    def _sharpe(self):
+        if len(self.returns_buffer) < 2: return 0.0
+        rets = np.array(self.returns_buffer)
+        std = np.std(rets)
+        return np.mean(rets) / std if std > self.epsilon else 0.0
+
+    def _sortino(self):
+        if len(self.returns_buffer) < 2: return 0.0
+        rets = np.array(self.returns_buffer)
+        downside = rets[rets < 0]
+        mean = np.mean(rets)
+        if len(downside) < 1: return mean / self.epsilon if mean > 0 else 0.0
+        d_std = np.std(downside)
+        return mean / d_std if d_std > self.epsilon else (mean / self.epsilon if mean > 0 else 0.0)
+    
+    def reset(self):
+        self.returns_buffer.clear()
 
 
 class TradingEnv(gym.Env):
     """
-    Trading environment with multi-component reward function (NO LOOK-AHEAD BIAS).
-    
-    Reward Components:
-    1. Portfolio Return: Actual P&L from position changes
-    2. Directional Reward: Rewards position alignment with REALIZED price movement
-       - Uses (current_price / prev_price) - 1, NOT future prices
-       - Long position + positive realized return = positive reward
-       - Short position + positive realized return = negative reward
-    3. Hold Penalty: Penalizes staying neutral when market is moving
-    4. Action Bonus: Small bonus for taking positions (anti-collapse)
-    5. Drawdown Penalty: Penalizes portfolio drawdown from peak
-    
-    All reward components use ONLY prices at timestep t or earlier.
-    NO future price information is used in the reward calculation.
-    
-    Action Space: Discrete(3)
-        0 = Neutral (no position)
-        1 = Long (buy and hold)
-        2 = Short (sell short)
-    
-    Observation Space: Box
-        - OHLCV market features
-        - News sentiment features (if available)
-        - Account state: balance, shares_held, position (optional)
+    OOP Refactored Continuous Trading Environment.
+    Supports fractional sizing (-1.0 to 1.0) and maintains independent state tracking.
     """
     def __init__(
         self,
@@ -50,269 +153,114 @@ class TradingEnv(gym.Env):
         reward_epsilon=1e-6,
     ):
         super(TradingEnv, self).__init__()
-        from collections import deque
         self.df = df
-        self.initial_balance = initial_balance
-        self.include_position_in_observation = bool(include_position_in_observation)
-        self.transaction_cost_rate = float(transaction_cost_rate)
-        self.trade_penalty = float(trade_penalty)
-        self.reward_return_scale = float(reward_return_scale)
-        self.reward_direction_scale = float(reward_direction_scale)
-        self.reward_hold_penalty_scale = float(reward_hold_penalty_scale)
-        self.reward_drawdown_penalty_scale = float(reward_drawdown_penalty_scale)
-        self.reward_action_bonus_scale = float(reward_action_bonus_scale)
-        self.reward_clip = float(reward_clip)
-        self.reward_ignore_transaction_cost = bool(reward_ignore_transaction_cost)
-        self.reward_mode = str(reward_mode).lower()
-        self.rolling_reward_window = int(rolling_reward_window)
-        self.reward_epsilon = float(reward_epsilon)
-        self.returns_buffer = deque(maxlen=self.rolling_reward_window)
+        self.include_position = bool(include_position_in_observation)
         self.current_step = 0
-        self.balance = initial_balance
-        self.shares_held = 0
-        self.net_worth = initial_balance
-        self.reward_balance = float(initial_balance)
-        self.reward_shares_held = 0
-        self.reward_net_worth = float(initial_balance)
-        self.reward_peak_net_worth = float(initial_balance)
-        self.position = 0 # 0=Neutral, 1=Long, 2=Short (mapped to -1 internally)
-        
-        # Action space: 0 = Neutral, 1 = Long, 2 = Short
-        self.action_space = spaces.Discrete(3)
+        self.price_column = 'RawClose' if 'RawClose' in self.df.columns else 'Close'
 
+        # OOP Subsystems
+        self.pm = PositionManager(initial_balance, transaction_cost_rate, trade_penalty)
+        self.re = RewardEvaluator(
+            reward_mode, rolling_reward_window, reward_epsilon,
+            reward_return_scale, reward_direction_scale, reward_hold_penalty_scale,
+            reward_drawdown_penalty_scale, reward_action_bonus_scale, reward_clip
+        )
+        
+        # Continuous Action Space: [-1.0 (Full Short), 1.0 (Full Long)]
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
+
+        # Observation Space Configuration
         if market_feature_columns is None:
-            # Default to original columns if they exist
             if all(col in self.df.columns for col in ["Open", "High", "Low", "Close", "Volume"]):
                 self.market_feature_columns = ["Open", "High", "Low", "Close", "Volume"]
             else:
-                # Auto-detect stationary columns
                 potential_cols = ["LogReturn", "VolLogDiff", "RelRange", "RelOpen", "RelMACD", "RSI_Centered"]
                 self.market_feature_columns = [col for col in potential_cols if col in self.df.columns]
         else:
             self.market_feature_columns = market_feature_columns
 
-        self.news_feature_columns = [
-            "NewsCount",
-            "SentimentMean",
-            "SentimentStd",
-            "SentimentMin",
-            "SentimentMax",
-        ]
+        self.news_feature_columns = ["NewsCount", "SentimentMean", "SentimentStd", "SentimentMin", "SentimentMax"]
         self.active_news_columns = [col for col in self.news_feature_columns if col in self.df.columns]
 
-        # Observation space: market features + optional news features + balance + shares held (+ position for newer models)
-        state_feature_count = 3 if self.include_position_in_observation else 2
-        observation_size = len(self.market_feature_columns) + len(self.active_news_columns) + state_feature_count
+        # Base market + news + [balance, shares_held]
+        state_count = 2
+        
+        # + [current_weight, unrealized_pnl, time_in_position]
+        if self.include_position:
+            state_count += 3 
+            
+        observation_size = len(self.market_feature_columns) + len(self.active_news_columns) + state_count
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(observation_size,), dtype=np.float32)
-        self.price_column = 'RawClose' if 'RawClose' in self.df.columns else 'Close'
 
-    def _get_obs(self):
+    def _get_obs(self, unrealized_pnl=0.0):
         row = self.df.loc[self.current_step]
         market_values = [float(row[col]) for col in self.market_feature_columns]
         news_values = [float(row[col]) for col in self.active_news_columns]
-        account_state = [self.balance, self.shares_held]
-        if self.include_position_in_observation:
-            account_state.append(self.position)
-        obs = np.array(market_values + news_values + account_state, dtype=np.float32)
-        return obs
+        
+        account_state = [self.pm.balance, self.pm.shares_held]
+        if self.include_position:
+            account_state.extend([self.pm.current_weight, unrealized_pnl, self.pm.time_in_position])
+            
+        return np.array(market_values + news_values + account_state, dtype=np.float32)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.current_step = 0
-        self.balance = self.initial_balance
-        self.shares_held = 0
-        self.net_worth = self.initial_balance
-        self.reward_balance = float(self.initial_balance)
-        self.reward_shares_held = 0
-        self.reward_net_worth = float(self.initial_balance)
-        self.reward_peak_net_worth = float(self.initial_balance)
-        self.position = 0
-        self.returns_buffer.clear()
+        self.pm.reset()
+        self.re.reset()
         return self._get_obs(), {}
+    
+    @property
+    def net_worth(self):
+        # Expose net_worth for backwards compatibility scripts reading the env
+        return self.pm.net_worth
 
-    def _calculate_sharpe(self):
-        if len(self.returns_buffer) < 2:
-            return 0.0
-        rets = np.array(self.returns_buffer)
-        mean = np.mean(rets)
-        std = np.std(rets)
-        if std < self.reward_epsilon:
-            return 0.0
-        return mean / std
-
-    def _calculate_sortino(self):
-        if len(self.returns_buffer) < 2:
-            return 0.0
-        rets = np.array(self.returns_buffer)
-        mean = np.mean(rets)
-        downside_rets = rets[rets < 0]
-        if len(downside_rets) < 1:
-            # If no negative returns, sortino is high but let's cap it or use mean/epsilon
-            return mean / self.reward_epsilon if mean > 0 else 0.0
-        downside_std = np.std(downside_rets)
-        if downside_std < self.reward_epsilon:
-            return mean / self.reward_epsilon if mean > 0 else 0.0
-        return mean / downside_std
+    @property
+    def position(self):
+        # Translate continuous to discrete notation for backwards compatibility with downstream analytics
+        if self.pm.current_weight > 0.1: return 1
+        if self.pm.current_weight < -0.1: return 2
+        return 0
 
     def step(self, action):
+        # If wrapped by SB3, action is a 1D array. Unwrap single float.
+        if isinstance(action, (np.ndarray, list)):
+            target_weight = float(action[0])
+        else:
+            target_weight = float(action)
+            
         current_price = max(float(self.df.loc[self.current_step, self.price_column]), 1e-8)
         
-        # Calculate REALIZED return using only past/current prices (NO LOOK-AHEAD)
-        # This is the return we've already observed from the previous step to current step
         prev_step = max(0, self.current_step - 1)
         prev_price = max(float(self.df.loc[prev_step, self.price_column]), 1e-8)
         realized_return = (current_price / prev_price) - 1.0 if self.current_step > 0 else 0.0
         
-        # Map action to position: 0=Neutral, 1=Long, 2=Short
-        # position_mapping: 0 -> 0, 1 -> 1, 2 -> -1
-        target_position_value = 0
-        if action == 1:
-            target_position_value = 1
-        elif action == 2:
-            target_position_value = -1
-            
-        trade_executed = False
+        # Execute trade via Position Manager
+        trade_executed, portfolio_return, drawdown, unrealized_pnl = self.pm.step(target_weight, current_price)
         
-        # Execute action based on target position
-        if target_position_value != self.position:
-            # 1. Close current position
-            if self.position == 1: # Close Long
-                gross_value = self.shares_held * current_price
-                fee = gross_value * self.transaction_cost_rate
-                self.balance += gross_value - fee
-                self.shares_held = 0
-                trade_executed = True
-            elif self.position == -1: # Close Short
-                # Covering short: cost = shares * price * (1 + fee)
-                # For simplicity, we assume we always have enough balance to cover.
-                gross_value = abs(self.shares_held) * current_price
-                fee = gross_value * self.transaction_cost_rate
-                self.balance -= gross_value + fee
-                self.shares_held = 0
-                trade_executed = True
-                
-            # 2. Open new position
-            if target_position_value == 1: # Open Long
-                shares_to_buy = int(self.balance // (current_price * (1 + self.transaction_cost_rate)))
-                if shares_to_buy > 0:
-                    gross_value = shares_to_buy * current_price
-                    fee = gross_value * self.transaction_cost_rate
-                    self.shares_held = shares_to_buy
-                    self.balance -= gross_value + fee
-                    trade_executed = True
-            elif target_position_value == -1: # Open Short
-                # Simple shorting: Sell-to-open. 
-                # Limit short value to 50% of net worth for safety (or just use balance).
-                # Using balance as margin/collateral for this simple model.
-                shares_to_short = int(self.balance // (current_price * (1 + self.transaction_cost_rate)))
-                if shares_to_short > 0:
-                    gross_value = shares_to_short * current_price
-                    fee = gross_value * self.transaction_cost_rate
-                    self.shares_held = -shares_to_short
-                    self.balance += gross_value - fee
-                    trade_executed = True
-                    
-            self.position = target_position_value
-
-        if trade_executed and self.trade_penalty > 0:
-            self.balance -= self.trade_penalty
-
-        # Mirror portfolio transitions for reward shaping, optionally excluding fees and penalties.
-        # Position-based reward doesn't strictly need reward_shares_held if we use position * raw_return,
-        # but let's keep it for portfolio_return calculation.
-        if target_position_value != (self.reward_shares_held / abs(self.reward_shares_held) if self.reward_shares_held != 0 else 0):
-            # Close reward position
-            if self.reward_shares_held > 0: # Long
-                self.reward_balance += self.reward_shares_held * current_price
-                self.reward_shares_held = 0
-            elif self.reward_shares_held < 0: # Short
-                self.reward_balance -= abs(self.reward_shares_held) * current_price
-                self.reward_shares_held = 0
-            
-            # Open reward position
-            if target_position_value == 1:
-                shares = int(self.reward_balance // current_price)
-                if shares > 0:
-                    self.reward_shares_held = shares
-                    self.reward_balance -= shares * current_price
-            elif target_position_value == -1:
-                shares = int(self.reward_balance // current_price)
-                if shares > 0:
-                    self.reward_shares_held = -shares
-                    self.reward_balance += shares * current_price
-
-        # Update net worth
-        new_net_worth = self.balance + (self.shares_held * current_price)
-        self.net_worth = new_net_worth
-
-        # Reward shaping portfolio uses CURRENT price (no look-ahead)
-        reward_prev_net_worth = max(self.reward_net_worth, 1e-8)
-        reward_new_net_worth = self.reward_balance + (self.reward_shares_held * current_price)
-        portfolio_return = (reward_new_net_worth / reward_prev_net_worth) - 1.0
-
-        # Directional reward based on REALIZED return (what actually happened)
-        # Rewards the position we held during the price movement we just observed
-        strategy_realized_return = target_position_value * realized_return
-        directional_reward = strategy_realized_return
-
-        # Maintain rolling returns for risk-adjusted modes
-        self.returns_buffer.append(strategy_realized_return)
-
-        # Hold penalty: penalize staying neutral when market is moving (uses realized return)
-        hold_penalty = -self.reward_hold_penalty_scale * abs(realized_return) if target_position_value == 0 else 0.0
-
-        # Only reward actionable trades that actually executed.
-        action_bonus = self.reward_action_bonus_scale if trade_executed else 0.0
-
-        reward_peak = max(self.reward_peak_net_worth, reward_new_net_worth)
-        drawdown = (reward_peak - reward_new_net_worth) / max(reward_peak, 1e-8)
-        drawdown_penalty = -self.reward_drawdown_penalty_scale * drawdown
-
-        # Select base reward components based on mode
-        risk_metric = 0.0
-        if self.reward_mode == "sharpe":
-            risk_metric = self._calculate_sharpe()
-            base_reward = self.reward_return_scale * risk_metric
-        elif self.reward_mode == "sortino":
-            risk_metric = self._calculate_sortino()
-            base_reward = self.reward_return_scale * risk_metric
-        else:
-            # legacy mode
-            base_reward = (
-                (self.reward_return_scale * portfolio_return)
-                + (self.reward_direction_scale * directional_reward)
-            )
-
-        reward = (
-            base_reward
-            + hold_penalty
-            + action_bonus
-            + drawdown_penalty
+        # Evaluate reward
+        reward, risk_metric, strategy_realized_return, dir_rew, hold_pen, action_bon, dd_pen = self.re.calculate(
+            portfolio_return, realized_return, self.pm.current_weight, trade_executed, drawdown
         )
-        reward = float(np.clip(reward, -self.reward_clip, self.reward_clip))
-
-        self.reward_net_worth = reward_new_net_worth
-        self.reward_peak_net_worth = reward_peak
-
-        # Move to next step
-        self.current_step += 1
         
+        self.current_step += 1
         terminated = self.current_step >= len(self.df) - 1
         truncated = False
+        
         info = {
             "reward_total": reward,
-            "reward_portfolio_return": float(self.reward_return_scale * portfolio_return),
-            "reward_direction": float(self.reward_direction_scale * directional_reward),
-            "reward_hold_penalty": float(hold_penalty),
-            "reward_action_bonus": float(action_bonus),
-            "reward_drawdown_penalty": float(drawdown_penalty),
-            "realized_return": float(realized_return),  # Changed from raw_step_return (was look-ahead)
-            "reward_drawdown": float(drawdown),
-            "reward_net_worth": float(reward_new_net_worth),
-            "reward_mode": self.reward_mode,
-            "reward_risk_metric": float(risk_metric),
+            "reward_portfolio_return": portfolio_return,
+            "reward_direction": dir_rew,
+            "reward_hold_penalty": hold_pen,
+            "reward_action_bonus": action_bon,
+            "reward_drawdown_penalty": dd_pen,
+            "realized_return": realized_return,
+            "reward_drawdown": drawdown,
+            "reward_net_worth": self.pm.net_worth,
+            "reward_mode": self.re.mode,
+            "reward_risk_metric": risk_metric,
         }
 
-        return self._get_obs(), reward, terminated, truncated, info
+        return self._get_obs(unrealized_pnl), reward, terminated, truncated, info
 
-print("TradingEnv class defined.")
+print("TradingEnv (OOP) defined.")

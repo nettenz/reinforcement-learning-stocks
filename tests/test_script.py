@@ -1,5 +1,5 @@
 import pandas as pd
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
 from pathlib import Path
 import os
 import sys
@@ -27,9 +27,9 @@ except Exception as e:
     print(f"Failed to create environment: {e}")
     exit(1)
 
-# Initialize the RL model (PPO)
+# Initialize the RL model (SAC)
 try:
-    model = PPO("MlpPolicy", env, verbose=0)
+    model = SAC("MlpPolicy", env, verbose=0)
     print("Model initialized successfully.")
 except Exception as e:
     print(f"Failed to initialize model: {e}")

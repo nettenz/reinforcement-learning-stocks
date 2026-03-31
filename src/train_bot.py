@@ -3,7 +3,7 @@ from pathlib import Path
 import platform
 import sys
 
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
 import torch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -14,10 +14,10 @@ from src.market_data import get_tech_training_data
 from src.trading_env import TradingEnv
 
 DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
-MODEL_PATH = ROOT_DIR / "models" / "ppo_trading_bot"
+MODEL_PATH = ROOT_DIR / "models" / "sac_trading_bot"
 
 def main():
-    parser = argparse.ArgumentParser(description="Train a PPO trading bot.")
+    parser = argparse.ArgumentParser(description="Train an SAC continuous trading bot.")
     parser.add_argument("--reward-mode", default="legacy", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
     parser.add_argument("--rolling-reward-window", type=int, default=100, help="Window size for rolling rewards.")
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
@@ -25,15 +25,15 @@ def main():
 
     # Use M4 GPU (MPS) if available for Mac, default to CPU on Windows for stability
     if torch.backends.mps.is_available():
-        DEFAULT_PPO_DEVICE = "mps"  # Apple Silicon GPU acceleration
+        DEFAULT_DEVICE = "mps"  # Apple Silicon GPU acceleration
     elif platform.system() == "Windows":
-        DEFAULT_PPO_DEVICE = "cpu"  # Force CPU on Windows for stability
+        DEFAULT_DEVICE = "cpu"  # Force CPU on Windows for stability
     elif torch.cuda.is_available():
-        DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU on Linux
+        DEFAULT_DEVICE = "cuda"  # NVIDIA GPU on Linux
     else:
-        DEFAULT_PPO_DEVICE = "cpu"  # CPU fallback
+        DEFAULT_DEVICE = "cpu"  # CPU fallback
 
-    parser.add_argument("--device", default=DEFAULT_PPO_DEVICE, help="PPO device (auto, cuda, cpu).")
+    parser.add_argument("--device", default=DEFAULT_DEVICE, help="SAC device (auto, cuda, cpu, mps).")
     args = parser.parse_args()
 
     # Load normalized Yahoo Finance tech basket data with merged daily news sentiment features
@@ -47,11 +47,12 @@ def main():
     }
     env = TradingEnv(df, **env_kwargs)
 
-    # Initialize the RL model (PPO)
-    model = PPO("MlpPolicy", env, verbose=1, device=args.device)
+    # Initialize the RL model (SAC continuous)
+    # ent_coef handles exploration mathematically in continuous spaces better than discrete PPO bounds
+    model = SAC("MlpPolicy", env, verbose=1, device=args.device, ent_coef="auto")
 
     # Train the model
-    print(f"Training the agent (mode={args.reward_mode}, window={args.rolling_reward_window})...")
+    print(f"Training Continuous SAC agent (mode={args.reward_mode}, window={args.rolling_reward_window})...")
     model.learn(total_timesteps=args.timesteps)
 
     # Save the trained model
@@ -63,8 +64,9 @@ def main():
     obs, _ = env.reset()
     for _ in range(10):
         action, _states = model.predict(obs, deterministic=True)
+        # Action is returned as a 1D array from SAC [weight]
         obs, reward, terminated, truncated, info = env.step(action)
-        print(f"Action: {action}, Reward: {reward:.2f}, Net Worth: {env.net_worth:.2f}")
+        print(f"Action Wgt: {action[0]:.2f}, Reward: {reward:.2f}, Net Worth: {env.net_worth:.2f}")
         if terminated or truncated:
             break
 

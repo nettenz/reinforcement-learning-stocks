@@ -11,7 +11,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 import torch
 
@@ -32,13 +32,13 @@ DEFAULT_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots"
 
 # Use M4 GPU (MPS) if available for Mac, default to CPU on Windows for stability
 if torch.backends.mps.is_available():
-    DEFAULT_PPO_DEVICE = "mps"  # Apple Silicon GPU acceleration
+    DEFAULT_DEVICE = "mps"  # Apple Silicon GPU acceleration
 elif platform.system() == "Windows":
-    DEFAULT_PPO_DEVICE = "cpu"  # Force CPU on Windows for stability
+    DEFAULT_DEVICE = "cpu"  # Force CPU on Windows for stability
 elif torch.cuda.is_available():
-    DEFAULT_PPO_DEVICE = "cuda"  # NVIDIA GPU on Linux
+    DEFAULT_DEVICE = "cuda"  # NVIDIA GPU on Linux
 else:
-    DEFAULT_PPO_DEVICE = "cpu"  # CPU fallback
+    DEFAULT_DEVICE = "cpu"  # CPU fallback
 
 
 def _parse_float_list(value: str) -> list[float]:
@@ -373,15 +373,16 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         else:
             env_train = TradingEnv(train_df, **env_kwargs_run)
             
-        model = PPO(
+        model_ent_coef = ent_coef if ent_coef > 0.0 else "auto"
+        model = SAC(
             "MlpPolicy",
             env_train,
             verbose=0,
             seed=seed,
             learning_rate=lr_arg,
             gamma=gamma,
-            ent_coef=ent_coef,
-            device=DEFAULT_PPO_DEVICE,
+            ent_coef=model_ent_coef,
+            device=DEFAULT_DEVICE,
         )
         model.learn(total_timesteps=timesteps)
         
@@ -446,7 +447,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Aggressive multi-seed PPO experiment runner.")
+    parser = argparse.ArgumentParser(description="Aggressive multi-seed SAC experiment runner.")
     parser.add_argument("--include-news", action="store_true", help="Train with merged sentiment features.")
     parser.add_argument("--refresh-data", action="store_true", help="Refresh OHLCV training data cache.")
     parser.add_argument("--refresh-news", action="store_true", help="Refresh news sentiment cache.")
@@ -491,7 +492,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-snapshots", action="store_true", help="Disable timestamped snapshot output files.")
     parser.add_argument("--append", action="store_true", help="Append results to existing leaderboard.")
     parser.add_argument("--run-label", default="", help="Optional suffix label appended to snapshot filenames.")
-    parser.add_argument("--device", default=DEFAULT_PPO_DEVICE, help="PPO device (auto, cuda, cpu).")
+    parser.add_argument("--device", default=DEFAULT_DEVICE, help="SAC device (auto, cuda, cpu).")
     parser.add_argument("--use-lr-schedule", action="store_true", help="Use linear learning rate decay.")
     parser.add_argument("--n-envs", type=int, default=1, help="Number of parallel environments for vectorized training.")
     return parser
@@ -502,8 +503,8 @@ def main() -> None:
     args = parser.parse_args()
 
     # Update global device if provided
-    global DEFAULT_PPO_DEVICE
-    DEFAULT_PPO_DEVICE = args.device
+    global DEFAULT_DEVICE
+    DEFAULT_DEVICE = args.device
 
     leaderboard = run_experiments(args)
     leaderboard_path = Path(args.leaderboard_path)
