@@ -177,12 +177,19 @@ class TradingEnv(gym.Env):
             if all(col in self.df.columns for col in ["Open", "High", "Low", "Close", "Volume"]):
                 self.market_feature_columns = ["Open", "High", "Low", "Close", "Volume"]
             else:
-                potential_cols = ["LogReturn", "VolLogDiff", "RelRange", "RelOpen", "RelMACD", "RSI_Centered"]
+                potential_cols = [
+                    "LogReturn", "VolLogDiff", "RelRange", "RelOpen", "RelMACD", "RSI_Centered",
+                    "RelATR", "BB_Width", "BB_Upper_Dist", "BB_Lower_Dist", "SMA_Trend",
+                    "RelVWAP", "MACD_Signal_Rel", "MACD_Hist_Rel"
+                ]
                 self.market_feature_columns = [col for col in potential_cols if col in self.df.columns]
         else:
             self.market_feature_columns = market_feature_columns
 
-        self.news_feature_columns = ["NewsCount", "SentimentMean", "SentimentStd", "SentimentMin", "SentimentMax"]
+        self.news_feature_columns = [
+            "NewsCount", "SentimentMean", "SentimentStd", "SentimentMin", "SentimentMax",
+            "SentimentConfidenceMean", "SentimentGeminiShare", "SentimentOllamaShare"
+        ]
         self.active_news_columns = [col for col in self.news_feature_columns if col in self.df.columns]
 
         # Base market + news + [balance, shares_held]
