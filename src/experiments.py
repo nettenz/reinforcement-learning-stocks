@@ -427,6 +427,15 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         callback = ProgressCallback(total_timesteps=timesteps)
         model.learn(total_timesteps=timesteps, callback=callback)
         
+        # --- Intelligence Synchronization: Save Model Weights ---
+        timestamp = _timestamp_slug()
+        run_label_slug = _safe_label(args.run_label) if args.run_label else "run"
+        model_filename = f"model_{timestamp}_{run_label_slug}_seed{seed}.zip"
+        model_save_path = Path(args.snapshot_dir) / model_filename
+        model_save_path.parent.mkdir(parents=True, exist_ok=True)
+        model.save(model_save_path)
+        # -------------------------------------------------------
+
         if args.n_envs > 1:
             env_train.close()
 
@@ -484,6 +493,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         row.update(test_strategy_risk)
         row.update(val_benchmark_risk)
         row.update(test_benchmark_risk)
+        row["model_path"] = str(model_save_path)  # Track which file belongs to this run
         rows.append(row)
 
     leaderboard = pd.DataFrame(rows).sort_values("ranking_score", ascending=False).reset_index(drop=True)
@@ -567,6 +577,18 @@ def main() -> None:
         append_results=args.append,
     )
     top = leaderboard.head(3)
+
+    # --- Champion Promotion ---
+    if not leaderboard.empty:
+        best_run = leaderboard.iloc[0]
+        best_model_path = Path(best_run["model_path"])
+        if best_model_path.exists():
+            import shutil
+            default_model_path = ROOT_DIR / "models" / "sac_trading_bot.zip"
+            default_model_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(best_model_path, default_model_path)
+            print(f"Champion promoted to: {default_model_path} (Ranking Score: {best_run['ranking_score']:.4f})")
+    # --------------------------
 
     print(f"Saved leaderboard: {leaderboard_path}")
     print(f"Saved reward leaderboard: {reward_leaderboard_path}")

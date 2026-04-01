@@ -13,8 +13,32 @@ from src.trading_env import TradingEnv
 
 ACTION_LABELS = {0: "Hold", 1: "Buy", 2: "Sell"}
 MARKET_FEATURE_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
-STATIONARY_FEATURE_COLUMNS = ["LogReturn", "VolLogDiff", "RelRange", "RelOpen", "RelMACD", "RSI_Centered"]
-NEWS_FEATURE_COLUMNS = ["NewsCount", "SentimentMean", "SentimentStd", "SentimentMin", "SentimentMax"]
+STATIONARY_FEATURE_COLUMNS = [
+    "LogReturn",
+    "VolLogDiff",
+    "RelRange",
+    "RelOpen",
+    "RelMACD",
+    "RSI_Centered",
+    "RelATR",
+    "BB_Width",
+    "BB_Upper_Dist",
+    "BB_Lower_Dist",
+    "SMA_Trend",
+    "RelVWAP",
+    "MACD_Signal_Rel",
+    "MACD_Hist_Rel",
+]
+NEWS_FEATURE_COLUMNS = [
+    "NewsCount",
+    "SentimentMean",
+    "SentimentStd",
+    "SentimentMin",
+    "SentimentMax",
+    "SentimentConfidenceMean",
+    "SentimentGeminiShare",
+    "SentimentOllamaShare",
+]
 
 # Account state is always [balance, shares_held] = 2
 ACCOUNT_STATE_DIM = 2
@@ -67,11 +91,11 @@ def _expected_observation_dim(model) -> int:
     return int(shape[0])
 
 
-def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> tuple[pd.DataFrame, bool]:
+def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> tuple[pd.DataFrame, bool, list[str]]:
     """
     Align the DataFrame columns to match what the model expects.
     
-    Returns (aligned_df, include_position_in_observation).
+    Returns (aligned_df, include_position_in_observation, market_feature_columns).
     
     Observation layout:
         [market_features] + [news_features] + [balance, shares_held] + [weight, pnl, time]
@@ -79,14 +103,10 @@ def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> tuple[p
     """
     # Determine which market features the data has
     has_ohlcv = all(col in df.columns for col in MARKET_FEATURE_COLUMNS)
-    has_stationary = any(col in df.columns for col in STATIONARY_FEATURE_COLUMNS)
-    
-    if has_stationary:
-        available_market = [col for col in STATIONARY_FEATURE_COLUMNS if col in df.columns]
-    elif has_ohlcv:
+    if has_ohlcv:
         available_market = list(MARKET_FEATURE_COLUMNS)
     else:
-        available_market = []
+        available_market = [col for col in STATIONARY_FEATURE_COLUMNS if col in df.columns]
     
     n_market = len(available_market)
     available_news = [col for col in NEWS_FEATURE_COLUMNS if col in df.columns]
@@ -122,7 +142,7 @@ def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> tuple[p
     if extra_news:
         aligned = aligned.drop(columns=extra_news)
     
-    return aligned, include_position
+    return aligned, include_position, available_market
 
 
 def simulate_agent_signals(
@@ -132,8 +152,12 @@ def simulate_agent_signals(
 ) -> pd.DataFrame:
     model, algo_type = _load_model(model_path)
     expected_obs_dim = _expected_observation_dim(model)
-    aligned_df, include_position = _align_features_to_model(df, expected_obs_dim=expected_obs_dim)
-    env = TradingEnv(aligned_df, include_position_in_observation=include_position)
+    aligned_df, include_position, market_feature_columns = _align_features_to_model(df, expected_obs_dim=expected_obs_dim)
+    env = TradingEnv(
+        aligned_df,
+        include_position_in_observation=include_position,
+        market_feature_columns=market_feature_columns,
+    )
     actual_obs_dim = int(env.observation_space.shape[0])
     if actual_obs_dim != expected_obs_dim:
         raise ValueError(

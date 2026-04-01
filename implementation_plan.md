@@ -11,14 +11,14 @@ This plan addresses the "Model expects (15,), environment provides (17,)" error 
 
 ### Experiment Runner Expansion
 
-#### [MODIFY] [experiments.py](file:///d:/code/agentic-development/reinforcement-learning-stocks/src/experiments.py)
+#### [MODIFY] [experiments.py](file:///Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/src/experiments.py)
 - **Model Saving**: Update the experiment loop to save the model weights for every run into the `snapshot_dir`.
 - **Champion Promotion**: Add logic at the end of `run_experiments` to identify the model with the highest `ranking_score` and copy it to the default `models/sac_trading_bot.zip` path.
 - **Path Generation**: Ensure model filenames include the timestamp and run label for easy identification.
 
 ### Dashboard Resilience
 
-#### [MODIFY] [analytics_dashboard.py](file:///d:/code/agentic-development/reinforcement-learning-stocks/src/analytics_dashboard.py)
+#### [MODIFY] [analytics_dashboard.py](file:///Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/src/analytics_dashboard.py)
 - **Model Selection**: Add a sidebar dropdown that lists all available `.zip` models in the `models/` and `snapshots/` directories.
 - **Shape Validation**: Add a pre-check that compares the `active_news_columns` and `market_feature_columns` against the model's policy network input layer.
 - **Graceful Error Handling**: If a shape mismatch occurs, display a clear table showing "Environment Expected" vs "Model Provided" columns.
@@ -28,7 +28,7 @@ This plan addresses the "Model expects (15,), environment provides (17,)" error 
 ### Automated Tests
 - Run a small experiment sweep with 2 seeds:
   ```bash
-  .venv/Scripts/python.exe src/experiments.py --seeds 42,84 --timesteps 1000 --run-label sync-test
+  python3 src/experiments.py --seeds 42,84 --timesteps 1000 --run-label sync-test
   ```
 - Verify that `models/sac_trading_bot.zip` is updated with a timestamp corresponding to the best run.
 - Verify that the dashboard loads the new model without a shape error.

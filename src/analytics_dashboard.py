@@ -19,20 +19,72 @@ from src.experiments import (
 )
 from src.signal_analytics import (
     ACTION_LABELS,
+    _align_features_to_model,
+    _expected_observation_dim,
+    _load_model,
     compute_metrics,
     confusion_matrix,
     enrich_with_truth_labels,
     simulate_agent_signals,
 )
+from src.trading_env import TradingEnv
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "sac_trading_bot"
 DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
 STATIONARY_DATA_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.parquet"
+FALLBACK_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
 DEFAULT_ACTIONABLE_TARGET = 0.55
 RECOMMENDED_THRESHOLD = 0.0020
 RECOMMENDED_HORIZON = 1
 RECOMMENDED_CHART_WINDOW = 2000
+
+def _validate_model_shape(model_path: str, data_df: pd.DataFrame) -> None:
+    """Checks if the data feature dimensions match what the model policy expects."""
+    try:
+        model, _ = _load_model(model_path)
+        expected_shape = _expected_observation_dim(model)
+        aligned_df, include_position, market_feature_columns = _align_features_to_model(
+            data_df,
+            expected_obs_dim=expected_shape,
+        )
+        temp_env = TradingEnv(
+            aligned_df,
+            include_position_in_observation=include_position,
+            market_feature_columns=market_feature_columns,
+        )
+        actual_shape = int(temp_env.observation_space.shape[0])
+
+        if expected_shape != actual_shape:
+            account_position_dim = 5 if include_position else 2
+            st.error(
+                f"**Shape Mismatch Detected!**\n\n"
+                f"Model expects **{expected_shape}** features, "
+                f"but aligned environment provides **{actual_shape}** features.\n\n"
+                f"Aligned schema: market={len(temp_env.market_feature_columns)}, "
+                f"news={len(temp_env.active_news_columns)}, account+position={account_position_dim}."
+            )
+            st.stop()
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
+    except Exception as exc:
+        # If it's not a structural issue, let the simulation path attempt a full run.
+        st.sidebar.warning(f"Structural validation skipped: {str(exc)}")
+
+def _list_available_models() -> list[Path]:
+    """Scans for all .zip model files in models/ and experiment snapshots."""
+    model_paths = []
+    models_dir = ROOT_DIR / "models"
+    if models_dir.exists():
+        model_paths.extend(list(models_dir.glob("*.zip")))
+    
+    snapshots_dir = ROOT_DIR / "data" / "experiment_snapshots"
+    if snapshots_dir.exists():
+        model_paths.extend(list(snapshots_dir.glob("*.zip")))
+    
+    # Sort by mtime (newest first)
+    model_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return model_paths
 
 
 @st.cache_data(show_spinner=False)
@@ -775,6 +827,9 @@ def render_signal_analytics_page(
 
     try:
         with st.spinner("🚀 Running agent simulation..."):
+            # Intelligence Synchronization: Shape Validation
+            _validate_model_shape(model_path, load_market_data(data_path))
+            
             enriched, conf = evaluate_signals(
                 data_path=data_path,
                 model_path=model_path,
@@ -1254,11 +1309,37 @@ def main() -> None:
     st.write("Analyze signal quality and run aggressive hyperparameter experiments.")
 
     default_data = DEFAULT_DATA_PATH if DEFAULT_DATA_PATH.exists() else FALLBACK_DATA_PATH
+    
+    # Intelligence Synchronization: Model Discovery
+    available_models = _list_available_models()
+    model_labels = [p.name for p in available_models]
+    
     with st.sidebar:
         st.header("Global inputs")
         page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights"], index=0)
+        
         data_path = st.text_input("Data CSV path", value=str(default_data))
-        model_path = st.text_input("Model path (.zip optional)", value=str(DEFAULT_MODEL_PATH))
+        
+        # Model Selection Dropdown
+        if not available_models:
+            st.sidebar.error("No .zip models found in `models/` or `snapshots/`.")
+            model_path = ""
+        else:
+            # Try to find default promoted champion
+            default_idx = 0
+            for idx, name in enumerate(model_labels):
+                if "sac_trading_bot.zip" in name:
+                    default_idx = idx
+                    break
+            
+            selected_model_name = st.selectbox(
+                "Model weights (.zip)",
+                options=model_labels,
+                index=default_idx,
+                help="Choose a specific model snapshot or the latest promoted champion."
+            )
+            model_path = str(available_models[model_labels.index(selected_model_name)])
+        
         threshold = st.number_input(
             "Movement threshold",
             min_value=0.0,

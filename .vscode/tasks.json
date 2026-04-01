@@ -1,0 +1,46 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "run-dashboard",
+			"type": "shell",
+			"command": "./run_dashboard.sh",
+			"isBackground": true
+		},
+		{
+			"label": "verify-news-shape",
+			"type": "shell",
+			"command": ".venv/bin/python -c \"import pandas as pd; from src.signal_analytics import _align_features_to_model; from src.trading_env import TradingEnv; p='data/tech_training_data.parquet'; df=pd.read_parquet(p); [print(p,e,int(env.observation_space.shape[0]),len(env.market_feature_columns),len(env.active_news_columns),i) for e in (13,15) for (a,i,m) in [_align_features_to_model(df,e)] for env in [TradingEnv(a,include_position_in_observation=i,market_feature_columns=m)]]\""
+		},
+		{
+			"label": "verify-news-shape-all-datasets",
+			"type": "shell",
+			"command": ".venv/bin/python -c \"import pandas as pd; from pathlib import Path; from src.signal_analytics import _align_features_to_model; from src.trading_env import TradingEnv; paths=['data/tech_training_data.parquet','data/tech_training_data_stationary.parquet','data/tech_training_data.csv'];\nfor p in paths:\n path=Path(p)\n if not path.exists():\n  print(p,'MISSING');\n  continue\n df=pd.read_parquet(path) if p.endswith('.parquet') else pd.read_csv(path)\n for e in (13,15):\n  a,i,m=_align_features_to_model(df,e)\n  env=TradingEnv(a,include_position_in_observation=i,market_feature_columns=m)\n  print(p,e,int(env.observation_space.shape[0]),len(env.market_feature_columns),len(env.active_news_columns),i)\""
+		},
+		{
+			"label": "restart-dashboard-now",
+			"type": "shell",
+			"command": "./run_dashboard.sh stop 8501 && ./run_dashboard.sh start 8501 && ./run_dashboard.sh status 8501"
+		},
+		{
+			"label": "restart-dashboard-after-action-labels-fix",
+			"type": "shell",
+			"command": "./run_dashboard.sh stop 8501 && ./run_dashboard.sh start 8501 && ./run_dashboard.sh status 8501"
+		},
+		{
+			"label": "restart-dashboard-after-compute-metrics-fix",
+			"type": "shell",
+			"command": "./run_dashboard.sh stop 8501 && ./run_dashboard.sh start 8501 && ./run_dashboard.sh status 8501"
+		},
+		{
+			"label": "smoke-dashboard-imports",
+			"type": "shell",
+			"command": ".venv/bin/python -c \"import src.analytics_dashboard as d; print('ok', hasattr(d, 'run_experiments'), hasattr(d, 'write_experiment_outputs'))\""
+		},
+		{
+			"label": "restart-dashboard-hotfix-imports",
+			"type": "shell",
+			"command": "./run_dashboard.sh stop 8501 && ./run_dashboard.sh start 8501 && ./run_dashboard.sh status 8501"
+		}
+	]
+}

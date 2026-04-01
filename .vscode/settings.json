@@ -1,0 +1,9 @@
+{
+    "terminal.integrated.accessibleViewFocusOnCommandExecution": true,
+    "terminal.integrated.automationProfile.linux": {
+        "path": "/bin/bash"
+    },
+    "terminal.integrated.automationProfile.osx": {
+        "path": "/bin/zsh"
+    }
+}
