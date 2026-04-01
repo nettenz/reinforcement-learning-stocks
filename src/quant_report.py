@@ -80,12 +80,16 @@ def _reward_mode_comparison(df: pd.DataFrame) -> pd.DataFrame:
     if "reward_mode" not in df.columns:
         return pd.DataFrame()
 
-    metrics = ["val_sharpe_ratio", "test_sharpe_ratio", "val_sortino_ratio", "test_sortino_ratio",
-               "val_cumulative_signal_return", "test_cumulative_signal_return",
-               "val_max_drawdown", "test_max_drawdown",
-               "val_actionable_accuracy", "test_actionable_accuracy",
-               "val_trade_win_rate", "test_trade_win_rate",
-               "ranking_score"]
+    metrics = [
+        "val_sharpe_ratio", "test_sharpe_ratio", 
+        "val_sortino_ratio", "test_sortino_ratio",
+        "val_alpha_vs_qqq", "test_alpha_vs_qqq",
+        "val_cumulative_signal_return", "test_cumulative_signal_return",
+        "val_max_drawdown", "test_max_drawdown",
+        "val_actionable_accuracy", "test_actionable_accuracy",
+        "val_trade_win_rate", "test_trade_win_rate",
+        "ranking_score"
+    ]
 
     available = [m for m in metrics if m in df.columns]
     if not available:
@@ -93,6 +97,41 @@ def _reward_mode_comparison(df: pd.DataFrame) -> pd.DataFrame:
 
     grouped = df.groupby("reward_mode")[available].agg(["mean", "std"])
     return grouped
+
+
+def _parameter_impact_analysis(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Analyze impact of varying parameters (seeds excluded)."""
+    # Parameters we care about for sweeps
+    params = ["ent_coef", "timesteps", "gamma", "learning_rate", "include_news", "threshold"]
+    varying = [p for p in params if p in df.columns and df[p].nunique() > 1]
+    
+    results = {}
+    metrics = [
+        "val_sharpe_ratio", "test_sharpe_ratio", 
+        "val_alpha_vs_qqq", "test_alpha_vs_qqq", 
+        "val_reward_action_bonus_mean"
+    ]
+    available_metrics = [m for m in metrics if m in df.columns]
+    
+    for p in varying:
+        results[p] = df.groupby(p)[available_metrics].mean().sort_index()
+        
+    return results
+
+
+def _news_impact_analysis(df: pd.DataFrame) -> pd.DataFrame:
+    """Explicitly compare news-enabled vs news-disabled runs."""
+    if "include_news" not in df.columns or df["include_news"].nunique() < 2:
+        return pd.DataFrame()
+        
+    metrics = [
+        "val_sharpe_ratio", "test_sharpe_ratio", 
+        "val_alpha_vs_qqq", "test_alpha_vs_qqq", 
+        "val_actionable_accuracy", "test_trade_win_rate"
+    ]
+    available = [m for m in metrics if m in df.columns]
+    return df.groupby("include_news")[available].agg(["mean", "std"])
+
 
 
 def _seed_stability(df: pd.DataFrame) -> dict:
@@ -163,32 +202,35 @@ def _signal_verdict(gap: dict, stability: dict, benchmark: dict, collapse: dict)
         return "**BEARISH** — Strategy is not yet investable. Fundamental changes required."
 
 
-def _next_steps(gap: dict, stability: dict, benchmark: dict, collapse: dict, mode_comparison: pd.DataFrame) -> list[str]:
+def _next_steps(gap: dict, stability: dict, benchmark: dict, collapse: dict, mode_comparison: pd.DataFrame, news_impact: pd.DataFrame) -> list[str]:
     """Generate prioritized next-step recommendations."""
     steps = []
 
     if collapse["low_activity_pct"] > 50:
-        steps.append("**CRITICAL — Action Collapse:** The agent is inactive in >50% of runs. Increase `reward_action_bonus_scale` or reduce `trade_penalty`.")
+        steps.append("**CRITICAL — Action Collapse:** The agent is inactive in >50% of runs. Increase `ent_coef` (entropy) or `reward_action_bonus_scale`.")
+
+    if not news_impact.empty:
+        news_sharpe = news_impact.at[1, ("test_sharpe_ratio", "mean")] if 1 in news_impact.index else 0
+        no_news_sharpe = news_impact.at[0, ("test_sharpe_ratio", "mean")] if 0 in news_impact.index else 0
+        if news_sharpe > no_news_sharpe + 0.1:
+            steps.append(f"**News Advantage Detected:** News-enabled runs show +{(news_sharpe - no_news_sharpe):.2f} Sharpe improvement. Adopt news integration as default.")
+        elif news_sharpe < no_news_sharpe - 0.1:
+            steps.append("**News Strategy Underperforming:** News features are currently adding noise. Re-evaluate sentiment extraction or embedding strategy.")
 
     if gap["return_gap_mean"] > 0.10:
-        steps.append("**Overfitting Detected:** Val→Test return gap is %.1f%%. Reduce timesteps, increase regularization, or diversify training data." % (gap["return_gap_mean"] * 100))
+        steps.append("**Overfitting Detected:** Val→Test return gap is %.1f%%. Reduce timesteps or increase entropy (`ent_coef`) for better regularization." % (gap["return_gap_mean"] * 100))
 
     if stability.get("stability_rating") == "LOW":
-        steps.append("**Seed Instability:** Cross-seed variance is high (CV=%.2f). The strategy is not robust — increase seed count and consider ensemble averaging." % stability.get("val_return_cv", 0))
+        steps.append("**Seed Instability:** Cross-seed variance is high (CV=%.2f). Increase `ent_coef` to encourage broader exploration during training." % stability.get("val_return_cv", 0))
 
     if benchmark["pct_positive_test_alpha"] < 50:
-        steps.append("**Alpha Deficit:** Only %.0f%% of runs beat the QQQ benchmark. The agent is underperforming passive buy-and-hold." % benchmark["pct_positive_test_alpha"])
-
-    if gap["test_sharpe_mean"] < 0.5:
-        steps.append("**Low Risk-Adjusted Returns:** Test Sharpe (%.2f) is below institutional threshold (1.0). Focus on drawdown management and reward stability." % gap["test_sharpe_mean"])
-
-    if not mode_comparison.empty and "reward_mode" in mode_comparison.index.names:
-        steps.append("**Compare Reward Modes:** Multiple reward modes were tested. Use the dashboard to evaluate which mode produces the smoothest equity curve.")
+        steps.append("**Alpha Deficit:** Strategy underperforms QQQ benchmark. Consider switching to `sharpe` or `sortino` reward modes to prioritize risk-adjusted growth.")
 
     if not steps:
-        steps.append("**Continue Scaling:** Results look solid. Consider increasing timesteps to 100k+ and adding more diverse market data.")
+        steps.append("**Continue Scaling:** Results look solid. Increase timesteps to 100k+ and broaden the ticker basket.")
 
     return steps
+
 
 
 def generate_report(df: pd.DataFrame) -> str:
@@ -198,8 +240,12 @@ def generate_report(df: pd.DataFrame) -> str:
     stability = _seed_stability(df)
     benchmark = _benchmark_analysis(df)
     mode_comparison = _reward_mode_comparison(df)
+    parameter_sweeps = _parameter_impact_analysis(df)
+    news_impact = _news_impact_analysis(df)
+    
     verdict = _signal_verdict(gap, stability, benchmark, collapse)
-    steps = _next_steps(gap, stability, benchmark, collapse, mode_comparison)
+    steps = _next_steps(gap, stability, benchmark, collapse, mode_comparison, news_impact)
+
 
     top_run = df.iloc[0] if len(df) > 0 else pd.Series()
 
@@ -266,6 +312,37 @@ def generate_report(df: pd.DataFrame) -> str:
         lines.append(f"- ✅ Gap is within acceptable bounds.")
     lines.append("")
 
+    # Trading Activity (Fixing Inactivity Collapse)
+    lines.append("---")
+    lines.append("")
+    lines.append("## Trading Activity & Behaviors")
+    lines.append(f"- **Val Win Rate (mean):** {collapse['val_win_rate_mean']:.4f}")
+    lines.append(f"- **Test Win Rate (mean):** {collapse['test_win_rate_mean']:.4f}")
+    lines.append(f"- **Low Activity Runs:** {collapse['low_activity_pct']:.1f}%")
+    if collapse["low_activity_pct"] > 30:
+        lines.append(f"- ⚠️ **WARNING:** Agent shows high levels of inactivity. Correlate with `ent_coef` in Sweep Analysis.")
+    lines.append("")
+
+    # Parameter Sweep Analysis
+    if parameter_sweeps:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Parameter Sweep Analysis")
+        lines.append("Analysis of how varying hyperparameters impacted performance (averaged across seeds).")
+        for param, results in parameter_sweeps.items():
+            lines.append(f"### Impact of: `{param}`")
+            lines.append(results.to_markdown())
+            lines.append("")
+
+    # News Strategy Verification
+    if not news_impact.empty:
+        lines.append("---")
+        lines.append("")
+        lines.append("## News Strategy Verification")
+        lines.append("Comparison of runs with merged news sentiment features vs. market-only features.")
+        lines.append(news_impact.to_markdown())
+        lines.append("")
+
     # Seed Stability
     lines.append("---")
     lines.append("")
@@ -275,8 +352,15 @@ def generate_report(df: pd.DataFrame) -> str:
     if "val_return_cv" in stability:
         lines.append(f"- **Val Return CV:** {stability['val_return_cv']:.2f}")
         lines.append(f"- **Test Return CV:** {stability['test_return_cv']:.2f}")
-        lines.append(f"- **Val Sharpe σ:** {stability['val_sharpe_std']:.2f}")
     lines.append("")
+
+    # Reward Mode Comparison
+    if not mode_comparison.empty:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Reward Mode Comparison")
+        lines.append(mode_comparison.to_markdown())
+        lines.append("")
 
     # Benchmark
     lines.append("---")
@@ -287,26 +371,6 @@ def generate_report(df: pd.DataFrame) -> str:
     lines.append(f"- **% Runs Beating QQQ (test):** {benchmark['pct_positive_test_alpha']:.0f}%")
     lines.append("")
 
-    # Action Collapse
-    lines.append("---")
-    lines.append("")
-    lines.append("## Agent Behavior")
-    lines.append(f"- **Val Win Rate (mean):** {collapse['val_win_rate_mean']:.4f}")
-    lines.append(f"- **Test Win Rate (mean):** {collapse['test_win_rate_mean']:.4f}")
-    lines.append(f"- **Low Activity Runs:** {collapse['low_activity_pct']:.0f}%")
-    if collapse["low_activity_pct"] > 50:
-        lines.append(f"- ⚠️ **WARNING:** Agent is collapsing to inactivity in most runs.")
-    lines.append("")
-
-    # Reward Mode Comparison
-    if not mode_comparison.empty:
-        lines.append("---")
-        lines.append("")
-        lines.append("## Reward Mode Comparison")
-        lines.append("")
-        lines.append(mode_comparison.to_markdown())
-        lines.append("")
-
     # Next Steps
     lines.append("---")
     lines.append("")
@@ -315,6 +379,7 @@ def generate_report(df: pd.DataFrame) -> str:
     for i, step in enumerate(steps, 1):
         lines.append(f"{i}. {step}")
     lines.append("")
+
 
     return "\n".join(lines)
 
