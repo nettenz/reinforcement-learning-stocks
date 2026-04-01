@@ -82,6 +82,24 @@ def compute_stationary_features(df: pd.DataFrame) -> pd.DataFrame:
     feat["SMA_Trend"] = np.where(sma20 > sma50, 1.0, -1.0)
     feat["SMA_Trend"] = np.where(sma20.isna() | sma50.isna(), 0.0, feat["SMA_Trend"])
 
+    # 7. VWAP (Volume Weighted Average Price) - Rolling 20-day
+    typical_price = (high + low + close) / 3.0
+    tp_v = typical_price * volume
+    rolling_tp_v = tp_v.rolling(window=20).sum()
+    rolling_vol = volume.rolling(window=20).sum()
+    vwap = (rolling_tp_v / (rolling_vol + 1e-9)).fillna(close)
+    feat["RelVWAP"] = (close - vwap) / (vwap + 1e-9)
+
+    # 8. Enhanced MACD (Signal Line and Histogram)
+    # EMA12 and EMA26 already defined above for RelMACD
+    # Let's derive them explicitly if needed for clarification
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    macd_hist = macd_line - signal_line
+    
+    # Normalize by Price to keep stationary
+    feat["MACD_Signal_Rel"] = (signal_line / close).fillna(0.0)
+    feat["MACD_Hist_Rel"] = (macd_hist / close).fillna(0.0)
     
     # Final cleanup
     feat = feat.replace([np.inf, -np.inf], np.nan).fillna(0.0)
