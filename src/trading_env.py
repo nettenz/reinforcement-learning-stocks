@@ -37,6 +37,7 @@ class PositionManager:
             gross_value = abs(delta_shares) * current_price
             fee = gross_value * self.transaction_cost_rate
             
+            # Use current_price for the trade execution
             self.balance -= (delta_shares * current_price) + fee
             self.shares_held = target_shares
             
@@ -52,17 +53,19 @@ class PositionManager:
             self.entry_price = 0.0
             self.time_in_position = 0
         else:
+            # Update current_weight based on the actual target weight chosen
             self.current_weight = target_weight
             self.time_in_position += 1
             
         prev_net_worth = self.net_worth
+        # Net worth is cash balance + market value of shares
         self.net_worth = self.balance + (self.shares_held * current_price)
         self.peak_net_worth = max(self.peak_net_worth, self.net_worth)
         
         portfolio_return = (self.net_worth / max(prev_net_worth, 1e-8)) - 1.0
         drawdown = (self.peak_net_worth - self.net_worth) / max(self.peak_net_worth, 1e-8)
         
-        # Memory state components
+        # unrealized_pnl_pct for the observation state
         unrealized_pnl_pct = 0.0
         if self.entry_price > 0:
             ratio = current_price / self.entry_price

@@ -12,8 +12,8 @@ from src.feature_engineering import compute_stationary_features
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")
-DEFAULT_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
-STATIONARY_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.csv"
+DEFAULT_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
+STATIONARY_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.parquet"
 NEWS_FEATURE_COLUMNS = [
     "NewsCount",
     "SentimentMean",
@@ -182,12 +182,12 @@ def get_tech_training_data(
     
     cache_file = Path(cache_path)
     if cache_file.exists() and not refresh:
-        data = pd.read_csv(cache_file, parse_dates=["Date"])
+        data = pd.read_parquet(cache_file)
         # If cache exists but missing news columns, merge them
         if include_news and not set(NEWS_FEATURE_COLUMNS).issubset(data.columns):
             news_features = get_tech_news_features(tickers=tickers, refresh=news_refresh)
             data = merge_news_features(training_data=data, news_features=news_features)
-            data.to_csv(cache_file, index=False)
+            data.to_parquet(cache_file, index=False)
         return data
 
     raw = fetch_yahoo_ohlcv(tickers=tickers, start=start, end=end, interval=interval)
@@ -215,5 +215,5 @@ def get_tech_training_data(
         news_features = get_tech_news_features(tickers=tickers, refresh=news_refresh)
         training_data = merge_news_features(training_data=training_data, news_features=news_features)
     
-    training_data.to_csv(cache_file, index=False)
+    training_data.to_parquet(cache_file, index=False)
     return training_data

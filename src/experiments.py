@@ -381,6 +381,8 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             learning_rate=lr_arg,
             gamma=gamma,
             ent_coef=model_ent_coef,
+            batch_size=args.batch_size,
+            buffer_size=max(100000, timesteps),  # Prevents 1,000,000 pre-allocation in System RAM
             device=DEFAULT_DEVICE,
         )
         model.learn(total_timesteps=timesteps)
@@ -455,6 +457,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--learning-rates", default="0.0003", help="Comma-separated learning rates.")
     parser.add_argument("--gammas", default="0.99", help="Comma-separated gammas.")
     parser.add_argument("--ent-coefs", default="0.01", help="Comma-separated entropy coefficients.")
+    parser.add_argument("--batch-size", type=int, default=1024, help="Batch size for VRAM allocation.")
     parser.add_argument("--threshold", type=float, default=0.002, help="Signal threshold for evaluation.")
     parser.add_argument("--horizon", type=int, default=1, help="Forward horizon steps for evaluation.")
     parser.add_argument("--train-ratio", type=float, default=0.70, help="Walk-forward train ratio.")
@@ -493,7 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-label", default="", help="Optional suffix label appended to snapshot filenames.")
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="SAC device (auto, cuda, cpu).")
     parser.add_argument("--use-lr-schedule", action="store_true", help="Use linear learning rate decay.")
-    parser.add_argument("--n-envs", type=int, default=1, help="Number of parallel environments for vectorized training.")
+    parser.add_argument("--n-envs", type=int, default=8, help="Number of parallel environments for vectorized training.")
     return parser
 
 

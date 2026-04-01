@@ -104,18 +104,25 @@ Reference:
 - `docs/SENTIMENT_INTEGRATION.md`
 
 ### Aggressive Experiment Runner
-Run multi-seed PPO sweeps with walk-forward validation and leaderboard ranking.
+Run multi-seed SAC sweeps with walk-forward validation and leaderboard ranking.
 
 Example (fast smoke):
-`python src/experiments.py --include-news --seeds 7,13 --timesteps 2000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.0 --max-runs 2`
+`python src/experiments.py --seeds 7,13 --timesteps 2000 --reward-mode sharpe --max-runs 2`
 
-Reward design knobs (optional):
-- `--reward-return-scale`: weight on portfolio return term
-- `--reward-direction-scale`: weight on directional alignment with next-step movement
-- `--reward-hold-penalty-scale`: penalty for Hold during high-movement steps
-- `--reward-drawdown-penalty-scale`: penalty proportional to drawdown from reward-portfolio peak
-- `--reward-clip`: symmetric reward clipping bound
-- `--reward-ignore-transaction-cost` / `--no-reward-ignore-transaction-cost`: include or exclude fee/penalty effects in reward shaping
+**Reward Strategy Knobs:**
+- `--reward-mode`: Choose between `legacy` (directional), `sharpe` (risk-adjusted), or `sortino` (downside-adjusted).
+- `--rolling-reward-window`: Window size (default: 100) for calculating rolling Sharpe/Sortino metrics.
+- `--reward-epsilon`: Numerical stability constant (default: 1e-6).
+- `--reward-return-scale`: weight on portfolio return term.
+- `--reward-direction-scale`: weight on directional alignment with next-step movement.
+- `--reward-hold-penalty-scale`: penalty for Hold during high-movement steps.
+- `--reward-drawdown-penalty-scale`: penalty proportional to drawdown from reward-portfolio peak.
+- `--reward-clip`: symmetric reward clipping bound.
+- `--reward-ignore-transaction-cost` / `--no-reward-ignore-transaction-cost`: include or exclude fee/penalty effects in reward shaping.
+
+**Environment Improvements:**
+- **OOP Position Management:** Uses `src/trading_env.py`'s `PositionManager` for corrected, high-fidelity P&L and Net Worth tracking.
+- **Stationary Features:** Option to use `--use-stationary-features` for log returns and normalized technical indicators.
 
 Default outputs:
 - `data/experiment_leaderboard.csv`

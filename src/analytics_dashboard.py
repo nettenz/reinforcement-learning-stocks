@@ -27,8 +27,8 @@ from src.signal_analytics import (
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "sac_trading_bot"
-DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
-FALLBACK_DATA_PATH = ROOT_DIR / "data" / "mock_data.csv"
+DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
+STATIONARY_DATA_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.parquet"
 DEFAULT_ACTIONABLE_TARGET = 0.55
 RECOMMENDED_THRESHOLD = 0.0020
 RECOMMENDED_HORIZON = 1
@@ -40,7 +40,8 @@ def load_market_data(data_path: str) -> pd.DataFrame:
     path = Path(data_path)
     if not path.exists():
         raise FileNotFoundError(f"Data file not found: {path}")
-
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
     parse_dates = ["Date"] if "Date" in pd.read_csv(path, nrows=0).columns else None
     df = pd.read_csv(path, parse_dates=parse_dates)
 
