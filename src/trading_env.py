@@ -266,4 +266,3 @@ class TradingEnv(gym.Env):
 
         return self._get_obs(unrealized_pnl), reward, terminated, truncated, info
 
-print("TradingEnv (OOP) defined.")

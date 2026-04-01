@@ -12,12 +12,82 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
+from urllib import error, request
 
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# AI Analysis Utilities
+# ---------------------------------------------------------------------------
+
+def _http_json_post(url: str, payload: dict[str, object], headers: dict[str, str] | None = None, timeout_seconds: int = 45) -> dict[str, object]:
+    raw = json.dumps(payload).encode("utf-8")
+    req = request.Request(url=url, data=raw, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if headers:
+        for key, value in headers.items():
+            req.add_header(key, value)
+    try:
+        with request.urlopen(req, timeout=timeout_seconds) as response:
+            body = response.read().decode("utf-8")
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code} from {url}: {detail}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Unable to reach {url}: {exc.reason}") from exc
+    try:
+        decoded = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON response from {url}: {body[:300]}") from exc
+    return decoded
+
+def _generate_ai_interpretation(report_md: str) -> str:
+    """Sends the markdown report to Gemini for a professional quant interpretation."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "> [!WARNING]\n> **AI Interpretation Unavailable:** `GEMINI_API_KEY` not found in environment."
+
+    model = "gemini-2.0-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    
+    prompt = (
+        "You are a Senior Quantitative Research Lead at a top-tier hedge fund.\n"
+        "Review the following Reinforcement Learning (SAC) trading experiment report.\n"
+        "Provide a concise, professional analysis (2-3 paragraphs) that includes:\n"
+        "1. **Strategic Pivot**: Based on these results, what exactly should we change in the next experiment?\n"
+        "2. **Risk Assessment**: Identify the most dangerous 'hidden' risk shown in this data (e.g., overfitting, inactivity, regime sensitivity).\n"
+        "3. **Confidence Score**: Give a confidence score (0-100%) for this strategy becoming benchmark-beating.\n\n"
+        "Output in clean Markdown format with a header: '## Strategic AI Analyst Interpretation'.\n\n"
+        f"REPORT DATA:\n{report_md}"
+    )
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    
+    try:
+        print("Consulting AI Strategic Analyst...")
+        response = _http_json_post(url=url, payload=payload)
+        candidates = response.get("candidates", [])
+        if not candidates:
+            return "> [!ERROR]\n> AI Analyst returned no candidates."
+        
+        text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        if not text:
+            return "> [!ERROR]\n> AI Analyst returned empty response."
+        
+        return text
+    except Exception as e:
+        return f"> [!ERROR]\n> **AI Analysis Failed**: {str(e)}"
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -381,7 +451,15 @@ def generate_report(df: pd.DataFrame) -> str:
     lines.append("")
 
 
-    return "\n".join(lines)
+    # Build the base report (without AI for now to avoid passing unfinished report)
+    base_report = "\n".join(lines)
+    
+    # AI Interpretation (Optional but recommended)
+    ai_interpretation = _generate_ai_interpretation(base_report)
+    
+    final_report = base_report + "\n\n---\n\n" + ai_interpretation
+    
+    return final_report
 
 
 # ---------------------------------------------------------------------------

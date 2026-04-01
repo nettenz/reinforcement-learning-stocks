@@ -11,6 +11,9 @@ from urllib import error, request
 
 import pandas as pd
 import yfinance as yf
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")

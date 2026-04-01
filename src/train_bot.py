@@ -5,6 +5,9 @@ import sys
 
 import numpy as np
 from stable_baselines3 import SAC
+from dotenv import load_dotenv
+
+load_dotenv()
 from stable_baselines3.common.vec_env import SubprocVecEnv
 import torch
 

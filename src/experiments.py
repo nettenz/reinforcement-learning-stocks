@@ -8,10 +8,17 @@ import platform
 from pathlib import Path
 import re
 import sys
+import time
+from urllib import request
 
 import numpy as np
 import pandas as pd
 from stable_baselines3 import SAC
+from stable_baselines3.common.callbacks import BaseCallback
+from tqdm import tqdm
+from dotenv import load_dotenv
+
+load_dotenv()
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 import torch
 
@@ -241,6 +248,36 @@ def make_env(df, env_kwargs):
     return _init
 
 
+def _format_duration(seconds: float) -> str:
+    """Formats seconds into HH:MM:SS or MM:SS."""
+    hrs = int(seconds // 3600)
+    mins = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    if hrs > 0:
+        return f"{hrs:02d}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
+
+
+class ProgressCallback(BaseCallback):
+    """Custom callback for displaying a progress bar with a spinner effect during training."""
+    def __init__(self, total_timesteps: int, verbose=0):
+        super().__init__(verbose)
+        self.pbar = None
+        self.total_timesteps = total_timesteps
+
+    def _on_training_start(self) -> None:
+        self.pbar = tqdm(total=self.total_timesteps, desc="Training", unit="step", leave=False)
+
+    def _on_step(self) -> bool:
+        if self.pbar:
+            self.pbar.update(1)
+        return True
+
+    def _on_training_end(self) -> None:
+        if self.pbar:
+            self.pbar.close()
+
+
 def write_experiment_outputs(
     leaderboard: pd.DataFrame,
     leaderboard_path: Path,
@@ -356,6 +393,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             f"[{idx}/{len(configs)}] seed={seed} timesteps={timesteps} lr={learning_rate} "
             f"gamma={gamma} ent_coef={ent_coef} dir_scale={dir_scale} mode={args.reward_mode}"
         )
+        start_time = time.time()
         lr_arg = linear_schedule(learning_rate) if args.use_lr_schedule else learning_rate
         
         env_kwargs_run = env_kwargs.copy()
@@ -385,7 +423,9 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             buffer_size=max(100000, timesteps),  # Prevents 1,000,000 pre-allocation in System RAM
             device=DEFAULT_DEVICE,
         )
-        model.learn(total_timesteps=timesteps)
+        
+        callback = ProgressCallback(total_timesteps=timesteps)
+        model.learn(total_timesteps=timesteps, callback=callback)
         
         if args.n_envs > 1:
             env_train.close()
@@ -434,7 +474,10 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "val_alpha_vs_qqq": float(val_strategy_risk["val_cumulative_return"] - val_benchmark_risk["val_benchmark_cumulative_return"]),
             "test_alpha_vs_qqq": float(test_strategy_risk["test_cumulative_return"] - test_benchmark_risk["test_benchmark_cumulative_return"]),
             "ranking_score": _ranking_score(val_metrics),
+            "run_duration_seconds": float(time.time() - start_time),
         }
+        duration_str = _format_duration(row['run_duration_seconds'])
+        print(f"Run {idx} completed in {duration_str}.")
         row.update(val_reward)
         row.update(test_reward)
         row.update(val_strategy_risk)

@@ -10,3 +10,5 @@ jupyter
 ipykernel
 yfinance
 streamlit
+python-dotenv
+tqdm

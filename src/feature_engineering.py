@@ -50,15 +50,38 @@ def compute_stationary_features(df: pd.DataFrame) -> pd.DataFrame:
     feat["RelMACD"] = (ema12 - ema26) / close
     
     # RSI (Already bounded 0-100, fairly stationary, but we can center it)
-    def compute_rsi(data, window=14):
+    def _compute_rsi(data, window=14):
         delta = data.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-        rs = gain / loss
+        rs = gain / (loss + 1e-9)
         return 100 - (100 / (1 + rs))
     
-    feat["RSI_Centered"] = (compute_rsi(close) - 50) / 50.0
-    feat["RSI_Centered"] = feat["RSI_Centered"].fillna(0.0)
+    feat["RSI_Centered"] = (_compute_rsi(close) - 50) / 50.0
+
+    # 6. Additional Indicators
+    # ATR (Average True Range) relative to Price
+    high = df["High"]
+    low = df["Low"]
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(window=14).mean()
+    feat["RelATR"] = (atr / close).fillna(0.0)
+
+    # Bollinger Band Width
+    sma20 = close.rolling(window=20).mean()
+    std20 = close.rolling(window=20).std()
+    feat["BB_Width"] = (4 * std20 / sma20).fillna(0.0)
+    feat["BB_Upper_Dist"] = ((sma20 + 2*std20) - close) / close
+    feat["BB_Lower_Dist"] = (close - (sma20 - 2*std20)) / close
+
+    # SMA 20/50 Cross (Trend signal)
+    sma50 = close.rolling(window=50).mean()
+    feat["SMA_Trend"] = np.where(sma20 > sma50, 1.0, -1.0)
+    feat["SMA_Trend"] = np.where(sma20.isna() | sma50.isna(), 0.0, feat["SMA_Trend"])
+
     
     # Final cleanup
     feat = feat.replace([np.inf, -np.inf], np.nan).fillna(0.0)

@@ -191,25 +191,20 @@ def get_tech_training_data(
         return data
 
     raw = fetch_yahoo_ohlcv(tickers=tickers, start=start, end=end, interval=interval)
+    normalized = parse_and_normalize_ohlcv(raw)
+    base_training = build_training_frame(normalized)
+    
+    # Always compute technical indicators (RSI, MACD, etc.)
+    indicators = compute_stationary_features(base_training)
     
     if use_stationary_features:
-        # Stationary flow: fetch raw, compute stationary, keep RawClose
-        # build_training_frame aggregates by date, let's do it before stationary for simplicity
-        # or do it on individual tickers then aggregate. 
-        # Current build_training_frame aggregates normalized OHLCV.
-        normalized = parse_and_normalize_ohlcv(raw)
-        base_training = build_training_frame(normalized)
-        # base_training has Open, High, Low, Close (normalized) and RawClose
-        stationary = compute_stationary_features(base_training)
-        # Keep RawClose and Date for environment/evaluation
-        training_data = stationary.copy()
+        training_data = indicators.copy()
         training_data["RawClose"] = base_training["RawClose"]
-        # Add original Open, High, Low, Close for backward compat if needed by TradingEnv
-        for col in ["Open", "High", "Low", "Close"]:
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
             training_data[f"Orig{col}"] = base_training[col]
     else:
-        normalized = parse_and_normalize_ohlcv(raw)
-        training_data = build_training_frame(normalized)
+        indic_cols = indicators.drop(columns=["Date"], errors="ignore")
+        training_data = pd.concat([base_training.reset_index(drop=True), indic_cols.reset_index(drop=True)], axis=1)
 
     if include_news:
         news_features = get_tech_news_features(tickers=tickers, refresh=news_refresh)

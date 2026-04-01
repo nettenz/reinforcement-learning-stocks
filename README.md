@@ -18,10 +18,12 @@ This project focuses on building an RL-powered trading bot using **Gymnasium** a
 - `docs/`: strategy and execution docs
 
 ## Current Features:
-- **Custom Environment:** `src/trading_env.py` (simulates a basic trading desk).
-- **Training Pipeline:** `src/train_bot.py` (uses PPO algorithm + Yahoo Finance tech-stock data).
-- **Market Data Pipeline:** `src/market_data.py` (fetch, parse, normalize, and cache OHLCV data).
-- **Mock Data (fallback/reference):** `data/mock_data.csv` (synthetic OHLCV data).
+- **Custom Environment:** `src/trading_env.py` (simulates a basic trading desk with OOP position management).
+- **Training Pipeline:** `src/train_bot.py` (SAC algorithm + automated feature engineering).
+- **Advanced Indicators:** RSI, MACD, ATR, Bollinger Bands, and SMA 20/50 Trend Crosses integrated into the observation space.
+- **Stationary Features:** `--use-stationary-features` mode to reduce price-level memorization and improve generalization.
+- **Multi-Seed Sweeps:** `src/experiments.py` for massive parallelized hyperparameter optimization.
+- **AI Strategic Analyst:** Automated LLM-driven interpretation of quant results using Gemini 2.0.
 
 ## How to Run:
 ### Windows (PowerShell)
@@ -91,6 +93,15 @@ Cached output:
 Output columns:
 - `Ticker`, `Date`, `NewsCount`
 - `SentimentMean`, `SentimentStd`, `SentimentMin`, `SentimentMax`
+- **Technical Indicators**: `RelATR`, `BB_Width`, `SMA_Trend`, `RSI_Centered`, `RelMACD`
+
+### Environment Configuration (.env)
+Create a `.env` file in the root to manage API keys and provider settings:
+```env
+GEMINI_API_KEY=your_key_here
+NEWS_SENTIMENT_PROVIDER=hybrid
+OLLAMA_URL=http://127.0.0.1:11434/api/generate
+```
 
 ### Sentiment Integration in Training
 The training frame now merges daily news sentiment into market features.
@@ -127,6 +138,8 @@ Example (fast smoke):
 Default outputs:
 - `data/experiment_leaderboard.csv`
 - `data/experiment_reward_leaderboard.csv`
+- `data/experiment_summary.json`
+- `sessions/quant-report-YYYY-MM-DD.md` (AI-Augmented Interpretation)
 - `data/experiment_summary.json`
 - Timestamped snapshots in `data/experiment_snapshots/` (enabled by default)
 
