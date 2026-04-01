@@ -193,6 +193,57 @@ def _risk_metrics_from_equity(equity: pd.Series, prefix: str) -> dict[str, float
     }
 
 
+def _attach_config_stability_metrics(leaderboard: pd.DataFrame) -> pd.DataFrame:
+    if leaderboard.empty:
+        return leaderboard
+
+    config_keys = [
+        "timesteps",
+        "learning_rate",
+        "gamma",
+        "ent_coef",
+        "include_news",
+        "threshold",
+        "horizon",
+        "transaction_cost_rate",
+        "trade_penalty",
+        "reward_mode",
+        "rolling_reward_window",
+        "reward_epsilon",
+        "reward_return_scale",
+        "reward_direction_scale",
+        "reward_hold_penalty_scale",
+        "reward_drawdown_penalty_scale",
+        "reward_action_bonus_scale",
+        "reward_clip",
+        "reward_ignore_transaction_cost",
+    ]
+
+    grouped = (
+        leaderboard.groupby(config_keys, dropna=False)["test_cumulative_signal_return"]
+        .agg(["mean", "std", "count"])
+        .reset_index()
+        .rename(
+            columns={
+                "mean": "test_return_mean_by_config",
+                "std": "test_return_std_by_config",
+                "count": "config_seed_count",
+            }
+        )
+    )
+    grouped["test_return_std_by_config"] = grouped["test_return_std_by_config"].fillna(0.0)
+    denom = grouped["test_return_mean_by_config"].abs()
+    grouped["test_return_cv_by_config"] = np.where(
+        denom > 1e-8,
+        grouped["test_return_std_by_config"] / denom,
+        np.inf,
+    )
+    grouped["high_return_cv_risk"] = (grouped["test_return_cv_by_config"] >= 1.0).astype(int)
+
+    merged = leaderboard.merge(grouped, on=config_keys, how="left")
+    return merged
+
+
 def _fetch_qqq_prices(start_date: pd.Timestamp, end_date: pd.Timestamp) -> pd.DataFrame:
     raw = fetch_yahoo_ohlcv(
         tickers=("QQQ",),
@@ -497,6 +548,8 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         rows.append(row)
 
     leaderboard = pd.DataFrame(rows).sort_values("ranking_score", ascending=False).reset_index(drop=True)
+    leaderboard = _attach_config_stability_metrics(leaderboard)
+    leaderboard = leaderboard.sort_values("ranking_score", ascending=False).reset_index(drop=True)
     return leaderboard
 
 
@@ -506,10 +559,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh-data", action="store_true", help="Refresh OHLCV training data cache.")
     parser.add_argument("--refresh-news", action="store_true", help="Refresh news sentiment cache.")
     parser.add_argument("--seeds", default="7,13,21", help="Comma-separated seeds.")
-    parser.add_argument("--timesteps", default="50000", help="Comma-separated timesteps.")
+    parser.add_argument("--timesteps", default="20000,40000", help="Comma-separated timesteps.")
     parser.add_argument("--learning-rates", default="0.0003", help="Comma-separated learning rates.")
     parser.add_argument("--gammas", default="0.99", help="Comma-separated gammas.")
-    parser.add_argument("--ent-coefs", default="0.01", help="Comma-separated entropy coefficients.")
+    parser.add_argument("--ent-coefs", default="0.02,0.05", help="Comma-separated entropy coefficients.")
     parser.add_argument("--batch-size", type=int, default=1024, help="Batch size for VRAM allocation.")
     parser.add_argument("--threshold", type=float, default=0.002, help="Signal threshold for evaluation.")
     parser.add_argument("--horizon", type=int, default=1, help="Forward horizon steps for evaluation.")
@@ -523,7 +576,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reward-drawdown-penalty-scale", default="0.10", help="Penalty scale for drawdown term (list).")
     parser.add_argument("--reward-action-bonus-scale", default="0.02", help="Bonus for taking Buy/Sell actions (list).")
 
-    parser.add_argument("--reward-mode", default="legacy", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
+    parser.add_argument("--reward-mode", default="sharpe", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
     parser.add_argument("--rolling-reward-window", type=int, default=100, help="Window size for rolling rewards.")
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
 

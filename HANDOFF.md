@@ -1,91 +1,77 @@
-# Cross-Platform Handoff: SAC Trading Optimization
+# Cross-Platform Handoff: Dashboard Integrity + Stability Safeguards
 
 Updated: 2026-04-01
 
-This document provides context for continuing work on a different machine (Mac). Mention this file or the Conversation ID: 571b035c-0bc2-4bbb-9c86-960241bbb173 to resume quickly.
+Use this handoff to resume quickly on Windows/macOS.
+
+## Optimization Handoff Entry Point
+- Primary optimization handoff is now in `implementation_plan.md`.
+- That file includes:
+   - Reality-checked optimization objectives and guardrails
+   - Promotion gates for model/config acceptance
+   - Windows command templates for baseline/coarse/focused sweeps
+   - A copy/paste "Custom Agent Instruction Seed" for a dedicated optimization agent
 
 ## Current Status
-- Dashboard routing and import integrity issues were fixed in `src/analytics_dashboard.py`.
-- Signal Analytics, Experiments, and Experiment Insights pages now resolve previously missing symbols.
-- Shape-mismatch logic was corrected by aligning feature-selection with `TradingEnv` market/news schema.
-- News pipeline schema is now synchronized across producer/consumer modules.
+- Dashboard launcher is stable (`run_dashboard.ps1` start/status/stop fixed for stale/duplicate PID handling).
+- Dashboard runtime integrity verified (`HTTP 200`) after start via PowerShell launcher.
+- `TradingEnv.step()` now handles scalar/0-d/1-d actions safely (fixes IndexError in dashboard evaluation path).
+- Legacy PPO discrete actions now map correctly to continuous environment semantics (0 Hold, 1 Buy, 2 Sell).
+- Experiment pipeline now defaults to anti-overfit/stability-friendly settings and exposes config-level return CV risk.
 
-## Recent Fixes Applied
-1. Dashboard import/source fixes:
-   - `simulate_agent_signals` import moved to `src.signal_analytics`.
-   - Added missing imports used at runtime:
-     - `ACTION_LABELS`
-     - `compute_metrics`
-     - `DEFAULT_SUMMARY_PATH`
-     - `DEFAULT_SNAPSHOT_DIR`
-     - `run_experiments`
-     - `write_experiment_outputs`
-2. Dashboard function repair:
-   - Reintroduced `render_signal_analytics_page(...)` as a proper top-level function.
-3. Shape-alignment fixes:
-   - Expanded `NEWS_FEATURE_COLUMNS` in `src/signal_analytics.py` to include:
-     - `SentimentConfidenceMean`, `SentimentGeminiShare`, `SentimentOllamaShare`
-   - Synced alignment with environment by passing explicit `market_feature_columns` into `TradingEnv`.
-   - Updated stationary feature list in `src/signal_analytics.py` to match engineering outputs.
+## Fixes Applied in This Session
+1. `run_dashboard.ps1`
+   - Deduplicate process IDs before stop.
+   - Skip stale/exited PIDs without failing.
+   - Avoid PowerShell reserved `$PID` variable collision.
+2. `src/trading_env.py`
+   - Robust action parsing (`np.asarray`, 0-d + vector support).
+   - Backward compatibility mapping for PPO discrete actions to target weights.
+3. `src\experiments.py`
+   - New defaults:
+     - `--reward-mode sharpe`
+     - `--ent-coefs 0.02,0.05`
+     - `--timesteps 20000,40000`
+   - Added per-config stability metrics:
+     - `test_return_mean_by_config`
+     - `test_return_std_by_config`
+     - `test_return_cv_by_config`
+     - `high_return_cv_risk` (`CV >= 1.0`)
+4. `src\analytics_dashboard.py`
+   - Experiments page defaults aligned with new anti-overfit settings.
+   - Best run snapshot surfaces `Config Test Return CV` and `High CV Risk`.
+   - Insights recommendations now bias toward shorter timesteps + higher entropy + Sharpe mode.
 
-## Verified Runtime Notes
-- Main leaderboard and summary files may be absent in `data/`:
-  - `data/experiment_leaderboard.csv` not present.
-  - `data/experiment_summary.json` not present.
-- Snapshot history is present and extensive in `data/experiment_snapshots/`.
-- Current reward leaderboard exists at `data/experiment_reward_leaderboard.csv`.
+## Runtime Verification Performed
+- `.venv\Scripts\python.exe -m py_compile src\analytics_dashboard.py src\signal_analytics.py src\trading_env.py src\experiments.py` ✅
+- `.venv\Scripts\python.exe tests\test_script.py` ✅
+- `.\run_dashboard.ps1 -Action start/status/stop -Port 8501` ✅
 
-## Latest Experiment Readout (2026-04-01 snapshots)
-- Sharpe configurations showed multiple validation/test collapses (very high val actionable with zero/near-zero test actionable in some runs).
-- Best non-collapsing frontier currently comes from Sortino runs around:
-  - `timesteps=40000`
-  - `ent_coef=0.02`
-  - `reward_direction_scale=1.0`
-  - `reward_hold_penalty_scale=0.1`
-  - `reward_drawdown_penalty_scale=0.1`
-  - `reward_action_bonus_scale=0.25`
-- Test alpha vs benchmark remains mostly negative, so next step should focus on robustness and OOS alpha recovery.
+## Confirmed Signal Behavior (Post-Fix)
+- `models\ppo_trading_bot_with_news.zip`: includes Sell signals.
+- `models\ppo_trading_bot_no_news.zip`: includes Sell signals.
+- `models\ppo_trading_bot.zip`: includes Sell signals.
+- `models\sac_trading_bot.zip`: includes Sell signals.
 
-## Proposed Next Experiment (Approved Recommendation)
-Run label: `sortino-robustness-v2`
-
-```bash
-python src/experiments.py \
-  --include-news --use-stationary-features \
-  --reward-mode sortino \
-  --seeds 7,13,21,42,84,121 \
-  --timesteps 40000,60000 \
-  --learning-rates 0.0003 \
-  --gammas 0.99 \
-  --ent-coefs 0.015,0.02,0.03 \
-  --threshold 0.002 \
-  --horizon 1 \
-  --transaction-cost-rate 0.001 \
-  --trade-penalty 0.05 \
-  --reward-return-scale 1.0 \
-  --reward-direction-scale 0.8,1.0,1.2 \
-  --reward-hold-penalty-scale 0.08,0.10 \
-  --reward-drawdown-penalty-scale 0.10,0.15 \
-  --reward-action-bonus-scale 0.15,0.25 \
-  --reward-clip 1.0 \
-  --reward-ignore-transaction-cost \
-  --append \
-  --run-label sortino-robustness-v2
+## Recommended Next Experiment Command (Windows / .venv)
+```powershell
+.\.venv\Scripts\python.exe src\experiments.py --include-news --use-stationary-features --seeds 7,13,21,42,84 --timesteps 20000,40000 --learning-rates 0.0003,0.0001 --gammas 0.99,0.995 --ent-coefs 0.02,0.05 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-mode sharpe --reward-return-scale 1.0 --reward-direction-scale 0.35 --reward-hold-penalty-scale 0.10 --reward-drawdown-penalty-scale 0.10 --reward-action-bonus-scale 0.02 --reward-clip 1.0 --reward-ignore-transaction-cost --append --run-label sharpe-stability-v1
 ```
 
-## Promotion Criteria (Go/No-Go)
-Promote only configs meeting all:
+## Quick Leaderboard CV Check
+```powershell
+.\.venv\Scripts\python.exe -c "import pandas as pd; df=pd.read_csv('data/experiment_leaderboard.csv'); cols=[c for c in ['reward_mode','timesteps','ent_coef','test_cumulative_signal_return','test_return_cv_by_config','high_return_cv_risk','ranking_score'] if c in df.columns]; print(df[cols].head(15).to_string(index=False))"
+```
+
+## Dashboard Start (Windows)
+```powershell
+.\run_dashboard.ps1 -Action start -Port 8501
+```
+
+## Promotion Gate (Suggested)
+Promote only configs satisfying:
 1. `test_actionable_accuracy >= 0.53`
 2. `test_trade_win_rate >= 0.52`
 3. `test_alpha_vs_qqq >= 0.00`
 4. `abs(val_actionable_accuracy - test_actionable_accuracy) <= 0.05`
-5. No seed-level collapse (test actionable near zero)
-
-## Environment Setup Checklist
-- Ensure `.venv` is active and dependencies are installed:
-  - `pip install -r requirements.txt`
-- Ensure `.env` contains provider keys used by the news sentiment pipeline if running refreshes.
-- If data refresh is needed:
-  ```bash
-  .venv/bin/python -c "from src.market_data import get_tech_training_data; get_tech_training_data(refresh=True, include_news=True, use_stationary_features=True)"
-  ```
+5. `test_return_cv_by_config < 1.0`

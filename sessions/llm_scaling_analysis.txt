@@ -1,0 +1,113 @@
+PROJECT ANALYSIS FOR LLM-DRIVEN SCALING
+======================================
+
+1) PROJECT OVERVIEW
+- Repository: reinforcement-learning-stocks
+- Core objective: train and evaluate RL trading policies for directional/actionable signal quality and out-of-sample robustness.
+- Current training stack: Gymnasium custom TradingEnv + Stable Baselines3 (SAC primary, legacy PPO models still supported).
+- Interface: Streamlit dashboard (`src/analytics_dashboard.py`) for signal analytics, experiment execution, and trend/insight interpretation.
+
+2) CURRENT PHASE (AS-IS)
+- Phase name: STABILIZATION + SCALABLE EXPERIMENT ORCHESTRATION.
+- Why this phase: prior efforts fixed critical correctness/integrity issues; now emphasis is on robust generalization and low-variance performance.
+- Evidence:
+  - Dashboard runtime and launcher integrity validated (start/status/http/stop).
+  - Action-shape and model-compatibility bugs fixed (scalar/0-d action handling, PPO discrete mapping).
+  - Reward/evaluation now oriented to risk-adjusted metrics (Sharpe emphasized).
+  - Config-level instability now tracked via `test_return_cv_by_config` and `high_return_cv_risk`.
+
+3) SYSTEM ARCHITECTURE
+A) Data/Features
+- `src/market_data.py`: fetch + build training frame, supports stationary features.
+- Optional news sentiment integration through merged sentiment columns.
+
+B) Environment
+- `src/trading_env.py`
+  - Continuous action semantics: target portfolio weight in [-1, 1].
+  - Position manager for execution accounting, costs, and state.
+  - Reward evaluator supports `legacy`, `sharpe`, `sortino` modes.
+  - Backward compatibility layer maps legacy PPO discrete actions to continuous weights.
+
+C) Training/Experiments
+- `src/experiments.py`
+  - Walk-forward train/val/test splits.
+  - Multi-seed, multi-hyperparameter sweeps.
+  - Benchmark comparison vs QQQ, risk metrics, leaderboard/snapshots.
+  - Champion model promotion to `models\sac_trading_bot.zip`.
+
+D) Analytics UX
+- `src/analytics_dashboard.py`
+  - Signal-level diagnostics (accuracy, confusion, action mix, PnL edge).
+  - Experiment runner and insights with recommendation generation.
+  - Stability surfacing (including config-level CV risk flag).
+
+4) WHAT IS WORKING WELL
+- End-to-end operability: model selection, simulation, evaluation, and dashboard display.
+- Cross-model compatibility: PPO and SAC can be evaluated in unified flows.
+- Reproducibility assets: snapshots, run labels, leaderboard history.
+- Risk-aware progression: Sharpe-first defaults and CV-risk telemetry are in place.
+
+5) PRIMARY GAPS / RISKS
+- Compute efficiency: broad sweeps can be expensive when all dimensions are crossed at high timesteps.
+- Variance sensitivity: high CV indicates unstable transfer across seeds/regimes.
+- Alpha quality: some runs show weak or negative alpha vs benchmark despite decent in-sample behavior.
+- Potential operational bottleneck: no autonomous scheduler that gates promotions by hard risk constraints.
+
+6) SCALING STRATEGY WITH LLMS (RECOMMENDED)
+Use an LLM-orchestrated multi-agent loop with strict machine-readable contracts:
+
+Agent A: Experiment Planner
+- Input: latest leaderboard + risk metrics.
+- Output: constrained run-grid proposal (JSON).
+- Constraint examples: max runs, entropy floor, timesteps cap, mandatory Sharpe mode.
+
+Agent B: Runner/Executor
+- Input: approved run-grid.
+- Output: execution logs + artifacts (leaderboard updates, snapshots).
+- Responsibility: command generation only; no metric interpretation.
+
+Agent C: Risk Analyst
+- Input: merged results.
+- Output: pass/fail verdict per config with reasons.
+- Hard gates:
+  - `test_alpha_vs_qqq >= 0`
+  - `abs(val_actionable_accuracy - test_actionable_accuracy) <= 0.05`
+  - `test_return_cv_by_config < 1.0`
+
+Agent D: Promotion Controller
+- Input: approved config set.
+- Output: champion promotion decision + rollback policy.
+- Actions: promote to canonical model only when all gates pass; else keep last stable champion.
+
+Agent E: Narrative Reporter
+- Input: all outputs above.
+- Output: human-readable handoff and next command set.
+
+7) OPERATIONAL HYBRID TRAINING PLAN
+- Stage A (CPU, broad cheap search): few seeds, low timesteps, higher entropy.
+- Stage B (GPU or auto device, narrowed deepening): more timesteps on shortlisted configs.
+- Stage C (CPU robustness): expanded seeds and strict CV gate.
+- Principle: spend most compute only on survivors.
+
+8) SUGGESTED MACHINE-READABLE OUTPUT SCHEMA FOR LLM PLATFORM
+Top-level JSON object:
+- `run_metadata`: timestamp, git SHA, command, device, seed set.
+- `config`: all hyperparameters.
+- `performance`: val/test actionable accuracy, win rate, cumulative return.
+- `risk`: sharpe/sortino/max drawdown, alpha vs QQQ, return CV, collapse flags.
+- `decision`: {promote|hold|reject}, reason codes.
+- `next_actions`: array of exact commands.
+
+9) CURRENT DECISION POLICY (PRACTICAL)
+Promote only if:
+- test actionable >= 0.53
+- test trade win rate >= 0.52
+- test alpha vs QQQ >= 0.00
+- val/test actionable gap <= 0.05
+- test_return_cv_by_config < 1.0
+
+10) IMMEDIATE NEXT ACTIONS
+1. Run hybrid Stage A/B/C commands appended to `test.ps1`.
+2. Rank by risk-first objective (CV + alpha + drawdown), not best single-seed return.
+3. Feed leaderboard + snapshots into LLM planner using the schema above.
+4. Automate promotion via gate-based controller to avoid regression.

@@ -233,11 +233,19 @@ class TradingEnv(gym.Env):
         return 0
 
     def step(self, action):
-        # If wrapped by SB3, action is a 1D array. Unwrap single float.
-        if isinstance(action, (np.ndarray, list)):
-            target_weight = float(action[0])
+        # Accept scalar, 0-d ndarray, or 1-d action arrays from different callers/SB3 wrappers.
+        action_array = np.asarray(action)
+        if action_array.ndim == 0:
+            raw_action = action_array.item()
         else:
-            target_weight = float(action)
+            raw_action = action_array.reshape(-1)[0]
+
+        # Backward-compat for legacy PPO discrete policies:
+        # 0=Hold, 1=Buy(Long), 2=Sell(Short) -> map into continuous target weights.
+        if isinstance(raw_action, (int, np.integer)) and raw_action in (0, 1, 2):
+            target_weight = {0: 0.0, 1: 1.0, 2: -1.0}[int(raw_action)]
+        else:
+            target_weight = float(raw_action)
             
         current_price = max(float(self.df.loc[self.current_step, self.price_column]), 1e-8)
         
@@ -272,4 +280,3 @@ class TradingEnv(gym.Env):
         }
 
         return self._get_obs(unrealized_pnl), reward, terminated, truncated, info
-

@@ -280,15 +280,15 @@ def _safe_get(row: pd.Series, key: str, default: object) -> object:
 
 def _config_from_row(row: pd.Series) -> dict[str, float | int | bool | str]:
     return {
-        "timesteps": int(_safe_get(row, "timesteps", 5000)),
+        "timesteps": int(_safe_get(row, "timesteps", 20000)),
         "learning_rate": float(_safe_get(row, "learning_rate", 0.0003)),
         "gamma": float(_safe_get(row, "gamma", 0.99)),
-        "ent_coef": float(_safe_get(row, "ent_coef", 0.0)),
+        "ent_coef": float(_safe_get(row, "ent_coef", 0.02)),
         "threshold": float(_safe_get(row, "threshold", 0.002)),
         "horizon": int(_safe_get(row, "horizon", 1)),
         "transaction_cost_rate": float(_safe_get(row, "transaction_cost_rate", 0.001)),
         "trade_penalty": float(_safe_get(row, "trade_penalty", 0.05)),
-        "reward_mode": str(_safe_get(row, "reward_mode", "legacy")),
+        "reward_mode": str(_safe_get(row, "reward_mode", "sharpe")),
         "rolling_reward_window": int(_safe_get(row, "rolling_reward_window", 100)),
         "reward_epsilon": float(_safe_get(row, "reward_epsilon", 1e-6)),
         "reward_return_scale": float(_safe_get(row, "reward_return_scale", 1.0)),
@@ -318,8 +318,9 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
     recs: list[dict[str, object]] = []
 
     stability_cfg = base_cfg.copy()
-    stability_cfg["timesteps"] = int(max(5000, int(base_cfg["timesteps"])))
-    stability_cfg["ent_coef"] = max(float(base_cfg["ent_coef"]), 0.01)
+    stability_cfg["timesteps"] = int(max(10000, int(base_cfg["timesteps"] * 0.8)))
+    stability_cfg["ent_coef"] = max(float(base_cfg["ent_coef"]), 0.03)
+    stability_cfg["reward_mode"] = "sharpe"
     stability_cfg["reward_direction_scale"] = min(float(base_cfg["reward_direction_scale"]), 0.40)
     stability_cfg["reward_hold_penalty_scale"] = min(float(base_cfg["reward_hold_penalty_scale"]), 0.03)
     stability_cfg["reward_drawdown_penalty_scale"] = max(float(base_cfg["reward_drawdown_penalty_scale"]), 0.10)
@@ -338,10 +339,11 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
     )
 
     accuracy_cfg = base_cfg.copy()
-    accuracy_cfg["timesteps"] = int(max(int(base_cfg["timesteps"]) + 2000, int(base_cfg["timesteps"] * 1.5)))
+    accuracy_cfg["timesteps"] = int(max(12000, int(base_cfg["timesteps"])))
     accuracy_cfg["reward_return_scale"] = min(2.0, float(base_cfg["reward_return_scale"]) + 0.10)
     accuracy_cfg["reward_direction_scale"] = min(0.50, float(base_cfg["reward_direction_scale"]) + 0.05)
-    accuracy_cfg["ent_coef"] = max(0.005, float(base_cfg["ent_coef"]))
+    accuracy_cfg["ent_coef"] = max(0.02, float(base_cfg["ent_coef"]))
+    accuracy_cfg["reward_mode"] = "sharpe"
     recs.append(
         {
             "title": "Accuracy push",
@@ -359,6 +361,9 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
     )
 
     generalization_cfg = base_cfg.copy()
+    generalization_cfg["ent_coef"] = max(0.03, float(base_cfg["ent_coef"]))
+    generalization_cfg["timesteps"] = int(max(10000, int(base_cfg["timesteps"] * 0.8)))
+    generalization_cfg["reward_mode"] = "sharpe"
     if avg_gap > 0.05:
         generalization_cfg["reward_direction_scale"] = max(0.25, float(base_cfg["reward_direction_scale"]) - 0.05)
         generalization_cfg["reward_drawdown_penalty_scale"] = min(0.30, float(base_cfg["reward_drawdown_penalty_scale"]) + 0.03)
@@ -417,6 +422,15 @@ def build_experiment_interpretation(history: pd.DataFrame, target: float) -> dic
         f"Recent test stability (std): {test_std:.3f}.",
     ]
 
+    if "test_return_cv_by_config" in recent_rows.columns:
+        recent_cv = (
+            pd.to_numeric(recent_rows["test_return_cv_by_config"], errors="coerce")
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna()
+        )
+        if not recent_cv.empty:
+            findings.append(f"Recent config-level Test Return CV: {float(recent_cv.iloc[-1]):.2f}.")
+
     if collapse_rate > 0:
         findings.append(f"Collapse signatures (val actionable <= 1%) appeared in {collapse_rate:.1%} of recent runs.")
 
@@ -428,6 +442,15 @@ def build_experiment_interpretation(history: pd.DataFrame, target: float) -> dic
         stage = "collapse-risk"
         summary = "Model behavior suggests collapse risk: actionable decisions are dropping too often."
         focus = "Run the stability-focused recommendation first, then re-check action mix."
+    elif "test_return_cv_by_config" in recent_rows.columns and float(
+        pd.to_numeric(recent_rows["test_return_cv_by_config"], errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+        .max()
+    ) >= 1.0:
+        stage = "stability-risk"
+        summary = "Returns are unstable across seeds for similar configs (high CV risk)."
+        focus = "Shorten timesteps, raise entropy, and keep Sharpe reward while rechecking CV by config."
     elif avg_gap > 0.05:
         stage = "overfit-risk"
         summary = "Validation outperforms test by a meaningful margin; likely overfitting to split dynamics."
@@ -917,10 +940,10 @@ def render_experiments_page() -> None:
         st.subheader("Experiment runner")
         include_news = st.checkbox("Include sentiment features", value=True)
         seeds = st.text_input("Seeds", value="7,13,21")
-        timesteps = st.text_input("Timesteps", value="50000,100000")
+        timesteps = st.text_input("Timesteps", value="20000,40000")
         learning_rates = st.text_input("Learning rates", value="0.0003,0.0001")
         gammas = st.text_input("Gammas", value="0.99,0.995")
-        ent_coefs = st.text_input("Entropy coeffs", value="0.0,0.01")
+        ent_coefs = st.text_input("Entropy coeffs", value="0.02,0.05")
         threshold = st.number_input(
             "Eval threshold",
             min_value=0.0,
@@ -944,7 +967,7 @@ def render_experiments_page() -> None:
         reward_hold_penalty_scale = st.number_input("Reward: hold penalty scale", min_value=0.0, max_value=5.0, value=0.05, step=0.01)
         reward_drawdown_penalty_scale = st.number_input("Reward: drawdown penalty scale", min_value=0.0, max_value=5.0, value=0.10, step=0.01)
         reward_action_bonus_scale = st.number_input("Reward: action bonus (anti-collapse)", min_value=0.0, max_value=1.0, value=0.02, step=0.01)
-        reward_mode = st.selectbox("Reward mode", options=["legacy", "sharpe", "sortino"], index=0)
+        reward_mode = st.selectbox("Reward mode", options=["legacy", "sharpe", "sortino"], index=1)
         rolling_reward_window = st.number_input("Rolling reward window", min_value=5, max_value=1000, value=100, step=5)
         reward_epsilon = st.number_input("Reward epsilon", min_value=1e-9, max_value=1e-3, value=1e-6, format="%.9f")
         reward_clip = st.number_input("Reward clip (+/-)", min_value=0.01, max_value=10.0, value=1.0, step=0.05)
@@ -1039,6 +1062,14 @@ def render_experiments_page() -> None:
         r2.metric("Test Sharpe", f"{best.get('test_sharpe_ratio', 0):.2f}")
         r3.metric("Val Max DD", f"{best.get('val_max_drawdown', 0) * 100:.2f}%")
         r4.metric("Test Max DD", f"{best.get('test_max_drawdown', 0) * 100:.2f}%")
+
+        if "test_return_cv_by_config" in leaderboard.columns:
+            cv_col, risk_col = st.columns(2)
+            cv_col.metric("Config Test Return CV", f"{float(best.get('test_return_cv_by_config', 0.0)):.2f}")
+            risk_col.metric(
+                "High CV Risk",
+                "YES" if int(float(best.get("high_return_cv_risk", 0))) == 1 else "NO",
+            )
 
     # Leaderboard Performance Charts
     if len(leaderboard) > 1:

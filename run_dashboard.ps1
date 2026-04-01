@@ -40,9 +40,15 @@ if ($Action -eq "stop") {
         exit 0
     }
 
-    foreach ($p in $proc) {
-        Stop-Process -Id $p.ProcessId
-        Write-Host "Stopped dashboard process PID $($p.ProcessId)."
+    foreach ($dashboardPid in ($proc.ProcessId | Select-Object -Unique)) {
+        $existingProc = Get-Process -Id $dashboardPid -ErrorAction SilentlyContinue
+        if (-not $existingProc) {
+            Write-Host "Skipping stale dashboard PID $dashboardPid (already exited)."
+            continue
+        }
+
+        Stop-Process -Id $dashboardPid
+        Write-Host "Stopped dashboard process PID $dashboardPid."
     }
     if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
     exit 0
