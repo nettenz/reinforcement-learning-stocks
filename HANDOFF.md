@@ -11,6 +11,7 @@ Use this handoff to resume quickly on Windows/macOS.
    - Promotion gates for model/config acceptance
    - Windows command templates for baseline/coarse/focused sweeps
    - A copy/paste "Custom Agent Instruction Seed" for a dedicated optimization agent
+- Latest session handoff: `sessions/session-2026-04-01-model-alignment-and-curated-picker.md`.
 
 ## Current Status
 - Dashboard launcher is stable (`run_dashboard.ps1` start/status/stop fixed for stale/duplicate PID handling).
