@@ -91,6 +91,19 @@ def _expected_observation_dim(model) -> int:
     return int(shape[0])
 
 
+def _market_feature_candidates(df: pd.DataFrame) -> list[tuple[str, list[str]]]:
+    candidates: list[tuple[str, list[str]]] = []
+
+    if all(col in df.columns for col in MARKET_FEATURE_COLUMNS):
+        candidates.append(("ohlcv", list(MARKET_FEATURE_COLUMNS)))
+
+    stationary_available = [col for col in STATIONARY_FEATURE_COLUMNS if col in df.columns]
+    if stationary_available:
+        candidates.append(("stationary", stationary_available))
+
+    return candidates
+
+
 def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> tuple[pd.DataFrame, bool, list[str]]:
     """
     Align the DataFrame columns to match what the model expects.
@@ -101,34 +114,48 @@ def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> tuple[p
         [market_features] + [news_features] + [balance, shares_held] + [weight, pnl, time]
          (5 OHLCV or 6 stationary)  (0-5)          (2)                    (0 or 3)
     """
-    # Determine which market features the data has
-    has_ohlcv = all(col in df.columns for col in MARKET_FEATURE_COLUMNS)
-    if has_ohlcv:
-        available_market = list(MARKET_FEATURE_COLUMNS)
-    else:
-        available_market = [col for col in STATIONARY_FEATURE_COLUMNS if col in df.columns]
-    
-    n_market = len(available_market)
+    market_candidates = _market_feature_candidates(df)
+    if not market_candidates:
+        raise ValueError(
+            "Data does not contain any supported market feature schema. "
+            "Expected either OHLCV columns or stationary feature columns."
+        )
+
     available_news = [col for col in NEWS_FEATURE_COLUMNS if col in df.columns]
-    
-    # Try to solve: expected = n_market + n_news + ACCOUNT_STATE_DIM [+ POSITION_MEMORY_DIM]
-    remaining_with_pos = expected_obs_dim - n_market - ACCOUNT_STATE_DIM - POSITION_MEMORY_DIM
-    remaining_without_pos = expected_obs_dim - n_market - ACCOUNT_STATE_DIM
-    
-    if 0 <= remaining_with_pos <= len(NEWS_FEATURE_COLUMNS):
-        include_position = True
-        required_news_count = remaining_with_pos
-    elif 0 <= remaining_without_pos <= len(NEWS_FEATURE_COLUMNS):
-        include_position = False
-        required_news_count = remaining_without_pos
-    else:
-        # Possible min/max for diagnostics
-        min_dim = n_market + ACCOUNT_STATE_DIM
-        max_dim = n_market + len(NEWS_FEATURE_COLUMNS) + ACCOUNT_STATE_DIM + POSITION_MEMORY_DIM
+
+    # Try each known market schema in priority order (OHLCV first for backwards compatibility).
+    chosen_market: list[str] | None = None
+    include_position: bool | None = None
+    required_news_count: int | None = None
+
+    for _, candidate_market in market_candidates:
+        n_market = len(candidate_market)
+        remaining_with_pos = expected_obs_dim - n_market - ACCOUNT_STATE_DIM - POSITION_MEMORY_DIM
+        remaining_without_pos = expected_obs_dim - n_market - ACCOUNT_STATE_DIM
+
+        if 0 <= remaining_with_pos <= len(NEWS_FEATURE_COLUMNS):
+            chosen_market = candidate_market
+            include_position = True
+            required_news_count = remaining_with_pos
+            break
+
+        if 0 <= remaining_without_pos <= len(NEWS_FEATURE_COLUMNS):
+            chosen_market = candidate_market
+            include_position = False
+            required_news_count = remaining_without_pos
+            break
+
+    if chosen_market is None or include_position is None or required_news_count is None:
+        ranges = []
+        for name, candidate_market in market_candidates:
+            n_market = len(candidate_market)
+            min_dim = n_market + ACCOUNT_STATE_DIM
+            max_dim = n_market + len(NEWS_FEATURE_COLUMNS) + ACCOUNT_STATE_DIM + POSITION_MEMORY_DIM
+            ranges.append(f"{name}: {min_dim}-{max_dim} ({n_market} market features)")
+
         raise ValueError(
             f"Model expects observation size {expected_obs_dim}, but TradingEnv supports "
-            f"{min_dim}-{max_dim} with {n_market} market features. "
-            "Use a compatible model or data schema."
+            f"{'; '.join(ranges)}. Use a compatible model or data schema."
         )
     
     selected_news = NEWS_FEATURE_COLUMNS[:required_news_count]
@@ -142,7 +169,7 @@ def _align_features_to_model(df: pd.DataFrame, expected_obs_dim: int) -> tuple[p
     if extra_news:
         aligned = aligned.drop(columns=extra_news)
     
-    return aligned, include_position, available_market
+    return aligned, include_position, chosen_market
 
 
 def simulate_agent_signals(
