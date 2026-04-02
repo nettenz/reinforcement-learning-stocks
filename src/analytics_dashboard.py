@@ -95,6 +95,74 @@ def _list_available_models() -> list[Path]:
     return model_paths
 
 
+def _top_ranked_models_from_leaderboard(max_count: int) -> list[Path]:
+    """Returns top model paths by leaderboard rank, filtered to existing files."""
+    if max_count <= 0 or not DEFAULT_LEADERBOARD_PATH.exists():
+        return []
+
+    try:
+        leaderboard = pd.read_csv(DEFAULT_LEADERBOARD_PATH)
+    except Exception:
+        return []
+
+    if leaderboard.empty or "model_path" not in leaderboard.columns:
+        return []
+
+    if "ranking_score" in leaderboard.columns:
+        leaderboard = leaderboard.sort_values("ranking_score", ascending=False)
+    elif "test_actionable_accuracy" in leaderboard.columns:
+        leaderboard = leaderboard.sort_values("test_actionable_accuracy", ascending=False)
+
+    ranked: list[Path] = []
+    seen: set[Path] = set()
+    for raw_path in leaderboard["model_path"].dropna().tolist():
+        candidate = Path(str(raw_path))
+        if not candidate.exists():
+            continue
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        ranked.append(candidate)
+        seen.add(resolved)
+        if len(ranked) >= max_count:
+            break
+
+    return ranked
+
+
+def _format_model_label(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT_DIR).as_posix()
+    except Exception:
+        return path.as_posix()
+
+
+def _curate_model_choices(all_models: list[Path], max_count: int) -> list[Path]:
+    if max_count <= 0:
+        return []
+
+    curated: list[Path] = []
+    seen: set[Path] = set()
+
+    for p in _top_ranked_models_from_leaderboard(max_count=max_count):
+        resolved = p.resolve()
+        if resolved in seen:
+            continue
+        curated.append(p)
+        seen.add(resolved)
+
+    for p in all_models:
+        if len(curated) >= max_count:
+            break
+        resolved = p.resolve()
+        if resolved in seen:
+            continue
+        curated.append(p)
+        seen.add(resolved)
+
+    return curated
+
+
 @st.cache_data(show_spinner=False)
 def load_market_data(data_path: str) -> pd.DataFrame:
     path = Path(data_path)
@@ -1437,7 +1505,6 @@ def main() -> None:
     
     # Intelligence Synchronization: Model Discovery
     available_models = _list_available_models()
-    model_labels = [p.name for p in available_models]
     
     with st.sidebar:
         st.header("Global inputs")
@@ -1450,6 +1517,23 @@ def main() -> None:
             st.sidebar.error("No .zip models found in `models/` or `snapshots/`.")
             model_path = ""
         else:
+            total_models = len(available_models)
+            if total_models >= 10:
+                model_limit = st.slider(
+                    "Top models shown",
+                    min_value=10,
+                    max_value=min(20, total_models),
+                    value=min(15, total_models),
+                    step=1,
+                    help="Curate the model picker to top-ranked snapshots first, then recent models.",
+                )
+            else:
+                model_limit = total_models
+                st.caption(f"Showing all available models ({total_models}).")
+
+            model_choices = _curate_model_choices(available_models, max_count=int(model_limit))
+            model_labels = [_format_model_label(p) for p in model_choices]
+
             # Try to find default promoted champion
             default_idx = 0
             for idx, name in enumerate(model_labels):
@@ -1463,7 +1547,8 @@ def main() -> None:
                 index=default_idx,
                 help="Choose a specific model snapshot or the latest promoted champion."
             )
-            model_path = str(available_models[model_labels.index(selected_model_name)])
+            model_path = str(model_choices[model_labels.index(selected_model_name)])
+            st.caption(f"Showing {len(model_choices)} of {total_models} discovered models.")
         
         threshold = st.number_input(
             "Movement threshold",
