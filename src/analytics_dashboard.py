@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -37,6 +38,13 @@ DEFAULT_ACTIONABLE_TARGET = 0.55
 RECOMMENDED_THRESHOLD = 0.0020
 RECOMMENDED_HORIZON = 1
 RECOMMENDED_CHART_WINDOW = 2000
+PROMOTION_GATE_DEFAULTS = {
+    "min_test_actionable": 0.53,
+    "min_test_win_rate": 0.52,
+    "min_test_alpha": 0.00,
+    "max_val_test_gap": 0.05,
+    "max_test_cv": 1.0,
+}
 
 def _validate_model_shape(model_path: str, data_df: pd.DataFrame) -> None:
     """Checks if the data feature dimensions match what the model policy expects."""
@@ -276,6 +284,34 @@ def summarize_snapshot_bests(history: pd.DataFrame) -> pd.DataFrame:
 def _safe_get(row: pd.Series, key: str, default: object) -> object:
     val = row.get(key, default)
     return default if pd.isna(val) else val
+
+
+def _evaluate_promotion_gates(row: pd.Series) -> dict[str, object]:
+    test_actionable = float(_safe_get(row, "test_actionable_accuracy", 0.0))
+    test_win_rate = float(_safe_get(row, "test_trade_win_rate", 0.0))
+    test_alpha = float(_safe_get(row, "test_alpha_vs_qqq", float("-inf")))
+    val_actionable = float(_safe_get(row, "val_actionable_accuracy", 0.0))
+    test_cv_raw = row.get("test_return_cv_by_config", np.inf)
+    test_cv = float(pd.to_numeric(pd.Series([test_cv_raw]), errors="coerce").fillna(np.inf).iloc[0])
+
+    checks = {
+        "test_actionable": test_actionable >= PROMOTION_GATE_DEFAULTS["min_test_actionable"],
+        "test_win_rate": test_win_rate >= PROMOTION_GATE_DEFAULTS["min_test_win_rate"],
+        "test_alpha": test_alpha >= PROMOTION_GATE_DEFAULTS["min_test_alpha"],
+        "val_test_gap": abs(val_actionable - test_actionable) <= PROMOTION_GATE_DEFAULTS["max_val_test_gap"],
+        "test_cv": test_cv < PROMOTION_GATE_DEFAULTS["max_test_cv"],
+    }
+    return {
+        "pass": all(checks.values()),
+        "checks": checks,
+        "values": {
+            "test_actionable": test_actionable,
+            "test_win_rate": test_win_rate,
+            "test_alpha": test_alpha,
+            "val_test_gap": abs(val_actionable - test_actionable),
+            "test_cv": test_cv,
+        },
+    }
 
 
 def _config_from_row(row: pd.Series) -> dict[str, float | int | bool | str]:
@@ -584,6 +620,20 @@ def render_charts(
     x_title = "Date" if has_valid_dates else "Step"
     tooltip_x = "date:T" if has_valid_dates else "step:Q"
     x_key = "date" if has_valid_dates else "step"
+
+    if has_valid_dates:
+        chart_df = chart_df.sort_values("date").reset_index(drop=True)
+        chart_df["x2_value"] = chart_df["date"].shift(-1)
+        if len(chart_df):
+            fallback = chart_df["date"].iloc[-1] + pd.Timedelta(days=1)
+            chart_df["x2_value"] = chart_df["x2_value"].fillna(fallback)
+        x2_field = "x2_value:T"
+    else:
+        chart_df = chart_df.sort_values("step").reset_index(drop=True)
+        chart_df["x2_value"] = chart_df["step"].shift(-1)
+        if len(chart_df):
+            chart_df.loc[chart_df.index[-1], "x2_value"] = float(chart_df.loc[chart_df.index[-1], "step"]) + 1.0
+        x2_field = "x2_value:Q"
     
     # Pre-select shared scale/selection for all sub-charts
     brush = alt.selection_interval(encodings=['x'])
@@ -602,7 +652,7 @@ def render_charts(
         .mark_rect(opacity=0.08)
         .encode(
             x=alt.X(x_field),
-            x2=alt.X2(f"lead({x_key}):T" if has_valid_dates else f"calculate(datum.step + 1):Q"),
+            x2=alt.X2(x2_field),
             color=alt.Color(
                 "action_label:N",
                 scale=alt.Scale(
@@ -660,7 +710,7 @@ def render_charts(
             y=alt.Y("volume:Q", title="Vol", axis=alt.Axis(format=".2s")),
             tooltip=[tooltip_x, alt.Tooltip("volume:Q", title="Volume", format=",")],
         )
-        .properties(height=80)
+        .properties(height=80, width="container")
     )
 
     # Errors as sharp markers
@@ -675,7 +725,11 @@ def render_charts(
         )
 
     # Layer and stack
-    price_main = alt.layer(background_zones, price_area, line, signal_points, error_marks).properties(height=350).resolve_scale(color='independent')
+    price_main = (
+        alt.layer(background_zones, price_area, line, signal_points, error_marks)
+        .properties(height=350, width="container")
+        .resolve_scale(color='independent')
+    )
     
     # Combined dashboard with VConcat
     combined = alt.vconcat(price_main, volume_chart).resolve_scale(x='shared').configure_view(stroke=None)
@@ -767,7 +821,7 @@ def render_charts(
         pnl_hover_rule,
         pnl_hover_point,
         pnl_hover_text,
-    )
+    ).properties(width="container")
     st.altair_chart(pnl_chart.interactive(), width="stretch")
 
     if show_horizon_panel:
@@ -790,7 +844,7 @@ def render_charts(
                     alt.Tooltip("true_label:N", title="Market Reality"),
                 ],
             )
-        )
+        ).properties(width="container")
         st.altair_chart(horizon_chart.interactive(), width="stretch")
 
     # Keep recent-signal tables based on the full evaluated run, not the chart window slice.
@@ -1070,6 +1124,46 @@ def render_experiments_page() -> None:
                 "High CV Risk",
                 "YES" if int(float(best.get("high_return_cv_risk", 0))) == 1 else "NO",
             )
+
+        gate_eval = _evaluate_promotion_gates(best)
+        st.markdown("**Promotion Gate Check (Best Run)**")
+        if bool(gate_eval["pass"]):
+            st.success("PASS: Best run satisfies all promotion gates.")
+        else:
+            st.error("FAIL: Best run does not satisfy all promotion gates.")
+
+        gate_values = gate_eval["values"]
+        gate_checks = gate_eval["checks"]
+        gate_table = pd.DataFrame(
+            [
+                {
+                    "gate": "test_actionable_accuracy >= 0.53",
+                    "value": f"{gate_values['test_actionable']:.4f}",
+                    "status": "PASS" if gate_checks["test_actionable"] else "FAIL",
+                },
+                {
+                    "gate": "test_trade_win_rate >= 0.52",
+                    "value": f"{gate_values['test_win_rate']:.4f}",
+                    "status": "PASS" if gate_checks["test_win_rate"] else "FAIL",
+                },
+                {
+                    "gate": "test_alpha_vs_qqq >= 0.00",
+                    "value": f"{gate_values['test_alpha']:.4f}",
+                    "status": "PASS" if gate_checks["test_alpha"] else "FAIL",
+                },
+                {
+                    "gate": "|val_actionable - test_actionable| <= 0.05",
+                    "value": f"{gate_values['val_test_gap']:.4f}",
+                    "status": "PASS" if gate_checks["val_test_gap"] else "FAIL",
+                },
+                {
+                    "gate": "test_return_cv_by_config < 1.0",
+                    "value": "inf" if not np.isfinite(gate_values["test_cv"]) else f"{gate_values['test_cv']:.4f}",
+                    "status": "PASS" if gate_checks["test_cv"] else "FAIL",
+                },
+            ]
+        )
+        st.dataframe(gate_table, width="stretch", hide_index=True)
 
     # Leaderboard Performance Charts
     if len(leaderboard) > 1:

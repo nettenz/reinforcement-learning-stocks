@@ -244,6 +244,22 @@ def _attach_config_stability_metrics(leaderboard: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
+def _passes_promotion_gates(row: pd.Series, args: argparse.Namespace) -> bool:
+    test_actionable = float(row.get("test_actionable_accuracy", 0.0))
+    test_win_rate = float(row.get("test_trade_win_rate", 0.0))
+    test_alpha = float(row.get("test_alpha_vs_qqq", float("-inf")))
+    val_actionable = float(row.get("val_actionable_accuracy", 0.0))
+    test_cv = float(row.get("test_return_cv_by_config", float("inf")))
+
+    return (
+        test_actionable >= float(args.promote_min_test_actionable)
+        and test_win_rate >= float(args.promote_min_test_win_rate)
+        and test_alpha >= float(args.promote_min_test_alpha)
+        and abs(val_actionable - test_actionable) <= float(args.promote_max_val_test_gap)
+        and test_cv < float(args.promote_max_test_cv)
+    )
+
+
 def _fetch_qqq_prices(start_date: pd.Timestamp, end_date: pd.Timestamp) -> pd.DataFrame:
     raw = fetch_yahoo_ohlcv(
         tickers=("QQQ",),
@@ -603,6 +619,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="SAC device (auto, cuda, cpu).")
     parser.add_argument("--use-lr-schedule", action="store_true", help="Use linear learning rate decay.")
     parser.add_argument("--n-envs", type=int, default=8, help="Number of parallel environments for vectorized training.")
+    parser.add_argument(
+        "--promote-require-gates",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Only promote champion model if promotion gates are satisfied.",
+    )
+    parser.add_argument("--promote-min-test-actionable", type=float, default=0.53, help="Promotion gate: minimum test actionable accuracy.")
+    parser.add_argument("--promote-min-test-win-rate", type=float, default=0.52, help="Promotion gate: minimum test trade win rate.")
+    parser.add_argument("--promote-min-test-alpha", type=float, default=0.00, help="Promotion gate: minimum test alpha vs benchmark.")
+    parser.add_argument("--promote-max-val-test-gap", type=float, default=0.05, help="Promotion gate: maximum |val actionable - test actionable|.")
+    parser.add_argument("--promote-max-test-cv", type=float, default=1.0, help="Promotion gate: maximum config-level test return CV.")
     return parser
 
 
@@ -633,14 +660,41 @@ def main() -> None:
 
     # --- Champion Promotion ---
     if not leaderboard.empty:
-        best_run = leaderboard.iloc[0]
-        best_model_path = Path(best_run["model_path"])
-        if best_model_path.exists():
-            import shutil
-            default_model_path = ROOT_DIR / "models" / "sac_trading_bot.zip"
-            default_model_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(best_model_path, default_model_path)
-            print(f"Champion promoted to: {default_model_path} (Ranking Score: {best_run['ranking_score']:.4f})")
+        candidate_rows = leaderboard
+        if args.promote_require_gates:
+            mask = leaderboard.apply(lambda row: _passes_promotion_gates(row, args), axis=1)
+            candidate_rows = leaderboard[mask].sort_values("ranking_score", ascending=False).reset_index(drop=True)
+
+            print(
+                "Promotion gates active: "
+                f"min_test_actionable={args.promote_min_test_actionable:.3f}, "
+                f"min_test_win_rate={args.promote_min_test_win_rate:.3f}, "
+                f"min_test_alpha={args.promote_min_test_alpha:.3f}, "
+                f"max_val_test_gap={args.promote_max_val_test_gap:.3f}, "
+                f"max_test_cv={args.promote_max_test_cv:.3f}"
+            )
+
+        if candidate_rows.empty:
+            print("No champion promoted: no run satisfied promotion gates.")
+        else:
+            best_run = candidate_rows.iloc[0]
+            best_model_path = Path(best_run["model_path"])
+            if best_model_path.exists():
+                import shutil
+
+                default_model_path = ROOT_DIR / "models" / "sac_trading_bot.zip"
+                default_model_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(best_model_path, default_model_path)
+                print(
+                    f"Champion promoted to: {default_model_path} "
+                    f"(Ranking Score: {best_run['ranking_score']:.4f}, "
+                    f"test_actionable={float(best_run.get('test_actionable_accuracy', 0.0)):.4f}, "
+                    f"test_win_rate={float(best_run.get('test_trade_win_rate', 0.0)):.4f}, "
+                    f"test_alpha={float(best_run.get('test_alpha_vs_qqq', 0.0)):.4f}, "
+                    f"test_cv={float(best_run.get('test_return_cv_by_config', float('inf'))):.4f})"
+                )
+            else:
+                print(f"No champion promoted: selected model path missing: {best_model_path}")
     # --------------------------
 
     print(f"Saved leaderboard: {leaderboard_path}")
