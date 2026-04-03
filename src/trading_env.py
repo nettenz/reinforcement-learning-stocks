@@ -5,10 +5,12 @@ from collections import deque
 
 class PositionManager:
     """Handles portfolio math, fractional/integer scaling, and transaction costs."""
-    def __init__(self, initial_balance, transaction_cost_rate, trade_penalty):
+    def __init__(self, initial_balance, transaction_cost_rate, trade_penalty, spread_bps=0.0, slippage_bps=0.0):
         self.initial_balance = float(initial_balance)
         self.transaction_cost_rate = float(transaction_cost_rate)
         self.trade_penalty = float(trade_penalty)
+        self.spread_bps = max(float(spread_bps), 0.0)
+        self.slippage_bps = max(float(slippage_bps), 0.0)
         self.reset()
         
     def reset(self):
@@ -32,17 +34,28 @@ class PositionManager:
         delta_shares = target_shares - self.shares_held
         
         trade_executed = delta_shares != 0
+        fee = 0.0
+        execution_price = current_price
+        gross_value = 0.0
         
+        trade_penalty_paid = 0.0
+
         if trade_executed:
-            gross_value = abs(delta_shares) * current_price
+            side = 1.0 if delta_shares > 0 else -1.0
+            spread_component = (self.spread_bps * 1e-4) * 0.5
+            slippage_component = self.slippage_bps * 1e-4
+            impact = spread_component + slippage_component
+            execution_price = max(current_price * (1.0 + (side * impact)), 1e-8)
+
+            gross_value = abs(delta_shares) * execution_price
             fee = gross_value * self.transaction_cost_rate
             
-            # Use current_price for the trade execution
-            self.balance -= (delta_shares * current_price) + fee
+            self.balance -= (delta_shares * execution_price) + fee
             self.shares_held = target_shares
             
             if self.trade_penalty > 0:
-                self.balance -= self.trade_penalty
+                trade_penalty_paid = float(self.trade_penalty)
+                self.balance -= trade_penalty_paid
                 
             if target_weight != 0 and self.current_weight == 0:
                 self.entry_price = current_price
@@ -71,12 +84,24 @@ class PositionManager:
             ratio = current_price / self.entry_price
             unrealized_pnl_pct = ratio - 1.0 if self.shares_held > 0 else 1.0 - ratio
             
-        return trade_executed, portfolio_return, drawdown, unrealized_pnl_pct
+        return trade_executed, portfolio_return, drawdown, unrealized_pnl_pct, execution_price, fee, trade_penalty_paid, gross_value
 
 
 class RewardEvaluator:
     """Strategy pattern for varying reward schemas (Legacy, Sharpe, Sortino)."""
-    def __init__(self, mode, rolling_window, epsilon, return_scale, dir_scale, hold_scale, dd_scale, action_scale, clip):
+    def __init__(
+        self,
+        mode,
+        rolling_window,
+        epsilon,
+        return_scale,
+        dir_scale,
+        hold_scale,
+        dd_scale,
+        action_scale,
+        turnover_scale,
+        clip,
+    ):
         self.mode = mode.lower()
         self.epsilon = epsilon
         self.return_scale = return_scale
@@ -84,15 +109,17 @@ class RewardEvaluator:
         self.hold_scale = hold_scale
         self.dd_scale = dd_scale
         self.action_scale = action_scale
+        self.turnover_scale = turnover_scale
         self.clip = clip
         self.returns_buffer = deque(maxlen=rolling_window)
 
-    def calculate(self, portfolio_return, realized_return, current_weight, trade_executed, drawdown):
-        strategy_realized_return = current_weight * realized_return
+    def calculate(self, portfolio_return, realized_return, exposure_weight, weight_change, trade_executed, drawdown):
+        strategy_realized_return = exposure_weight * realized_return
         self.returns_buffer.append(strategy_realized_return)
 
-        hold_penalty = -self.hold_scale * abs(realized_return) if abs(current_weight) < 0.1 else 0.0
+        hold_penalty = -self.hold_scale * abs(realized_return) if abs(exposure_weight) < 0.1 else 0.0
         action_bonus = self.action_scale if trade_executed else 0.0
+        turnover_penalty = -self.turnover_scale * abs(weight_change)
         dd_penalty = -self.dd_scale * drawdown
         
         directional_reward = strategy_realized_return
@@ -109,8 +136,17 @@ class RewardEvaluator:
         else:
             base_reward = (self.return_scale * portfolio_return) + (self.dir_scale * directional_reward)
 
-        total = base_reward + hold_penalty + action_bonus + dd_penalty
-        return float(np.clip(total, -self.clip, self.clip)), risk_metric, strategy_realized_return, directional_reward, hold_penalty, action_bonus, dd_penalty
+        total = base_reward + hold_penalty + action_bonus + turnover_penalty + dd_penalty
+        return (
+            float(np.clip(total, -self.clip, self.clip)),
+            risk_metric,
+            strategy_realized_return,
+            directional_reward,
+            hold_penalty,
+            action_bonus,
+            turnover_penalty,
+            dd_penalty,
+        )
 
     def _sharpe(self):
         if len(self.returns_buffer) < 2: return 0.0
@@ -148,8 +184,12 @@ class TradingEnv(gym.Env):
         reward_hold_penalty_scale=0.10,
         reward_drawdown_penalty_scale=0.10,
         reward_action_bonus_scale=0.02,
+        reward_turnover_penalty_scale=0.05,
         reward_clip=1.0,
         reward_ignore_transaction_cost=True,
+        execution_mode="same_bar",
+        spread_bps=0.0,
+        slippage_bps=0.0,
         market_feature_columns=None,
         reward_mode="legacy",
         rolling_reward_window=100,
@@ -160,13 +200,24 @@ class TradingEnv(gym.Env):
         self.include_position = bool(include_position_in_observation)
         self.current_step = 0
         self.price_column = 'RawClose' if 'RawClose' in self.df.columns else 'Close'
+        self.execution_mode = str(execution_mode).lower()
+        self.reward_ignore_transaction_cost = bool(reward_ignore_transaction_cost)
+        if self.execution_mode not in {"same_bar", "next_bar"}:
+            raise ValueError("execution_mode must be one of: same_bar, next_bar")
+        self.pending_target_weight = 0.0
 
         # OOP Subsystems
-        self.pm = PositionManager(initial_balance, transaction_cost_rate, trade_penalty)
+        self.pm = PositionManager(
+            initial_balance,
+            transaction_cost_rate,
+            trade_penalty,
+            spread_bps=spread_bps,
+            slippage_bps=slippage_bps,
+        )
         self.re = RewardEvaluator(
             reward_mode, rolling_reward_window, reward_epsilon,
             reward_return_scale, reward_direction_scale, reward_hold_penalty_scale,
-            reward_drawdown_penalty_scale, reward_action_bonus_scale, reward_clip
+            reward_drawdown_penalty_scale, reward_action_bonus_scale, reward_turnover_penalty_scale, reward_clip
         )
         
         # Continuous Action Space: [-1.0 (Full Short), 1.0 (Full Long)]
@@ -216,6 +267,7 @@ class TradingEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.current_step = 0
+        self.pending_target_weight = 0.0
         self.pm.reset()
         self.re.reset()
         return self._get_obs(), {}
@@ -243,22 +295,50 @@ class TradingEnv(gym.Env):
         # Backward-compat for legacy PPO discrete policies:
         # 0=Hold, 1=Buy(Long), 2=Sell(Short) -> map into continuous target weights.
         if isinstance(raw_action, (int, np.integer)) and raw_action in (0, 1, 2):
-            target_weight = {0: 0.0, 1: 1.0, 2: -1.0}[int(raw_action)]
+            desired_target_weight = {0: 0.0, 1: 1.0, 2: -1.0}[int(raw_action)]
         else:
-            target_weight = float(raw_action)
+            desired_target_weight = float(raw_action)
+
+        if self.execution_mode == "next_bar":
+            execution_target_weight = self.pending_target_weight
+            self.pending_target_weight = desired_target_weight
+        else:
+            execution_target_weight = desired_target_weight
             
         current_price = max(float(self.df.loc[self.current_step, self.price_column]), 1e-8)
+        pre_trade_weight = float(self.pm.current_weight)
+        prev_net_worth = float(self.pm.net_worth)
         
         prev_step = max(0, self.current_step - 1)
         prev_price = max(float(self.df.loc[prev_step, self.price_column]), 1e-8)
         realized_return = (current_price / prev_price) - 1.0 if self.current_step > 0 else 0.0
         
         # Execute trade via Position Manager
-        trade_executed, portfolio_return, drawdown, unrealized_pnl = self.pm.step(target_weight, current_price)
+        trade_executed, portfolio_return, drawdown, unrealized_pnl, execution_price, execution_fee, trade_penalty_paid, execution_notional = self.pm.step(
+            execution_target_weight,
+            current_price,
+        )
+
+        # Reward attribution uses prior exposure for this bar's realized return.
+        # This avoids crediting a newly opened position for a return that occurred before the trade.
+        exposure_weight = pre_trade_weight
+        weight_change = float(self.pm.current_weight - pre_trade_weight)
+
+        if self.reward_ignore_transaction_cost:
+            ignored_cost = float(execution_fee + trade_penalty_paid)
+            cost_ratio = ignored_cost / max(prev_net_worth, 1e-8)
+            reward_portfolio_return = float(portfolio_return + cost_ratio)
+        else:
+            reward_portfolio_return = float(portfolio_return)
         
         # Evaluate reward
-        reward, risk_metric, strategy_realized_return, dir_rew, hold_pen, action_bon, dd_pen = self.re.calculate(
-            portfolio_return, realized_return, self.pm.current_weight, trade_executed, drawdown
+        reward, risk_metric, strategy_realized_return, dir_rew, hold_pen, action_bon, turnover_pen, dd_pen = self.re.calculate(
+            reward_portfolio_return,
+            realized_return,
+            exposure_weight,
+            weight_change,
+            trade_executed,
+            drawdown,
         )
         
         self.current_step += 1
@@ -271,12 +351,20 @@ class TradingEnv(gym.Env):
             "reward_direction": dir_rew,
             "reward_hold_penalty": hold_pen,
             "reward_action_bonus": action_bon,
+            "reward_turnover_penalty": turnover_pen,
             "reward_drawdown_penalty": dd_pen,
             "realized_return": realized_return,
             "reward_drawdown": drawdown,
             "reward_net_worth": self.pm.net_worth,
             "reward_mode": self.re.mode,
             "reward_risk_metric": risk_metric,
+            "execution_mode": self.execution_mode,
+            "execution_target_weight": execution_target_weight,
+            "desired_target_weight": desired_target_weight,
+            "execution_price": execution_price,
+            "execution_fee": execution_fee,
+            "execution_trade_penalty": trade_penalty_paid,
+            "execution_notional": execution_notional,
         }
 
         return self._get_obs(unrealized_pnl), reward, terminated, truncated, info

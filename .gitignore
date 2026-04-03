@@ -1,6 +1,7 @@
 # macOS
 .DS_Store
 .vscode/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -25,6 +26,8 @@ npm-debug.log*
 dist/
 build/
 coverage/
+logs/
+*.log
 
 # Runtime/dashboard artifacts
 .streamlit_dashboard.pid

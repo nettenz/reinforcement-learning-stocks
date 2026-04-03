@@ -26,7 +26,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from src.market_data import get_tech_training_data
+from src.market_data import get_tech_training_data, TICKER_PRESETS
 from src.signal_analytics import compute_metrics, enrich_with_truth_labels
 from src.trading_env import TradingEnv
 from src.market_data import fetch_yahoo_ohlcv
@@ -119,6 +119,7 @@ def _summarize_rewards(signal_df: pd.DataFrame, prefix: str) -> dict[str, float]
             f"{prefix}_reward_direction_mean": 0.0,
             f"{prefix}_reward_hold_penalty_mean": 0.0,
             f"{prefix}_reward_action_bonus_mean": 0.0,
+            f"{prefix}_reward_turnover_penalty_mean": 0.0,
             f"{prefix}_reward_drawdown_penalty_mean": 0.0,
             f"{prefix}_reward_drawdown_mean": 0.0,
         }
@@ -130,6 +131,7 @@ def _summarize_rewards(signal_df: pd.DataFrame, prefix: str) -> dict[str, float]
         f"{prefix}_reward_direction_mean": float(signal_df["reward_direction"].mean()),
         f"{prefix}_reward_hold_penalty_mean": float(signal_df["reward_hold_penalty"].mean()),
         f"{prefix}_reward_action_bonus_mean": float(signal_df.get("reward_action_bonus", pd.Series([0.0])).mean()),
+        f"{prefix}_reward_turnover_penalty_mean": float(signal_df.get("reward_turnover_penalty", pd.Series([0.0])).mean()),
         f"{prefix}_reward_drawdown_penalty_mean": float(signal_df["reward_drawdown_penalty"].mean()),
         f"{prefix}_reward_drawdown_mean": float(signal_df["reward_drawdown"].mean()),
     }
@@ -142,6 +144,20 @@ def _ranking_score(metrics_obj) -> float:
         + 0.30 * metrics_obj.trade_win_rate
         + 0.20 * cumulative_clipped
     )
+
+
+def _robustness_score(
+    *,
+    ranking_score: float,
+    test_alpha_vs_qqq: float,
+    val_actionable_accuracy: float,
+    test_actionable_accuracy: float,
+    test_return_cv_by_config: float,
+) -> float:
+    test_alpha_clipped = max(min(float(test_alpha_vs_qqq), 1.0), -1.0)
+    val_test_gap = abs(float(val_actionable_accuracy) - float(test_actionable_accuracy))
+    cv_penalty = min(float(test_return_cv_by_config), 5.0) / 5.0
+    return float(ranking_score + (0.10 * test_alpha_clipped) - (0.05 * val_test_gap) - (0.05 * cv_penalty))
 
 
 def _timestamp_slug() -> str:
@@ -198,15 +214,20 @@ def _attach_config_stability_metrics(leaderboard: pd.DataFrame) -> pd.DataFrame:
         return leaderboard
 
     config_keys = [
+        "ticker",
         "timesteps",
         "learning_rate",
         "gamma",
         "ent_coef",
         "include_news",
+        "use_stationary_features",
         "threshold",
         "horizon",
         "transaction_cost_rate",
         "trade_penalty",
+        "execution_mode",
+        "spread_bps",
+        "slippage_bps",
         "reward_mode",
         "rolling_reward_window",
         "reward_epsilon",
@@ -250,6 +271,8 @@ def _passes_promotion_gates(row: pd.Series, args: argparse.Namespace) -> bool:
     test_alpha = float(row.get("test_alpha_vs_qqq", float("-inf")))
     val_actionable = float(row.get("val_actionable_accuracy", 0.0))
     test_cv = float(row.get("test_return_cv_by_config", float("inf")))
+    test_trade_count = int(row.get("test_trade_count", 0))
+    test_actionable_support = int(row.get("test_actionable_support", 0))
 
     return (
         test_actionable >= float(args.promote_min_test_actionable)
@@ -257,6 +280,8 @@ def _passes_promotion_gates(row: pd.Series, args: argparse.Namespace) -> bool:
         and test_alpha >= float(args.promote_min_test_alpha)
         and abs(val_actionable - test_actionable) <= float(args.promote_max_val_test_gap)
         and test_cv < float(args.promote_max_test_cv)
+        and test_trade_count >= int(args.promote_min_test_trade_count)
+        and test_actionable_support >= int(args.promote_min_test_actionable_support)
     )
 
 
@@ -361,6 +386,23 @@ def write_experiment_outputs(
     if append_results and leaderboard_path.exists():
         try:
             existing = pd.read_csv(leaderboard_path)
+            # Fix #2: Validate ticker consistency before appending (CRITICAL for leaderboard integrity)
+            existing_tickers = {
+                str(t).strip().upper()
+                for t in existing.get("ticker", pd.Series(dtype="object")).dropna().unique()
+                if str(t).strip()
+            }
+            new_tickers = {
+                str(t).strip().upper()
+                for t in leaderboard.get("ticker", pd.Series(dtype="object")).dropna().unique()
+                if str(t).strip()
+            }
+            if existing_tickers and new_tickers and existing_tickers != new_tickers:
+                print(
+                    f"WARNING: Appending ticker(s) {new_tickers} to leaderboard with {existing_tickers}. "
+                    "This creates a mixed-ticker leaderboard where config-level metrics are non-comparable. "
+                    "Recommend using separate leaderboards per ticker: --leaderboard-path data/experiment_leaderboard_<ticker>.csv"
+                )
             leaderboard = pd.concat([existing, leaderboard], ignore_index=True)
             leaderboard = leaderboard.sort_values("ranking_score", ascending=False).reset_index(drop=True)
         except Exception as e:
@@ -412,6 +454,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     timesteps_list = _parse_int_list(args.timesteps)
 
     df = get_tech_training_data(
+        ticker_preset=args.ticker,
         include_news=args.include_news,
         refresh=args.refresh_data,
         news_refresh=args.refresh_news,
@@ -430,6 +473,9 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     env_kwargs: dict[str, float | bool | str | int] = {
         "transaction_cost_rate": args.transaction_cost_rate,
         "trade_penalty": args.trade_penalty,
+        "execution_mode": args.execution_mode,
+        "spread_bps": args.spread_bps,
+        "slippage_bps": args.slippage_bps,
         "reward_clip": args.reward_clip,
         "reward_ignore_transaction_cost": args.reward_ignore_transaction_cost,
         "reward_mode": args.reward_mode,
@@ -442,20 +488,22 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     reward_hold_penalty_scales = _parse_float_list(args.reward_hold_penalty_scale)
     reward_drawdown_penalty_scales = _parse_float_list(args.reward_drawdown_penalty_scale)
     reward_action_bonus_scales = _parse_float_list(args.reward_action_bonus_scale)
+    reward_turnover_penalty_scales = _parse_float_list(args.reward_turnover_penalty_scale)
 
     configs = list(itertools.product(
         seeds, timesteps_list, learning_rates, gammas, ent_coefs,
         reward_return_scales, reward_direction_scales, reward_hold_penalty_scales,
-        reward_drawdown_penalty_scales, reward_action_bonus_scales
+        reward_drawdown_penalty_scales, reward_action_bonus_scales, reward_turnover_penalty_scales
     ))
     if args.max_runs > 0:
         configs = configs[: args.max_runs]
 
     rows: list[dict[str, float | int | str]] = []
+    canonical_ticker = TICKER_PRESETS.get(args.ticker, (args.ticker.upper(),))[0]
     print(f"Running {len(configs)} experiment runs...")
 
-    for idx, (seed, timesteps, learning_rate, gamma, ent_coef, 
-              ret_scale, dir_scale, hold_scale, dd_scale, bonus_scale) in enumerate(configs, start=1):
+    for idx, (seed, timesteps, learning_rate, gamma, ent_coef,
+              ret_scale, dir_scale, hold_scale, dd_scale, bonus_scale, turnover_scale) in enumerate(configs, start=1):
         print(
             f"[{idx}/{len(configs)}] seed={seed} timesteps={timesteps} lr={learning_rate} "
             f"gamma={gamma} ent_coef={ent_coef} dir_scale={dir_scale} mode={args.reward_mode}"
@@ -470,6 +518,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "reward_hold_penalty_scale": hold_scale,
             "reward_drawdown_penalty_scale": dd_scale,
             "reward_action_bonus_scale": bonus_scale,
+            "reward_turnover_penalty_scale": turnover_scale,
         })
 
         if args.n_envs > 1:
@@ -519,16 +568,22 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         test_strategy_risk = _risk_metrics_from_equity(test_signals["net_worth"], prefix="test")
 
         row: dict[str, float | int | str] = {
+            "ticker": canonical_ticker,
+            "run_label": args.run_label.strip(),
             "seed": seed,
             "timesteps": timesteps,
             "learning_rate": learning_rate,
             "gamma": gamma,
             "ent_coef": ent_coef,
             "include_news": int(args.include_news),
+            "use_stationary_features": int(args.use_stationary_features),
             "threshold": args.threshold,
             "horizon": args.horizon,
             "transaction_cost_rate": args.transaction_cost_rate,
             "trade_penalty": args.trade_penalty,
+            "execution_mode": args.execution_mode,
+            "spread_bps": args.spread_bps,
+            "slippage_bps": args.slippage_bps,
             "reward_mode": args.reward_mode,
             "rolling_reward_window": args.rolling_reward_window,
             "reward_epsilon": args.reward_epsilon,
@@ -537,14 +592,21 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "reward_hold_penalty_scale": hold_scale,
             "reward_drawdown_penalty_scale": dd_scale,
             "reward_action_bonus_scale": bonus_scale,
+            "reward_turnover_penalty_scale": turnover_scale,
             "reward_clip": args.reward_clip,
             "reward_ignore_transaction_cost": int(args.reward_ignore_transaction_cost),
             "val_overall_accuracy": val_metrics.overall_accuracy,
             "val_actionable_accuracy": val_metrics.actionable_accuracy,
+            "val_actionable_support": val_metrics.actionable_support,
+            "val_trade_count": val_metrics.trade_count,
+            "val_trade_rate": val_metrics.trade_rate,
             "val_trade_win_rate": val_metrics.trade_win_rate,
             "val_cumulative_signal_return": val_metrics.cumulative_signal_return,
             "test_overall_accuracy": test_metrics.overall_accuracy,
             "test_actionable_accuracy": test_metrics.actionable_accuracy,
+            "test_actionable_support": test_metrics.actionable_support,
+            "test_trade_count": test_metrics.trade_count,
+            "test_trade_rate": test_metrics.trade_rate,
             "test_trade_win_rate": test_metrics.trade_win_rate,
             "test_cumulative_signal_return": test_metrics.cumulative_signal_return,
             "val_alpha_vs_qqq": float(val_strategy_risk["val_cumulative_return"] - val_benchmark_risk["val_benchmark_cumulative_return"]),
@@ -565,12 +627,24 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
 
     leaderboard = pd.DataFrame(rows).sort_values("ranking_score", ascending=False).reset_index(drop=True)
     leaderboard = _attach_config_stability_metrics(leaderboard)
+    leaderboard["robustness_score"] = leaderboard.apply(
+        lambda row: _robustness_score(
+            ranking_score=float(row.get("ranking_score", 0.0)),
+            test_alpha_vs_qqq=float(row.get("test_alpha_vs_qqq", 0.0)),
+            val_actionable_accuracy=float(row.get("val_actionable_accuracy", 0.0)),
+            test_actionable_accuracy=float(row.get("test_actionable_accuracy", 0.0)),
+            test_return_cv_by_config=float(row.get("test_return_cv_by_config", float("inf"))),
+        ),
+        axis=1,
+    )
     leaderboard = leaderboard.sort_values("ranking_score", ascending=False).reset_index(drop=True)
     return leaderboard
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Aggressive multi-seed SAC experiment runner.")
+    parser.add_argument("--ticker", default="aapl", choices=list(TICKER_PRESETS.keys()), 
+                        help=f"Stock ticker preset to train on. Options: {', '.join(TICKER_PRESETS.keys())}")
     parser.add_argument("--include-news", action="store_true", help="Train with merged sentiment features.")
     parser.add_argument("--refresh-data", action="store_true", help="Refresh OHLCV training data cache.")
     parser.add_argument("--refresh-news", action="store_true", help="Refresh news sentiment cache.")
@@ -586,11 +660,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--val-ratio", type=float, default=0.15, help="Walk-forward validation ratio.")
     parser.add_argument("--transaction-cost-rate", type=float, default=0.001, help="Fee rate per executed trade.")
     parser.add_argument("--trade-penalty", type=float, default=0.05, help="Flat penalty per executed trade.")
+    parser.add_argument("--execution-mode", default="same_bar", choices=["same_bar", "next_bar"], help="Execution timing model.")
+    parser.add_argument("--spread-bps", type=float, default=0.0, help="Half-spread is applied around mid for buys/sells (in bps).")
+    parser.add_argument("--slippage-bps", type=float, default=0.0, help="Additional one-way slippage added to execution price (in bps).")
     parser.add_argument("--reward-return-scale", default="1.0", help="Weight for portfolio-return reward term (list).")
     parser.add_argument("--reward-direction-scale", default="0.35", help="Weight for directional-alignment reward term (list).")
     parser.add_argument("--reward-hold-penalty-scale", default="0.10", help="Penalty scale for hold during movement (list).")
     parser.add_argument("--reward-drawdown-penalty-scale", default="0.10", help="Penalty scale for drawdown term (list).")
     parser.add_argument("--reward-action-bonus-scale", default="0.02", help="Bonus for taking Buy/Sell actions (list).")
+    parser.add_argument("--reward-turnover-penalty-scale", default="0.05", help="Penalty scale for absolute weight changes (list).")
 
     parser.add_argument("--reward-mode", default="sharpe", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
     parser.add_argument("--rolling-reward-window", type=int, default=100, help="Window size for rolling rewards.")
@@ -616,6 +694,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-snapshots", action="store_true", help="Disable timestamped snapshot output files.")
     parser.add_argument("--append", action="store_true", help="Append results to existing leaderboard.")
     parser.add_argument("--run-label", default="", help="Optional suffix label appended to snapshot filenames.")
+    parser.add_argument(
+        "--compact-output",
+        action="store_true",
+        help="Print a compact top-run summary instead of full transposed output.",
+    )
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="SAC device (auto, cuda, cpu).")
     parser.add_argument("--use-lr-schedule", action="store_true", help="Use linear learning rate decay.")
     parser.add_argument("--n-envs", type=int, default=8, help="Number of parallel environments for vectorized training.")
@@ -630,6 +713,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--promote-min-test-alpha", type=float, default=0.00, help="Promotion gate: minimum test alpha vs benchmark.")
     parser.add_argument("--promote-max-val-test-gap", type=float, default=0.05, help="Promotion gate: maximum |val actionable - test actionable|.")
     parser.add_argument("--promote-max-test-cv", type=float, default=1.0, help="Promotion gate: maximum config-level test return CV.")
+    parser.add_argument("--promote-min-test-trade-count", type=int, default=0, help="Optional promotion gate: minimum number of test trades (0 disables).")
+    parser.add_argument("--promote-min-test-actionable-support", type=int, default=0, help="Optional promotion gate: minimum test actionable support (0 disables).")
     return parser
 
 
@@ -647,6 +732,7 @@ def main() -> None:
     summary_path = Path(args.summary_path)
     snapshot_dir = None if args.disable_snapshots else Path(args.snapshot_dir)
     run_label = args.run_label.strip() or None
+    canonical_ticker = TICKER_PRESETS.get(args.ticker, (args.ticker.upper(),))[0]
     reward_leaderboard, summary = write_experiment_outputs(
         leaderboard=leaderboard,
         leaderboard_path=leaderboard_path,
@@ -664,25 +750,25 @@ def main() -> None:
         if args.promote_require_gates:
             mask = leaderboard.apply(lambda row: _passes_promotion_gates(row, args), axis=1)
             candidate_rows = leaderboard[mask].sort_values("ranking_score", ascending=False).reset_index(drop=True)
-
             print(
                 "Promotion gates active: "
                 f"min_test_actionable={args.promote_min_test_actionable:.3f}, "
                 f"min_test_win_rate={args.promote_min_test_win_rate:.3f}, "
-                f"min_test_alpha={args.promote_min_test_alpha:.3f}, "
-                f"max_val_test_gap={args.promote_max_val_test_gap:.3f}, "
-                f"max_test_cv={args.promote_max_test_cv:.3f}"
+                f"min_test_alpha={args.promote_min_test_alpha:.3f}"
             )
-
-        if candidate_rows.empty:
-            print("No champion promoted: no run satisfied promotion gates.")
-        else:
-            best_run = candidate_rows.iloc[0]
+        
+        # Filter by ticker to ensure champion matches current experiment ticker
+        candidate_tickers = candidate_rows.get("ticker", pd.Series(["" for _ in range(len(candidate_rows))]))
+        ticker_matches = candidate_rows[candidate_tickers.astype(str).str.upper() == canonical_ticker]
+        if not ticker_matches.empty:
+            best_run = ticker_matches.iloc[0]
+            best_ticker = str(best_run.get("ticker", "unknown"))
             best_model_path = Path(best_run["model_path"])
             if best_model_path.exists():
                 import shutil
 
-                default_model_path = ROOT_DIR / "models" / "sac_trading_bot.zip"
+                # Store ticker-aware champion to prevent cross-ticker contamination
+                default_model_path = ROOT_DIR / "models" / f"sac_trading_bot_{best_ticker}.zip"
                 default_model_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(best_model_path, default_model_path)
                 print(
@@ -691,10 +777,13 @@ def main() -> None:
                     f"test_actionable={float(best_run.get('test_actionable_accuracy', 0.0)):.4f}, "
                     f"test_win_rate={float(best_run.get('test_trade_win_rate', 0.0)):.4f}, "
                     f"test_alpha={float(best_run.get('test_alpha_vs_qqq', 0.0)):.4f}, "
-                    f"test_cv={float(best_run.get('test_return_cv_by_config', float('inf'))):.4f})"
+                    f"test_cv={float(best_run.get('test_return_cv_by_config', float('inf'))):.4f}, "
+                    f"ticker={best_ticker})"
                 )
             else:
                 print(f"No champion promoted: selected model path missing: {best_model_path}")
+        else:
+            print(f"No champion promoted: no candidates match ticker '{canonical_ticker}'")
     # --------------------------
 
     print(f"Saved leaderboard: {leaderboard_path}")
@@ -704,8 +793,24 @@ def main() -> None:
         snapshot_paths = summary["snapshot_paths"]
         if isinstance(snapshot_paths, dict):
             print(f"Saved snapshots: {snapshot_paths.get('leaderboard')}")
-    print("Top run (Transposed for readability):")
-    print(top.head(1).T.to_string(header=False))
+    if args.compact_output:
+        compact_cols = [
+            "run_label",
+            "ticker",
+            "seed",
+            "trade_penalty",
+            "reward_action_bonus_scale",
+            "test_trade_count",
+            "test_trade_win_rate",
+            "test_actionable_accuracy",
+            "ranking_score",
+        ]
+        available = [c for c in compact_cols if c in top.columns]
+        print("Top runs (compact):")
+        print(top[available].to_string(index=False))
+    else:
+        print("Top run (Transposed for readability):")
+        print(top.head(1).T.to_string(header=False))
 
 
 if __name__ == "__main__":

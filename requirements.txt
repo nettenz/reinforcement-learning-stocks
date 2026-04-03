@@ -1,6 +1,7 @@
 gymnasium[box2d,atari]
 Shimmy[atari]
 numpy
+pandas
 matplotlib
 stable-baselines3
 torch
@@ -12,3 +13,4 @@ yfinance
 streamlit
 python-dotenv
 tqdm
+rich

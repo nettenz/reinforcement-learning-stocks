@@ -15,6 +15,7 @@ from src.experiments import (
     DEFAULT_REWARD_LEADERBOARD_PATH,
     DEFAULT_SNAPSHOT_DIR,
     DEFAULT_SUMMARY_PATH,
+    TICKER_PRESETS,
     run_experiments,
     write_experiment_outputs,
 )
@@ -29,8 +30,10 @@ from src.signal_analytics import (
     simulate_agent_signals,
 )
 from src.trading_env import TradingEnv
+from src.market_data import get_cache_path_for_ticker
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_TICKER = "aapl"
 DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
 STATIONARY_DATA_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.parquet"
 FALLBACK_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
@@ -95,7 +98,18 @@ def _list_available_models() -> list[Path]:
     return model_paths
 
 
-def _top_ranked_models_from_leaderboard(max_count: int) -> list[Path]:
+def _ticker_symbol_from_key(ticker_key: str) -> str:
+    symbols = TICKER_PRESETS.get(ticker_key, (ticker_key.upper(),))
+    return str(symbols[0]).upper()
+
+
+def _ticker_match_mask(series: pd.Series, ticker_key: str) -> pd.Series:
+    ticker_symbol = _ticker_symbol_from_key(ticker_key)
+    normalized = series.astype(str).str.strip()
+    return normalized.str.lower().eq(ticker_key.lower()) | normalized.str.upper().eq(ticker_symbol)
+
+
+def _top_ranked_models_from_leaderboard(max_count: int, ticker_key: str) -> list[Path]:
     """Returns top model paths by leaderboard rank, filtered to existing files."""
     if max_count <= 0 or not DEFAULT_LEADERBOARD_PATH.exists():
         return []
@@ -106,6 +120,12 @@ def _top_ranked_models_from_leaderboard(max_count: int) -> list[Path]:
         return []
 
     if leaderboard.empty or "model_path" not in leaderboard.columns:
+        return []
+
+    if "ticker" in leaderboard.columns:
+        ticker_mask = _ticker_match_mask(leaderboard["ticker"], ticker_key=ticker_key)
+        leaderboard = leaderboard[ticker_mask].copy()
+    if leaderboard.empty:
         return []
 
     if "ranking_score" in leaderboard.columns:
@@ -137,19 +157,40 @@ def _format_model_label(path: Path) -> str:
         return path.as_posix()
 
 
-def _curate_model_choices(all_models: list[Path], max_count: int) -> list[Path]:
+def _curate_model_choices(all_models: list[Path], max_count: int, ticker_key: str) -> list[Path]:
     if max_count <= 0:
         return []
 
     curated: list[Path] = []
     seen: set[Path] = set()
+    ticker_symbol = _ticker_symbol_from_key(ticker_key)
 
-    for p in _top_ranked_models_from_leaderboard(max_count=max_count):
+    leaderboard_model_set: set[Path] = set()
+    if DEFAULT_LEADERBOARD_PATH.exists():
+        try:
+            lb = pd.read_csv(DEFAULT_LEADERBOARD_PATH)
+            if "model_path" in lb.columns and "ticker" in lb.columns:
+                lb = lb[_ticker_match_mask(lb["ticker"], ticker_key=ticker_key)]
+                for raw in lb["model_path"].dropna().tolist():
+                    candidate = Path(str(raw))
+                    if candidate.exists():
+                        leaderboard_model_set.add(candidate.resolve())
+        except Exception:
+            pass
+
+    for p in _top_ranked_models_from_leaderboard(max_count=max_count, ticker_key=ticker_key):
         resolved = p.resolve()
         if resolved in seen:
             continue
         curated.append(p)
         seen.add(resolved)
+
+    champion_path = ROOT_DIR / "models" / f"sac_trading_bot_{ticker_symbol}.zip"
+    if champion_path.exists():
+        resolved = champion_path.resolve()
+        if resolved not in seen:
+            curated.append(champion_path)
+            seen.add(resolved)
 
     for p in all_models:
         if len(curated) >= max_count:
@@ -157,10 +198,33 @@ def _curate_model_choices(all_models: list[Path], max_count: int) -> list[Path]:
         resolved = p.resolve()
         if resolved in seen:
             continue
+        name = p.name.lower()
+        if leaderboard_model_set and resolved not in leaderboard_model_set:
+            continue
+        if not leaderboard_model_set:
+            # Fallback heuristic when leaderboard has no usable model paths for this ticker.
+            if ticker_key.lower() not in name and ticker_symbol.lower() not in name:
+                continue
         curated.append(p)
         seen.add(resolved)
 
+    if not curated:
+        # Last-resort fallback: keep previous behavior to avoid an empty selector.
+        for p in all_models:
+            if len(curated) >= max_count:
+                break
+            resolved = p.resolve()
+            if resolved in seen:
+                continue
+            curated.append(p)
+            seen.add(resolved)
+
     return curated
+
+
+def get_data_path_for_ticker(ticker: str, use_stationary: bool = False) -> Path:
+    """Get the appropriate data path for a given ticker."""
+    return get_cache_path_for_ticker(ticker, stationary=use_stationary)
 
 
 @st.cache_data(show_spinner=False)
@@ -224,10 +288,44 @@ def _format_float(value: float) -> str:
     return text if text else "0"
 
 
+def _detect_leaderboard_tickers(leaderboard_path: str) -> set[str]:
+    """Detect supported ticker preset keys present in the leaderboard."""
+    if not Path(leaderboard_path).exists():
+        return set()
+    try:
+        df = pd.read_csv(leaderboard_path)
+        if "ticker" in df.columns:
+            # Leaderboard may store either preset keys (aapl) or canonical symbols (AAPL).
+            symbol_to_key = {
+                str(symbols[0]).upper(): key
+                for key, symbols in TICKER_PRESETS.items()
+                if symbols
+            }
+            supported_keys = set(TICKER_PRESETS.keys())
+            detected: set[str] = set()
+            for raw in df["ticker"].dropna().unique():
+                text = str(raw).strip()
+                if not text:
+                    continue
+                key_candidate = text.lower()
+                symbol_candidate = text.upper()
+                if key_candidate in supported_keys:
+                    detected.add(key_candidate)
+                    continue
+                mapped = symbol_to_key.get(symbol_candidate)
+                if mapped is not None:
+                    detected.add(mapped)
+            return detected
+    except Exception:
+        pass
+    return set()
+
+
 def _make_command_from_config(
     config: dict[str, float | int | bool | str],
     seeds: str,
     run_label: str,
+    ticker: str = "aapl",
 ) -> str:
     seed_count = max(1, len([s for s in seeds.split(",") if s.strip()]))
     ignore_cost_flag = (
@@ -237,6 +335,7 @@ def _make_command_from_config(
     )
     return (
         "python src/experiments.py "
+        f"--ticker {ticker} "
         f"--include-news --use-stationary-features --seeds {seeds} "
         f"--timesteps {int(config['timesteps'])} "
         f"--learning-rates {_format_float(float(config['learning_rate']))} "
@@ -405,7 +504,12 @@ def _config_from_row(row: pd.Series) -> dict[str, float | int | bool | str]:
     }
 
 
-def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds: str) -> list[dict[str, object]]:
+def build_next_step_recommendations(
+    history: pd.DataFrame,
+    target: float,
+    seeds: str,
+    ticker: str,
+) -> list[dict[str, object]]:
     if history.empty:
         return []
 
@@ -438,7 +542,7 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
                 "Re-run with higher exploration and stronger anti-collapse bonus while keeping directional pressure capped.",
                 "Compare collapse rate and test actionable accuracy against the previous latest snapshot.",
             ],
-            "command": _make_command_from_config(stability_cfg, seeds=seeds, run_label="insights-stability"),
+            "command": _make_command_from_config(stability_cfg, seeds=seeds, run_label="insights-stability", ticker=ticker),
         }
     )
 
@@ -460,7 +564,7 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
                 "Run the updated config on the same seed set for an apples-to-apples comparison.",
                 "Accept this path only if test actionable moves closer to target without widening the val/test gap.",
             ],
-            "command": _make_command_from_config(accuracy_cfg, seeds=seeds, run_label="insights-accuracy"),
+            "command": _make_command_from_config(accuracy_cfg, seeds=seeds, run_label="insights-accuracy", ticker=ticker),
         }
     )
 
@@ -485,7 +589,7 @@ def build_next_step_recommendations(history: pd.DataFrame, target: float, seeds:
                 "Re-evaluate val/test drift over the newest snapshots instead of single-run results.",
                 "Promote this profile only if transfer improves while keeping stability metrics intact.",
             ],
-            "command": _make_command_from_config(generalization_cfg, seeds=seeds, run_label="insights-generalization"),
+            "command": _make_command_from_config(generalization_cfg, seeds=seeds, run_label="insights-generalization", ticker=ticker),
         }
     )
 
@@ -939,13 +1043,14 @@ def render_charts(
 
 
 def render_signal_analytics_page(
+    ticker: str,
     data_path: str,
     model_path: str,
     threshold: float,
     horizon_steps: int,
     deterministic_policy: bool,
 ) -> None:
-    st.header("Signal Analytics")
+    st.header(f"Signal Analytics - {ticker.upper()}")
     st.caption("Evaluate one trained policy against forward-move labels.")
     st.info(
         "Recommended dashboard settings: "
@@ -1054,8 +1159,8 @@ def render_signal_analytics_page(
     )
 
 
-def render_experiments_page() -> None:
-    st.header("Experiments")
+def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
+    st.header(f"Experiments - {ticker.upper()}")
     st.caption("Run multi-seed SAC (continuous) sweeps and rank configurations on validation performance.")
 
     with st.sidebar:
@@ -1109,6 +1214,7 @@ def render_experiments_page() -> None:
 
     if run_experiment:
         args = argparse.Namespace(
+            ticker=ticker,
             include_news=include_news,
             refresh_data=False,
             refresh_news=False,
@@ -1167,6 +1273,8 @@ def render_experiments_page() -> None:
         return
 
     leaderboard = pd.read_csv(leaderboard_path)
+    if "ticker" in leaderboard.columns:
+        leaderboard = leaderboard[_ticker_match_mask(leaderboard["ticker"], ticker_key=ticker)].copy()
     st.subheader("1) Leaderboard")
     st.dataframe(leaderboard, width="stretch")
 
@@ -1317,6 +1425,10 @@ def render_experiments_page() -> None:
 
     if reward_leaderboard_path.exists():
         reward_leaderboard = pd.read_csv(reward_leaderboard_path)
+        if "ticker" in reward_leaderboard.columns:
+            reward_leaderboard = reward_leaderboard[
+                _ticker_match_mask(reward_leaderboard["ticker"], ticker_key=ticker)
+            ].copy()
         st.subheader("5) Reward Leaderboard")
         st.dataframe(reward_leaderboard, width="stretch")
         if len(reward_leaderboard):
@@ -1332,7 +1444,7 @@ def render_experiments_page() -> None:
         st.code(summary_path.read_text(encoding="utf-8"), language="json")
 
 
-def render_experiment_insights_page() -> None:
+def render_experiment_insights_page(ticker: str = DEFAULT_TICKER) -> None:
     st.header("Experiment Insights")
     st.caption("Visualize snapshot history and generate next experiment commands to improve actionable accuracy.")
 
@@ -1356,6 +1468,8 @@ def render_experiment_insights_page() -> None:
         leaderboard_path=str(leaderboard_path),
         cache_buster=history_cache_buster,
     )
+    if "ticker" in history.columns:
+        history = history[_ticker_match_mask(history["ticker"], ticker_key=ticker)].copy()
     if history.empty:
         st.info("No experiment history found yet. Run experiments first to populate snapshots.")
         return
@@ -1481,7 +1595,12 @@ def render_experiment_insights_page() -> None:
     st.caption(f"Recommended focus: {interpretation['focus']}")
 
     st.subheader("5) Recommended Next Steps")
-    recs = build_next_step_recommendations(history=history, target=target_actionable, seeds=recommendation_seeds)
+    recs = build_next_step_recommendations(
+        history=history,
+        target=target_actionable,
+        seeds=recommendation_seeds,
+        ticker=ticker,
+    )
     if not recs:
         st.info("Not enough history to generate recommendations yet.")
         return
@@ -1510,7 +1629,24 @@ def main() -> None:
         st.header("Global inputs")
         page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights"], index=0)
         
-        data_path = st.text_input("Data CSV path", value=str(default_data))
+        # Ticker selector
+        available_tickers = _detect_leaderboard_tickers(str(DEFAULT_LEADERBOARD_PATH))
+        supported_ticker_options = sorted(list(TICKER_PRESETS.keys()))
+        ticker_options = [t for t in supported_ticker_options if t in available_tickers] or supported_ticker_options
+        default_index = ticker_options.index(DEFAULT_TICKER) if DEFAULT_TICKER in ticker_options else 0
+        ticker = st.selectbox(
+            "Ticker",
+            options=ticker_options,
+            index=default_index,
+            format_func=lambda k: str(TICKER_PRESETS.get(k, (k.upper(),))[0]),
+            help="Select ticker preset for this session. Supported: AAPL, NVDA, AMD."
+        )
+
+        selected_default_data = get_data_path_for_ticker(ticker, use_stationary=True)
+        if not selected_default_data.exists():
+            selected_default_data = default_data
+        
+        data_path = st.text_input("Data CSV path", value=str(selected_default_data))
         
         # Model Selection Dropdown
         if not available_models:
@@ -1531,13 +1667,14 @@ def main() -> None:
                 model_limit = total_models
                 st.caption(f"Showing all available models ({total_models}).")
 
-            model_choices = _curate_model_choices(available_models, max_count=int(model_limit))
+            model_choices = _curate_model_choices(available_models, max_count=int(model_limit), ticker_key=ticker)
             model_labels = [_format_model_label(p) for p in model_choices]
 
             # Try to find default promoted champion
             default_idx = 0
+            ticker_symbol = _ticker_symbol_from_key(ticker)
             for idx, name in enumerate(model_labels):
-                if "sac_trading_bot.zip" in name:
+                if f"sac_trading_bot_{ticker_symbol.lower()}.zip" in name.lower():
                     default_idx = idx
                     break
             
@@ -1572,6 +1709,7 @@ def main() -> None:
 
     if page == "Signal Analytics":
         render_signal_analytics_page(
+            ticker=ticker,
             data_path=data_path,
             model_path=model_path,
             threshold=threshold,
@@ -1581,10 +1719,10 @@ def main() -> None:
         return
 
     if page == "Experiment Insights":
-        render_experiment_insights_page()
+        render_experiment_insights_page(ticker=ticker)
         return
 
-    render_experiments_page()
+    render_experiments_page(ticker=ticker)
 
 
 if __name__ == "__main__":

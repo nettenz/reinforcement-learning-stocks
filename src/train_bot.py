@@ -15,7 +15,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from src.market_data import get_tech_training_data
+from src.market_data import get_tech_training_data, TICKER_PRESETS
 from src.trading_env import TradingEnv
 
 DATA_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
@@ -23,6 +23,8 @@ MODEL_PATH = ROOT_DIR / "models" / "sac_trading_bot"
 
 def main():
     parser = argparse.ArgumentParser(description="Train an SAC continuous trading bot.")
+    parser.add_argument("--ticker", default="aapl", choices=list(TICKER_PRESETS.keys()), 
+                        help=f"Stock ticker preset to train on. Options: {', '.join(TICKER_PRESETS.keys())}")
     parser.add_argument("--reward-mode", default="legacy", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
     parser.add_argument("--rolling-reward-window", type=int, default=100, help="Window size for rolling rewards.")
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
@@ -41,8 +43,9 @@ def main():
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="SAC device (auto, cuda, cpu, mps).")
     args = parser.parse_args()
 
-    # Load normalized Yahoo Finance tech basket data with merged daily news sentiment features
-    df = get_tech_training_data(cache_path=DATA_PATH, include_news=True)
+    # Load normalized Yahoo Finance data for selected ticker with merged daily news sentiment features
+    print(f"Loading training data for ticker: {args.ticker.upper()}...")
+    df = get_tech_training_data(ticker_preset=args.ticker, include_news=True)
 
     # Create the environment
     env_kwargs = {
@@ -74,7 +77,7 @@ def main():
     )
 
     # Train the model
-    print(f"Training Continuous SAC agent (mode={args.reward_mode}, window={args.rolling_reward_window})...")
+    print(f"Training Continuous SAC agent on {args.ticker.upper()} (mode={args.reward_mode}, window={args.rolling_reward_window})...")
     model.learn(total_timesteps=args.timesteps)
 
     # Save the trained model

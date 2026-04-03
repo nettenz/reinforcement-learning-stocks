@@ -1,6 +1,6 @@
 # Cross-Platform Handoff: Dashboard Integrity + Stability Safeguards
 
-Updated: 2026-04-01
+Updated: 2026-04-03
 
 Use this handoff to resume quickly on Windows/macOS.
 
@@ -11,7 +11,7 @@ Use this handoff to resume quickly on Windows/macOS.
    - Promotion gates for model/config acceptance
    - Windows command templates for baseline/coarse/focused sweeps
    - A copy/paste "Custom Agent Instruction Seed" for a dedicated optimization agent
-- Latest session handoff: `sessions/session-2026-04-01-model-alignment-and-curated-picker.md`.
+- Latest session handoff: `sessions/session-2026-04-03-nextbar-analysis-and-dashboard-fix.md`.
 
 ## Current Status
 - Dashboard launcher is stable (`run_dashboard.ps1` start/status/stop fixed for stale/duplicate PID handling).
@@ -19,6 +19,8 @@ Use this handoff to resume quickly on Windows/macOS.
 - `TradingEnv.step()` now handles scalar/0-d/1-d actions safely (fixes IndexError in dashboard evaluation path).
 - Legacy PPO discrete actions now map correctly to continuous environment semantics (0 Hold, 1 Buy, 2 Sell).
 - Experiment pipeline now defaults to anti-overfit/stability-friendly settings and exposes config-level return CV risk.
+- `run_sweep.ps1` now includes `next_bar` execution sweeps with turnover-penalty variants and `-nextbar` run labels.
+- Experiment Insights recommendation generation no longer crashes (`ticker` is now passed through to recommendation builder).
 
 ## Fixes Applied in This Session
 1. `run_dashboard.ps1`

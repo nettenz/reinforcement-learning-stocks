@@ -1,0 +1,2 @@
+Ticker,Date,NewsCount,SentimentMean,SentimentStd,SentimentMin,SentimentMax,SentimentConfidenceMean,SentimentGeminiShare,SentimentOllamaShare
+AMD,2026-04-02,10,0.0061102338521693365,0.048977851588001574,-0.07692307692307693,0.06666666666666667,0.2807269343559666,0.0,0.0

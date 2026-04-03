@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -11,9 +12,30 @@ from src.feature_engineering import compute_stationary_features
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")
+TECH_TICKERS = ("AAPL",)  # Single stock for realistic transaction costs
 DEFAULT_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
 STATIONARY_CACHE_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.parquet"
+
+# Ticker presets for different training scenarios
+TICKER_PRESETS = {
+    "aapl": ("AAPL",),
+    "nvda": ("NVDA",),
+    "amd": ("AMD",),
+}
+DEFAULT_TICKER = "aapl"
+
+
+def get_cache_path_for_ticker(ticker_name: str, stationary: bool = False) -> Path:
+    """Generate cache path for a specific ticker."""
+    ticker_key = ticker_name.lower()
+    if ticker_key not in TICKER_PRESETS:
+        raise ValueError(f"Unknown ticker preset: {ticker_name}. Available: {list(TICKER_PRESETS.keys())}")
+    
+    suffix = "_stationary" if stationary else ""
+    cache_file = f"tech_training_data_{ticker_key}{suffix}.parquet"
+    return ROOT_DIR / "data" / cache_file
+
+
 NEWS_FEATURE_COLUMNS = [
     "NewsCount",
     "SentimentMean",
@@ -80,7 +102,11 @@ def parse_and_normalize_ohlcv(data: pd.DataFrame) -> pd.DataFrame:
     cleaned["HighNorm"] = (cleaned["High"] / cleaned["Close"]) - 1.0
     cleaned["LowNorm"] = (cleaned["Low"] / cleaned["Close"]) - 1.0
     cleaned["CloseNorm"] = grouped["Close"].pct_change()
-    cleaned["VolumeNorm"] = grouped["Volume"].transform(lambda s: np.log1p(s).diff())
+    
+    # Compute VolumeNorm; suppress log1p warning from sparse/zero volume data
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*invalid value encountered in log1p.*")
+        cleaned["VolumeNorm"] = grouped["Volume"].transform(lambda s: np.log1p(s).diff())
 
     norm_cols = ["OpenNorm", "HighNorm", "LowNorm", "CloseNorm", "VolumeNorm"]
     cleaned[norm_cols] = cleaned[norm_cols].replace([np.inf, -np.inf], np.nan).fillna(0.0)
@@ -168,7 +194,8 @@ def merge_news_features(
 
 def get_tech_training_data(
     cache_path: str | Path | None = None,
-    tickers: Iterable[str] = TECH_TICKERS,
+    tickers: Iterable[str] | None = None,
+    ticker_preset: str | None = None,
     start: str = "2018-01-01",
     end: str | None = None,
     interval: str = "1d",
@@ -177,8 +204,27 @@ def get_tech_training_data(
     refresh: bool = False,
     use_stationary_features: bool = False,
 ) -> pd.DataFrame:
+    # Resolve ticker: prefer explicit tickers, then preset, then default
+    if tickers is None:
+        if ticker_preset is None:
+            ticker_preset = DEFAULT_TICKER
+        if isinstance(ticker_preset, str):
+            ticker_key = ticker_preset.lower()
+            if ticker_key not in TICKER_PRESETS:
+                raise ValueError(f"Unknown ticker preset: {ticker_preset}. Available: {list(TICKER_PRESETS.keys())}")
+            tickers = TICKER_PRESETS[ticker_key]
+        else:
+            tickers = ticker_preset
+    
+    # Auto-generate cache path if not provided
     if cache_path is None:
-        cache_path = STATIONARY_CACHE_PATH if use_stationary_features else DEFAULT_CACHE_PATH
+        # Try to infer ticker for cache naming
+        ticker_str = tickers[0] if isinstance(tickers, (tuple, list)) else str(tickers)
+        ticker_key = ticker_str.lower()
+        if ticker_key in TICKER_PRESETS:
+            cache_path = get_cache_path_for_ticker(ticker_key, stationary=use_stationary_features)
+        else:
+            cache_path = STATIONARY_CACHE_PATH if use_stationary_features else DEFAULT_CACHE_PATH
     
     cache_file = Path(cache_path)
     if cache_file.exists() and not refresh:

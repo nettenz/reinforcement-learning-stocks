@@ -50,10 +50,13 @@ POSITION_MEMORY_DIM = 3
 class MetricsSummary:
     overall_accuracy: float
     actionable_accuracy: float
+    actionable_support: int
     buy_precision: float
     buy_recall: float
     sell_precision: float
     sell_recall: float
+    trade_count: int
+    trade_rate: float
     trade_win_rate: float
     mean_trade_edge: float
     cumulative_signal_return: float
@@ -273,9 +276,10 @@ def compute_metrics(signal_df: pd.DataFrame) -> MetricsSummary:
     actionable_true = signal_df["true_signal"].isin([1, 2])
     actionable_pred = signal_df["action"].isin([1, 2])
     actionable_rows = signal_df[actionable_true & actionable_pred]
+    actionable_support = int(len(actionable_rows))
     actionable_accuracy = _safe_div(
         float((actionable_rows["action"] == actionable_rows["true_signal"]).sum()),
-        float(len(actionable_rows)),
+        float(actionable_support),
     )
 
     predicted_buy = signal_df["action"] == 1
@@ -292,18 +296,23 @@ def compute_metrics(signal_df: pd.DataFrame) -> MetricsSummary:
     sell_recall = _safe_div(sell_tp, float(true_sell.sum()))
 
     trades = signal_df[signal_df["action"].isin([1, 2])]
-    trade_win_rate = _safe_div(float(trades["trade_win"].sum()), float(len(trades)))
-    mean_trade_edge = float(trades["trade_edge"].mean()) if len(trades) else 0.0
+    trade_count = int(len(trades))
+    trade_rate = _safe_div(float(trade_count), float(len(signal_df)))
+    trade_win_rate = _safe_div(float(trades["trade_win"].sum()), float(trade_count))
+    mean_trade_edge = float(trades["trade_edge"].mean()) if trade_count else 0.0
 
     cumulative_signal_return = float((1.0 + signal_df["trade_edge"]).cumprod().iloc[-1] - 1.0)
 
     return MetricsSummary(
         overall_accuracy=overall_accuracy,
         actionable_accuracy=actionable_accuracy,
+        actionable_support=actionable_support,
         buy_precision=buy_precision,
         buy_recall=buy_recall,
         sell_precision=sell_precision,
         sell_recall=sell_recall,
+        trade_count=trade_count,
+        trade_rate=trade_rate,
         trade_win_rate=trade_win_rate,
         mean_trade_edge=mean_trade_edge,
         cumulative_signal_return=cumulative_signal_return,

@@ -16,8 +16,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-TECH_TICKERS = ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA")
+TECH_TICKERS = ("AAPL",)  # Single stock for realistic transaction costs
 ROOT_DIR = Path(__file__).resolve().parents[1]
+
+# Ticker presets (keep in sync with market_data.py)
+TICKER_PRESETS = {
+    "aapl": ("AAPL",),
+    "nvda": ("NVDA",),
+    "amd": ("AMD",),
+}
 DEFAULT_NEWS_CACHE_PATH = ROOT_DIR / "data" / "tech_news_sentiment_data.csv"
 DEFAULT_SENTIMENT_CACHE_PATH = ROOT_DIR / "data" / "news_sentiment_llm_cache.csv"
 DEFAULT_SENTIMENT_PROVIDER = "hybrid"
@@ -384,11 +391,33 @@ def aggregate_daily_news_features(news_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_tech_news_features(
-    cache_path: str | Path = DEFAULT_NEWS_CACHE_PATH,
-    tickers: Iterable[str] = TECH_TICKERS,
+    cache_path: str | Path | None = None,
+    tickers: Iterable[str] | None = None,
+    ticker_preset: str | None = None,
     max_articles_per_ticker: int = 50,
     refresh: bool = False,
 ) -> pd.DataFrame:
+    # Resolve ticker: prefer explicit tickers, then preset
+    if tickers is None:
+        if ticker_preset is None:
+            ticker_preset = "aapl"
+        if isinstance(ticker_preset, str):
+            ticker_key = ticker_preset.lower()
+            if ticker_key not in TICKER_PRESETS:
+                raise ValueError(f"Unknown ticker preset: {ticker_preset}. Available: {list(TICKER_PRESETS.keys())}")
+            tickers = TICKER_PRESETS[ticker_key]
+        else:
+            tickers = ticker_preset
+    
+    # Auto-generate cache path if not provided
+    if cache_path is None:
+        ticker_str = tickers[0] if isinstance(tickers, (tuple, list)) else str(tickers)
+        ticker_key = ticker_str.lower()
+        if ticker_key in TICKER_PRESETS:
+            cache_path = ROOT_DIR / "data" / f"tech_news_sentiment_{ticker_key}.csv"
+        else:
+            cache_path = DEFAULT_NEWS_CACHE_PATH
+    
     cache_file = Path(cache_path)
     if cache_file.exists() and not refresh:
         cached = pd.read_csv(cache_file, parse_dates=["Date"])
