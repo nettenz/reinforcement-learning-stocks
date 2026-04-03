@@ -64,3 +64,77 @@ foreach ($ticker in $tickers) {
 }
 
 Write-Host "Medium-long sweep complete. Review leaderboard and dashboard for results." -ForegroundColor Green
+
+# ============================================================================
+# AMD UNLOCK EXPERIMENTS (Exp 2a/2b/2c - Sequential)
+# Current: 0.5226 accuracy vs 0.5300 gate (0.18% short = ~2 samples)
+# Strategy: Run sequentially, stop on first success
+# ============================================================================
+
+Write-Host "`nAMD UNLOCK SEQUENCE (Sequential - Stop on Success)" -ForegroundColor Magenta
+Write-Host "Current AMD Test Accuracy: 0.5226 (0.18% short of 0.5300 gate)" -ForegroundColor Yellow
+
+# Fix 1a: Lower Action Bonus (0.01) - Reduce trading noise
+Write-Host "`n[1a] Running AMD Fix: Lower Action Bonus (0.01)..." -ForegroundColor Cyan
+$args = @(
+    "src/experiments.py",
+    "--ticker", "amd",
+    "--seeds", "7,21,13",
+    "--timesteps", "20000",
+    "--reward-mode", "sharpe",
+    "--reward-action-bonus-scale", "0.01",
+    "--append",
+    "--run-label", "amd-sharpe-bonus-001"
+)
+Write-Host "Command: $pythonExe $($args -join ' ')" -ForegroundColor Yellow
+& $pythonExe @args
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✓ Fix 1a potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
+    Write-Host "If successful, promote AMD with: Copy-Item data\experiment_snapshots\model_*amd-sharpe-bonus-001*.zip -Destination models\sac_trading_bot_amd.zip -Force" -ForegroundColor Green
+} else {
+    Write-Host "Fix 1a did not reach threshold, trying Fix 1b..." -ForegroundColor Yellow
+}
+
+# Fix 1b: Higher Entropy (0.10) - More exploration, better decision boundary
+Write-Host "`n[1b] Running AMD Fix: Higher Entropy (0.10)..." -ForegroundColor Cyan
+$args = @(
+    "src/experiments.py",
+    "--ticker", "amd",
+    "--seeds", "7",
+    "--timesteps", "20000",
+    "--reward-mode", "sharpe",
+    "--ent-coefs", "0.10",
+    "--append",
+    "--run-label", "amd-sharpe-entropy-010"
+)
+Write-Host "Command: $pythonExe $($args -join ' ')" -ForegroundColor Yellow
+& $pythonExe @args
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✓ Fix 1b potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
+    Write-Host "If successful, promote AMD with: Copy-Item data\experiment_snapshots\model_*amd-sharpe-entropy-010*.zip -Destination models\sac_trading_bot_amd.zip -Force" -ForegroundColor Green
+} else {
+    Write-Host "Fix 1b did not reach threshold, trying Fix 1c..." -ForegroundColor Yellow
+}
+
+# Fix 1c: Longer Rolling Window (200 bars) - More stable Sharpe in early episodes
+Write-Host "`n[1c] Running AMD Fix: Longer Rolling Window (200)..." -ForegroundColor Cyan
+$args = @(
+    "src/experiments.py",
+    "--ticker", "amd",
+    "--seeds", "7",
+    "--timesteps", "20000",
+    "--reward-mode", "sharpe",
+    "--rolling-reward-window", "200",
+    "--append",
+    "--run-label", "amd-sharpe-window-200"
+)
+Write-Host "Command: $pythonExe $($args -join ' ')" -ForegroundColor Yellow
+& $pythonExe @args
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✓ Fix 1c potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
+    Write-Host "If successful, promote AMD with: Copy-Item data\experiment_snapshots\model_*amd-sharpe-window-200*.zip -Destination models\sac_trading_bot_amd.zip -Force" -ForegroundColor Green
+} else {
+    Write-Host "All AMD fixes attempted. If none succeeded, NVDA-only deployment is conservative option." -ForegroundColor Yellow
+}
+
+Write-Host "`nAMD UNLOCK SEQUENCE COMPLETE" -ForegroundColor Magenta

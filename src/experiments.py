@@ -479,7 +479,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         "reward_clip": args.reward_clip,
         "reward_ignore_transaction_cost": args.reward_ignore_transaction_cost,
         "reward_mode": args.reward_mode,
-        "rolling_reward_window": args.rolling_reward_window,
+        "rolling_reward_window": 100,  # Default; will be overridden per-run
         "reward_epsilon": args.reward_epsilon,
     }
 
@@ -489,11 +489,13 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     reward_drawdown_penalty_scales = _parse_float_list(args.reward_drawdown_penalty_scale)
     reward_action_bonus_scales = _parse_float_list(args.reward_action_bonus_scale)
     reward_turnover_penalty_scales = _parse_float_list(args.reward_turnover_penalty_scale)
+    rolling_reward_windows = _parse_int_list(args.rolling_reward_window)
 
     configs = list(itertools.product(
         seeds, timesteps_list, learning_rates, gammas, ent_coefs,
         reward_return_scales, reward_direction_scales, reward_hold_penalty_scales,
-        reward_drawdown_penalty_scales, reward_action_bonus_scales, reward_turnover_penalty_scales
+        reward_drawdown_penalty_scales, reward_action_bonus_scales, reward_turnover_penalty_scales,
+        rolling_reward_windows
     ))
     if args.max_runs > 0:
         configs = configs[: args.max_runs]
@@ -503,7 +505,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     print(f"Running {len(configs)} experiment runs...")
 
     for idx, (seed, timesteps, learning_rate, gamma, ent_coef,
-              ret_scale, dir_scale, hold_scale, dd_scale, bonus_scale, turnover_scale) in enumerate(configs, start=1):
+              ret_scale, dir_scale, hold_scale, dd_scale, bonus_scale, turnover_scale, rolling_window) in enumerate(configs, start=1):
         print(
             f"[{idx}/{len(configs)}] seed={seed} timesteps={timesteps} lr={learning_rate} "
             f"gamma={gamma} ent_coef={ent_coef} dir_scale={dir_scale} mode={args.reward_mode}"
@@ -519,6 +521,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "reward_drawdown_penalty_scale": dd_scale,
             "reward_action_bonus_scale": bonus_scale,
             "reward_turnover_penalty_scale": turnover_scale,
+            "rolling_reward_window": rolling_window,
         })
 
         if args.n_envs > 1:
@@ -671,7 +674,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reward-turnover-penalty-scale", default="0.05", help="Penalty scale for absolute weight changes (list).")
 
     parser.add_argument("--reward-mode", default="sharpe", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
-    parser.add_argument("--rolling-reward-window", type=int, default=100, help="Window size for rolling rewards.")
+    parser.add_argument("--rolling-reward-window", default="100", help="Window size for rolling rewards (list).")
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
 
     parser.add_argument("--reward-clip", type=float, default=1.0, help="Reward clip bound applied symmetrically.")

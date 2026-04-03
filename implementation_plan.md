@@ -1,10 +1,42 @@
-# Implementation Plan - Optimization Handoff
+# Implementation Plan - Optimization Handoff + Environment Audit Remediation
 
-Updated: 2026-04-01
+Updated: 2026-04-03
 
-Purpose: provide a reality-based optimization handoff so a custom agent can run, evaluate, and iterate SAC experiments safely and efficiently.
+Purpose: provide a reality-based optimization handoff so a custom agent can run, evaluate, and iterate SAC experiments safely and efficiently while remediating identified environment realism issues.
 
-## 1) Current State (Codebase Reality)
+## 0) CRITICAL: Environment Realism Issues Discovered (2026-04-02)
+
+### Three High-Impact Issues Identified
+
+1. **Same-Bar Fill Bias (CRITICAL)**
+   - Agent decides and receives fill on same bar (same price, same day)
+   - Reality: Decisions at 4 PM, fills next day at 9:30 AM
+   - Impact: +1-2% performance inflation in backtest vs live
+   - Status: `execution_mode="next_bar"` implemented in `src/trading_env.py`, now default in sweeps
+
+2. **Synthetic Basket Cost Underestimation (CRITICAL)**
+   - Training data is synthetic equal-weight basket of 7 tech stocks priced like 1 stock
+   - Reality: Real execution needs 7 separate trades (7× transaction costs)
+   - Impact: Backtest costs 0.1%, reality 0.3-0.5% (2-3% alpha destruction)
+   - Status: Identified; Phase 3 plan is single-stock migration (AAPL)
+
+3. **Sentiment Data Sparsity (MEDIUM)**
+   - Sentiment features: 98.5% zeros (only 1 day out of 2,072 has news)
+   - Impact: No learnable signal from sentiment, wasting compute
+   - Status: Identified; Phase 1 quick win to investigate/fix pipeline
+
+### Remediation Timeline
+- **Phase 1 (Quick Wins):** Sentiment investigation, docstring cleanup — 4 hours, Week 1
+- **Phase 2 (Next-Bar Baseline):** Verify next-bar execution works, re-baseline 10 seeds — 8 hours, Week 2-3
+- **Phase 3 (Single-Stock Migration):** Move to AAPL-only training (estimated 0-1% perf delta)
+
+### Current Mitigation Status
+- ✅ Corrupted CSV deleted
+- ✅ Next-bar execution enabled in `run_sweep.ps1` and experiments
+- 🔲 Phase 1 quick wins queued (sentiment investigation)
+- 🔲 Phase 2/3 decision gate: only proceed if Phase 2 baseline passes (no >1.5% performance drop)
+
+---
 
 ### Training and Sweep Pipeline
 - Main optimizer entrypoint is `src/experiments.py`.
@@ -51,16 +83,15 @@ Purpose: provide a reality-based optimization handoff so a custom agent can run,
 ## 2) Optimization Objectives (What the Agent Should Optimize For)
 
 Primary objective:
-- Improve out-of-sample quality, not just validation ranking.
+- Improve out-of-sample quality with honest (next-bar) execution.
+- Do NOT promote configs that pass validation but fail test (AAPL collapse detected).
 
 Optimization scorecard (priority order):
-1. Maximize `test_actionable_accuracy`.
-2. Maximize `test_trade_win_rate`.
-3. Keep `test_alpha_vs_qqq >= 0` where possible.
-4. Keep generalization gap small:
-   - `abs(val_actionable_accuracy - test_actionable_accuracy) <= 0.05`.
-5. Minimize instability:
-   - `test_return_cv_by_config < 1.0`.
+1. Maximize `test_actionable_accuracy` (now with next-bar fill realism).
+2. Maximize `test_trade_win_rate` (measure of signal quality).
+3. Keep `test_alpha_vs_qqq >= 0.00` (vs passive benchmark, currently weak).
+4. Keep generalization gap small: `abs(val_actionable_accuracy - test_actionable_accuracy) <= 0.05` **← GATING (AAPL -45% failed)**.
+5. Minimize instability: `test_return_cv_by_config < 1.0`.
 
 Tie-breakers:
 - Higher `test_sharpe_ratio`.
@@ -70,23 +101,98 @@ Tie-breakers:
 ## 3) Guardrails and Promotion Policy
 
 A run/config is promotion-eligible only if all pass:
-1. `test_actionable_accuracy >= 0.53`
-2. `test_trade_win_rate >= 0.52`
-3. `test_alpha_vs_qqq >= 0.00`
-4. `abs(val_actionable_accuracy - test_actionable_accuracy) <= 0.05`
-5. `test_return_cv_by_config < 1.0`
+1. `test_actionable_accuracy >= 0.53` (20+ seeds in leaderboard pass this)
+2. `test_trade_win_rate >= 0.52` (consistent with accuracy ~53%)
+3. `test_alpha_vs_qqq >= 0.00` (weak but non-negative; current max 0.0306)
+4. `abs(val_actionable_accuracy - test_actionable_accuracy) <= 0.05` **← ENFORCED (catches AAPL-style collapse)**
+5. `test_return_cv_by_config < 1.0` (limits seed variance)
 
-If no config passes all gates, promote none and run another focused sweep.
+**Current Status (2026-04-02 Multi-Ticker):**
+- 44.6% pass rate (66 of 148 runs)
+- NVDA: 0.6578 max (PROMOTABLE if gate 4 passes)
+- AAPL: 0.5828 validation score, BUT validation→test gap -45% (GATED OUT)
+- AMD: 0.4318 max (all fail gate 1)
 
-## 4) Recommended Iteration Workflow
+If no config passes all gates, promote none and run focused re-audit (see Experiment A).
 
-### Phase A: Baseline Lock
-- Run a compact baseline sweep (2-3 seeds, limited timesteps) with current defaults.
-- Save as a labeled snapshot (`--run-label baseline-lock`).
-- Compute baseline medians for test metrics and gap/cv risk.
+## 4) Recommended Iteration Workflow (Sequential Experiments)
+
+### Priority 1 (URGENT): Experiment A — AAPL Leakage Audit
+**Goal:** Determine if -45% val→test accuracy collapse is data leakage or regime mismatch
+
+**Design:**
+- Re-run best AAPL (seed 21, timesteps 20k, ent 0.05, bonus 0.02) with diagnostic logging
+- Plot decision timeseries against AAPL price chart (visual sanity check)
+- Verify train/val/test date split (no lookahead)
+- Check market microstructure (vol, bid-ask spread) between validation and test periods
+
+**Hold constant:** All hyperparams, training data, reward function
+
+**Success criteria:**
+- If val/test accuracy gap closes below 10% → data issue found and fixed
+- If gap persists → regime shift confirmed, document and continue
+
+**Command:**
+```powershell
+.\.venv\Scripts\python.exe src\experiments.py --ticker aapl --seeds 21 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.05 --reward-mode sharpe --reward-action-bonus-scale 0.02 --append --run-label aapl-audit-seed21
+```
+
+### Priority 2 (HIGH): Experiment C — NVDA Lock-In (10-Seed Confirmation)
+**Goal:** Validate that NVDA seed 13 config generalizes (deployment readiness check)
+
+**Design:**
+- Lock: NVDA, timesteps 20k, ent 0.02, bonus 0.08, sharpe
+- Vary: seeds {34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584}
+- Measure: ranking_score distribution, test accuracy consistency, drawdown control
+
+**Success criteria:**
+- Mean ranking_score ≥ 0.60
+- 95% CI for test accuracy includes 0.54 or higher
+- Max drawdown <25% on test set
+- If met → NVDA ready for deployment gate review
+
+**Command:**
+```powershell
+.\.venv\Scripts\python.exe src\experiments.py --ticker nvda --seeds 34,55,89,144,233,377,610,987,1597,2584 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02 --reward-mode sharpe --reward-action-bonus-scale 0.08 --append --run-label nvda-multiSeed-confirm
+```
+
+### Priority 3 (MEDIUM): Experiment B — AMD Recalibration
+**Goal:** Unlock AMD by tuning for higher volatility regime
+
+**Hypothesis:** AMD's high volatility requires different penalty scaling
+
+**Design:**
+- Ablate: trade_penalty (3 separate sweeps: 0.02, 0.05, 0.10)
+- Ablate: reward_drawdown_penalty_scale ∈ {0.05, 0.15, 0.25} (within each sweep)
+- Fixed: seed 7 (AMD's best seed), timesteps 20k, ent 0.02, sharpe
+- Total: 3 sweeps × 3 penalty scales = 9 configs
+
+**Success criteria:** Best config ranking_score > 0.45 (above current 0.4318 max)
+
+**Commands (run all 3 sequentially):**
+
+Sweep 1 (trade_penalty = 0.02):
+```powershell
+.\.venv\Scripts\python.exe src\experiments.py --ticker amd --seeds 7 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02 --reward-mode sharpe --trade-penalty 0.02 --reward-drawdown-penalty-scale 0.05,0.15,0.25 --append --run-label amd-penalty-sweep-tp02
+```
+
+Sweep 2 (trade_penalty = 0.05):
+```powershell
+.\.venv\Scripts\python.exe src\experiments.py --ticker amd --seeds 7 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02 --reward-mode sharpe --trade-penalty 0.05 --reward-drawdown-penalty-scale 0.05,0.15,0.25 --append --run-label amd-penalty-sweep-tp05
+```
+
+Sweep 3 (trade_penalty = 0.10):
+```powershell
+.\.venv\Scripts\python.exe src\experiments.py --ticker amd --seeds 7 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02 --reward-mode sharpe --trade-penalty 0.10 --reward-drawdown-penalty-scale 0.05,0.15,0.25 --append --run-label amd-penalty-sweep-tp10
+```
+
+### Phase A: Baseline Lock (Post-Audit)
+- After Experiment A clears AAPL, run compact baseline (2-3 seeds) with next-bar default
+- Save snapshot (`--run-label baseline-post-audit`)
+- Compute baseline medians for test metrics and gap/cv risk
 
 ### Phase B: Coarse Sweep (High-Leverage Knobs)
-- Sweep these first:
+- Sweep these first (with gating enforced):
   - `reward_mode`: `sharpe` vs `sortino`
   - `ent_coef`: broaden around `0.02, 0.05`
   - `timesteps`: compare shorter vs longer (`20000` vs `40000`)
@@ -94,7 +200,7 @@ If no config passes all gates, promote none and run another focused sweep.
 - Goal: identify 2-3 regimes worth deeper search.
 
 ### Phase C: Focused Local Search
-- For top regimes, run multi-seed confirmations.
+- For top regimes, run multi-seed confirmations across 5+ seeds
 - Tune secondary knobs:
   - `learning_rate`
   - `gamma`
@@ -109,27 +215,35 @@ If no config passes all gates, promote none and run another focused sweep.
   - pass/fail per gate
   - recommended next command
 
-## 5) Concrete Command Templates (Windows)
+## 5) Command Reference
 
-Baseline smoke:
+All priority experiment commands are defined in Section 4 above with full context and success criteria.
 
+**Quick Copy-Paste References:**
+
+Experiment A (AAPL Audit):
 ```powershell
-.\.venv\Scripts\python.exe src\experiments.py --include-news --use-stationary-features --seeds 7,13 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02,0.05 --reward-mode sharpe --rolling-reward-window 100 --max-runs 4 --append --run-label baseline-lock
+.\.venv\Scripts\python.exe src\experiments.py --ticker aapl --seeds 21 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.05 --reward-mode sharpe --reward-action-bonus-scale 0.02 --append --run-label aapl-audit-seed21
 ```
 
-Coarse reward-mode comparison:
-
+Experiment C (NVDA Multi-Seed):
 ```powershell
-.\.venv\Scripts\python.exe src\experiments.py --include-news --use-stationary-features --seeds 7,13,21 --timesteps 20000,40000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02,0.05 --reward-mode sortino --rolling-reward-window 100 --append --run-label coarse-sortino
+.\.venv\Scripts\python.exe src\experiments.py --ticker nvda --seeds 34,55,89,144,233,377,610,987,1597,2584 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02 --reward-mode sharpe --reward-action-bonus-scale 0.08 --append --run-label nvda-multiSeed-confirm
 ```
 
-Focused confirmation pass:
-
+Experiment B (AMD Penalty Sweep - Run all 3 sequentially):
 ```powershell
-.\.venv\Scripts\python.exe src\experiments.py --include-news --use-stationary-features --seeds 7,13,21,42,84 --timesteps 20000,40000 --learning-rates 0.0003,0.0001 --gammas 0.99,0.995 --ent-coefs 0.02,0.05 --threshold 0.002 --horizon 1 --transaction-cost-rate 0.001 --trade-penalty 0.05 --reward-mode sharpe --reward-return-scale 1.0 --reward-direction-scale 0.35 --reward-hold-penalty-scale 0.10 --reward-drawdown-penalty-scale 0.10 --reward-action-bonus-scale 0.02 --reward-clip 1.0 --reward-ignore-transaction-cost --append --run-label focused-confirm
+# Sweep 1
+.\.venv\Scripts\python.exe src\experiments.py --ticker amd --seeds 7 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02 --reward-mode sharpe --trade-penalty 0.02 --reward-drawdown-penalty-scale 0.05,0.15,0.25 --append --run-label amd-penalty-sweep-tp02
+
+# Sweep 2
+.\.venv\Scripts\python.exe src\experiments.py --ticker amd --seeds 7 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02 --reward-mode sharpe --trade-penalty 0.05 --reward-drawdown-penalty-scale 0.05,0.15,0.25 --append --run-label amd-penalty-sweep-tp05
+
+# Sweep 3
+.\.venv\Scripts\python.exe src\experiments.py --ticker amd --seeds 7 --timesteps 20000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.02 --reward-mode sharpe --trade-penalty 0.10 --reward-drawdown-penalty-scale 0.05,0.15,0.25 --append --run-label amd-penalty-sweep-tp10
 ```
 
-## 6) Handoff Checklist (For Every Optimization Session)
+## 7) Handoff Checklist (For Every Optimization Session)
 
 1. Confirm environment health:
    - `python -m py_compile src\analytics_dashboard.py src\signal_analytics.py src\trading_env.py src\experiments.py`
@@ -143,7 +257,7 @@ Focused confirmation pass:
    - what regressed
    - exact next command
 
-## 7) Custom Agent Instruction Seed (Copy/Paste Template)
+## 8) Custom Agent Instruction Seed (Copy/Paste Template)
 
 Use this as the base instruction for a dedicated optimization agent:
 
@@ -197,7 +311,7 @@ Always end with:
 - Next command (single copy/paste command)
 ```
 
-## 8) Definition of Done for This Plan
+## 9) Definition of Done for This Plan
 
 This handoff plan is complete when a custom optimization agent can:
 1. Decide what to sweep next from current metrics.

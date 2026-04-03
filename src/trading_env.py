@@ -88,7 +88,7 @@ class PositionManager:
 
 
 class RewardEvaluator:
-    """Strategy pattern for varying reward schemas (Legacy, Sharpe, Sortino)."""
+    """Strategy pattern for varying reward schemas (Legacy, Sharpe, Sortino, Hybrid)."""
     def __init__(
         self,
         mode,
@@ -101,6 +101,7 @@ class RewardEvaluator:
         action_scale,
         turnover_scale,
         clip,
+        sharpe_scale=0.0,
     ):
         self.mode = mode.lower()
         self.epsilon = epsilon
@@ -111,6 +112,7 @@ class RewardEvaluator:
         self.action_scale = action_scale
         self.turnover_scale = turnover_scale
         self.clip = clip
+        self.sharpe_scale = sharpe_scale  # NEW: Sharpe as secondary regularizer (Variant B)
         self.returns_buffer = deque(maxlen=rolling_window)
 
     def calculate(self, portfolio_return, realized_return, exposure_weight, weight_change, trade_executed, drawdown):
@@ -133,7 +135,7 @@ class RewardEvaluator:
         elif self.mode == "sortino":
             risk_metric = self._sortino()
             base_reward = self.return_scale * risk_metric
-        else:
+        else:  # legacy
             base_reward = (self.return_scale * portfolio_return) + (self.dir_scale * directional_reward)
 
         total = base_reward + hold_penalty + action_bonus + turnover_penalty + dd_penalty
@@ -194,6 +196,7 @@ class TradingEnv(gym.Env):
         reward_mode="legacy",
         rolling_reward_window=100,
         reward_epsilon=1e-6,
+        reward_sharpe_scale=0.0,
     ):
         super(TradingEnv, self).__init__()
         self.df = df
@@ -217,7 +220,8 @@ class TradingEnv(gym.Env):
         self.re = RewardEvaluator(
             reward_mode, rolling_reward_window, reward_epsilon,
             reward_return_scale, reward_direction_scale, reward_hold_penalty_scale,
-            reward_drawdown_penalty_scale, reward_action_bonus_scale, reward_turnover_penalty_scale, reward_clip
+            reward_drawdown_penalty_scale, reward_action_bonus_scale, reward_turnover_penalty_scale, reward_clip,
+            sharpe_scale=reward_sharpe_scale
         )
         
         # Continuous Action Space: [-1.0 (Full Short), 1.0 (Full Long)]

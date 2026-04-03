@@ -21,6 +21,7 @@ TICKER_PRESETS = {
     "aapl": ("AAPL",),
     "nvda": ("NVDA",),
     "amd": ("AMD",),
+    "msft": ("MSFT",),
 }
 DEFAULT_TICKER = "aapl"
 
