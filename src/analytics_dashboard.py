@@ -82,6 +82,55 @@ def _validate_model_shape(model_path: str, data_df: pd.DataFrame) -> None:
         # If it's not a structural issue, let the simulation path attempt a full run.
         st.sidebar.warning(f"Structural validation skipped: {str(exc)}")
 
+
+def _data_path_is_compatible_with_expected_shape(data_path: str | Path, expected_obs_dim: int) -> bool:
+    try:
+        data_df = load_market_data(str(data_path))
+        aligned_df, include_position, market_feature_columns = _align_features_to_model(
+            data_df,
+            expected_obs_dim=expected_obs_dim,
+        )
+        temp_env = TradingEnv(
+            aligned_df,
+            include_position_in_observation=include_position,
+            market_feature_columns=market_feature_columns,
+        )
+        return int(temp_env.observation_space.shape[0]) == expected_obs_dim
+    except Exception:
+        return False
+
+
+def _preferred_data_path_for_model(ticker: str, expected_obs_dim: int | None) -> Path:
+    ticker_non_stationary = get_data_path_for_ticker(ticker, use_stationary=False)
+    ticker_stationary = get_data_path_for_ticker(ticker, use_stationary=True)
+    fallback_candidates = [ticker_non_stationary, ticker_stationary, DEFAULT_DATA_PATH, STATIONARY_DATA_PATH]
+
+    preferred_candidates = (
+        [ticker_stationary, ticker_non_stationary]
+        if expected_obs_dim is not None and expected_obs_dim >= 16
+        else [ticker_non_stationary, ticker_stationary]
+    )
+
+    ordered_candidates: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in [*preferred_candidates, *fallback_candidates]:
+        resolved = candidate.resolve() if candidate.exists() else candidate
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        ordered_candidates.append(candidate)
+
+    if expected_obs_dim is not None:
+        for candidate in ordered_candidates:
+            if candidate.exists() and _data_path_is_compatible_with_expected_shape(candidate, expected_obs_dim):
+                return candidate
+
+    for candidate in ordered_candidates:
+        if candidate.exists():
+            return candidate
+
+    return DEFAULT_DATA_PATH if DEFAULT_DATA_PATH.exists() else STATIONARY_DATA_PATH
+
 def _list_available_models() -> list[Path]:
     """Scans for all .zip model files in models/ and experiment snapshots."""
     model_paths = []
@@ -328,6 +377,8 @@ def _make_command_from_config(
     ticker: str = "aapl",
 ) -> str:
     seed_count = max(1, len([s for s in seeds.split(",") if s.strip()]))
+    include_news_flag = "--include-news" if bool(config.get("include_news", True)) else ""
+    stationary_flag = "--use-stationary-features" if bool(config.get("use_stationary_features", True)) else ""
     ignore_cost_flag = (
         "--reward-ignore-transaction-cost"
         if bool(config["reward_ignore_transaction_cost"])
@@ -336,7 +387,7 @@ def _make_command_from_config(
     return (
         "python src/experiments.py "
         f"--ticker {ticker} "
-        f"--include-news --use-stationary-features --seeds {seeds} "
+        f"{include_news_flag} {stationary_flag} --seeds {seeds} "
         f"--timesteps {int(config['timesteps'])} "
         f"--learning-rates {_format_float(float(config['learning_rate']))} "
         f"--gammas {_format_float(float(config['gamma']))} "
@@ -483,6 +534,8 @@ def _evaluate_promotion_gates(row: pd.Series) -> dict[str, object]:
 
 def _config_from_row(row: pd.Series) -> dict[str, float | int | bool | str]:
     return {
+        "include_news": bool(int(_safe_get(row, "include_news", 1))),
+        "use_stationary_features": bool(int(_safe_get(row, "use_stationary_features", 1))),
         "timesteps": int(_safe_get(row, "timesteps", 20000)),
         "learning_rate": float(_safe_get(row, "learning_rate", 0.0003)),
         "gamma": float(_safe_get(row, "gamma", 0.99)),
@@ -1166,6 +1219,11 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
     with st.sidebar:
         st.subheader("Experiment runner")
         include_news = st.checkbox("Include sentiment features", value=True)
+        use_stationary_features = st.checkbox(
+            "Use stationary features",
+            value=True,
+            help="Use log-return and normalized technical indicators instead of the older OHLCV-style schema.",
+        )
         seeds = st.text_input("Seeds", value="7,13,21")
         timesteps = st.text_input("Timesteps", value="20000,40000")
         learning_rates = st.text_input("Learning rates", value="0.0003,0.0001")
@@ -1239,7 +1297,7 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
             reward_epsilon=float(reward_epsilon),
             reward_clip=float(reward_clip),
             reward_ignore_transaction_cost=bool(reward_ignore_transaction_cost),
-            use_stationary_features=True,  # SAC models are trained with stationary features
+            use_stationary_features=bool(use_stationary_features),
             max_runs=int(max_runs),
             leaderboard_path=str(leaderboard_path),
             reward_leaderboard_path=str(reward_leaderboard_path),
@@ -1641,12 +1699,6 @@ def main() -> None:
             format_func=lambda k: str(TICKER_PRESETS.get(k, (k.upper(),))[0]),
             help="Select ticker preset for this session. Supported: AAPL, NVDA, AMD."
         )
-
-        selected_default_data = get_data_path_for_ticker(ticker, use_stationary=True)
-        if not selected_default_data.exists():
-            selected_default_data = default_data
-        
-        data_path = st.text_input("Data CSV path", value=str(selected_default_data))
         
         # Model Selection Dropdown
         if not available_models:
@@ -1686,6 +1738,29 @@ def main() -> None:
             )
             model_path = str(model_choices[model_labels.index(selected_model_name)])
             st.caption(f"Showing {len(model_choices)} of {total_models} discovered models.")
+
+        expected_obs_dim = None
+        if model_path:
+            try:
+                expected_obs_dim = _expected_observation_dim(_load_model(model_path)[0])
+            except Exception:
+                expected_obs_dim = None
+
+        selected_default_data = _preferred_data_path_for_model(ticker, expected_obs_dim)
+        if not selected_default_data.exists():
+            selected_default_data = default_data
+
+        data_path_key = "signal_dashboard_data_path"
+        if data_path_key not in st.session_state:
+            st.session_state[data_path_key] = str(selected_default_data)
+        elif expected_obs_dim is not None and not _data_path_is_compatible_with_expected_shape(
+            st.session_state[data_path_key],
+            expected_obs_dim,
+        ):
+            st.session_state[data_path_key] = str(selected_default_data)
+
+        data_path = st.text_input("Data CSV path", key=data_path_key)
+        st.caption(f"Suggested compatible data path for this model: {selected_default_data}")
         
         threshold = st.number_input(
             "Movement threshold",
