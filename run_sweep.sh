@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# Activate virtual environment
+source .venv/Scripts/activate
+
+# Detect Python executable for Windows/POSIX compatibility
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "mingw"* ]]; then
+    PYTHON=".venv\\Scripts\\python.exe"
+else
+    PYTHON="python"
+fi
+
 # Array of target seeds
 SEEDS=(2 3 4 5)
 
@@ -14,25 +24,24 @@ CONFIGS=(
     "sortino:250"
 )
 
-echo -e "\033[1;36mStarting Quant Sweep (35 total runs) using M4 (MPS Acceleration)...\033[0m"
+echo -e "\033[1;36mStarting Quant Sweep (35 total runs) using CUDA GPU...\033[0m"
 
 for seed in "${SEEDS[@]}"; do
     for config in "${CONFIGS[@]}"; do
         # Parse the mode and window
         IFS=':' read -r mode window <<< "$config"
         
-        # Execute the python script. 
-        # (Assuming you use 'python' after running `source .venv/bin/activate` on your Mac)
-        CMD="python src/experiments.py --device cpu --append --reward-mode $mode --rolling-reward-window $window --seed $seed"
+        # Execute the python script for Windows bash
+        CMD="$PYTHON src/experiments.py --device cuda --append --reward-mode $mode --rolling-reward-window $window --seed $seed"
         
         echo -e "\033[1;33mRunning: $CMD\033[0m"
         
-        # Execute the generated argument string
-        eval "$CMD"
+        # Execute the command
+        $PYTHON src/experiments.py --device cuda --append --reward-mode "$mode" --rolling-reward-window "$window" --seed "$seed"
         
-        # Check for user termination (Ctrl+C)
+        # Check for errors
         if [ $? -ne 0 ]; then
-            echo "Sweep interrupted by user."
+            echo "Sweep interrupted or failed."
             exit 1
         fi
     done
@@ -51,9 +60,7 @@ echo -e "\033[1;33mCurrent AMD Test Accuracy: 0.5226 (0.18% short of 0.5300 gate
 
 # Fix 1a: Lower Action Bonus (0.01) - Reduce trading noise
 echo -e "\033[1;36m\n[1a] Running AMD Fix: Lower Action Bonus (0.01)...\033[0m"
-CMD="python src/experiments.py --ticker amd --seeds 7,21,13 --timesteps 20000 --reward-mode sharpe --reward-action-bonus-scale 0.01 --append --run-label amd-sharpe-bonus-001"
-echo -e "\033[1;33mCommand: $CMD\033[0m"
-eval "$CMD"
+$PYTHON src/experiments.py --ticker amd --seeds 7,21,13 --timesteps 20000 --reward-mode sharpe --reward-action-bonus-scale 0.01 --append --run-label amd-sharpe-bonus-001
 if [ $? -eq 0 ]; then
     echo -e "\033[1;32m✓ Fix 1a potential success! Check leaderboard for accuracy >= 0.5300\033[0m"
     echo -e "\033[1;32mIf successful, promotion ready.\033[0m"
@@ -63,9 +70,7 @@ fi
 
 # Fix 1b: Higher Entropy (0.10) - More exploration, better decision boundary
 echo -e "\033[1;36m\n[1b] Running AMD Fix: Higher Entropy (0.10)...\033[0m"
-CMD="python src/experiments.py --ticker amd --seeds 7 --timesteps 20000 --reward-mode sharpe --ent-coefs 0.10 --append --run-label amd-sharpe-entropy-010"
-echo -e "\033[1;33mCommand: $CMD\033[0m"
-eval "$CMD"
+$PYTHON src/experiments.py --ticker amd --seeds 7 --timesteps 20000 --reward-mode sharpe --ent-coefs 0.10 --append --run-label amd-sharpe-entropy-010
 if [ $? -eq 0 ]; then
     echo -e "\033[1;32m✓ Fix 1b potential success! Check leaderboard for accuracy >= 0.5300\033[0m"
     echo -e "\033[1;32mIf successful, promotion ready.\033[0m"
@@ -75,9 +80,7 @@ fi
 
 # Fix 1c: Longer Rolling Window (200) - More stable Sharpe in early episodes
 echo -e "\033[1;36m\n[1c] Running AMD Fix: Longer Rolling Window (200)...\033[0m"
-CMD="python src/experiments.py --ticker amd --seeds 7 --timesteps 20000 --reward-mode sharpe --rolling-reward-window 200 --append --run-label amd-sharpe-window-200"
-echo -e "\033[1;33mCommand: $CMD\033[0m"
-eval "$CMD"
+$PYTHON src/experiments.py --ticker amd --seeds 7 --timesteps 20000 --reward-mode sharpe --rolling-reward-window 200 --append --run-label amd-sharpe-window-200
 if [ $? -eq 0 ]; then
     echo -e "\033[1;32m✓ Fix 1c potential success! Check leaderboard for accuracy >= 0.5300\033[0m"
     echo -e "\033[1;32mIf successful, promotion ready.\033[0m"

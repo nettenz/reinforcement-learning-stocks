@@ -2,6 +2,9 @@ $ErrorActionPreference = "Stop"
 
 Set-Location -Path $PSScriptRoot
 
+# Activate virtual environment
+& "$PSScriptRoot\.venv\Scripts\Activate.ps1"
+
 $pythonExe = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $pythonExe)) {
     throw "Python executable not found at $pythonExe"
@@ -89,7 +92,7 @@ $args = @(
 Write-Host "Command: $pythonExe $($args -join ' ')" -ForegroundColor Yellow
 & $pythonExe @args
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✓ Fix 1a potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
+    Write-Host "Fix 1a potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
     Write-Host "If successful, promote AMD with: Copy-Item data\experiment_snapshots\model_*amd-sharpe-bonus-001*.zip -Destination models\sac_trading_bot_amd.zip -Force" -ForegroundColor Green
 } else {
     Write-Host "Fix 1a did not reach threshold, trying Fix 1b..." -ForegroundColor Yellow
@@ -110,7 +113,7 @@ $args = @(
 Write-Host "Command: $pythonExe $($args -join ' ')" -ForegroundColor Yellow
 & $pythonExe @args
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✓ Fix 1b potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
+    Write-Host "Fix 1b potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
     Write-Host "If successful, promote AMD with: Copy-Item data\experiment_snapshots\model_*amd-sharpe-entropy-010*.zip -Destination models\sac_trading_bot_amd.zip -Force" -ForegroundColor Green
 } else {
     Write-Host "Fix 1b did not reach threshold, trying Fix 1c..." -ForegroundColor Yellow
@@ -131,9 +134,10 @@ $args = @(
 Write-Host "Command: $pythonExe $($args -join ' ')" -ForegroundColor Yellow
 & $pythonExe @args
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✓ Fix 1c potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
+    Write-Host "Fix 1c potential success! Check leaderboard for accuracy >= 0.5300" -ForegroundColor Green
     Write-Host "If successful, promote AMD with: Copy-Item data\experiment_snapshots\model_*amd-sharpe-window-200*.zip -Destination models\sac_trading_bot_amd.zip -Force" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "All AMD fixes attempted. If none succeeded, NVDA-only deployment is conservative option." -ForegroundColor Yellow
 }
 

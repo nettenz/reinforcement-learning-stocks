@@ -8,6 +8,7 @@ import platform
 from pathlib import Path
 import re
 import sys
+import psutil
 import time
 from urllib import request
 
@@ -544,8 +545,11 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         )
         
         callback = ProgressCallback(total_timesteps=timesteps)
-        model.learn(total_timesteps=timesteps, callback=callback)
         
+        model.learn(total_timesteps=timesteps, callback=callback)
+        if torch.cuda.is_available():
+            print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+            print(f"GPU memory reserved: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
         # --- Intelligence Synchronization: Save Model Weights ---
         timestamp = _timestamp_slug()
         run_label_slug = _safe_label(args.run_label) if args.run_label else "run"
