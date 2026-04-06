@@ -11,17 +11,21 @@ if (-not (Test-Path $pythonExe)) {
 
 $ticker = "nvda"
 $seeds = "7,13,21,42,84"
-$timesteps = "12000"
-$learningRates = "0.0001"
+$timesteps = "40000"
+$learningRates = "0.0003"
 $gammas = "0.99"
 $threshold = "0.002"
 $transactionCostRate = "0.001"
 $tradePenalty = "0.05"
 $rewardReturnScale = "1.0"
+$rewardDirectionScale = "0.35"
 $rewardHoldPenaltyScale = "0.10"
+$rewardDrawdownPenaltyScale = "0.10"
+$rewardActionBonusScale = "0.02"
+$rewardTurnoverPenaltyScale = "0.05"
 $rewardClip = "1.0"
-$nEnvs = "8"
-$runLabelPrefix = "nvda-rw-v1"
+$maxWeightDeltaPerStep = "0.25"
+$runLabel = "nvda-rx-v2-maxdelta-025"
 
 function Invoke-Experiment {
     param(
@@ -38,96 +42,37 @@ function Invoke-Experiment {
     }
 }
 
-Write-Host "Starting NVDA reward-calibration batch in the local Windows .venv..." -ForegroundColor Cyan
+Write-Host "Starting NVDA realism baseline batch in the local Windows .venv..." -ForegroundColor Cyan
 
-$balancedArgs = @(
+$baselineArgs = @(
     "src/experiments.py",
     "--ticker", $ticker,
-    "--include-news",
-    "--use-stationary-features",
     "--seeds", $seeds,
     "--timesteps", $timesteps,
     "--learning-rates", $learningRates,
     "--gammas", $gammas,
-    "--ent-coefs", "0.05",
+    "--ent-coefs", "0.02",
     "--threshold", $threshold,
     "--horizon", "1",
     "--transaction-cost-rate", $transactionCostRate,
     "--trade-penalty", $tradePenalty,
     "--execution-mode", "next_bar",
+    "--spread-bps", "0.0",
+    "--slippage-bps", "0.0",
     "--reward-mode", "sharpe",
     "--reward-return-scale", $rewardReturnScale,
-    "--reward-direction-scale", "0.30",
+    "--reward-direction-scale", $rewardDirectionScale,
     "--reward-hold-penalty-scale", $rewardHoldPenaltyScale,
-    "--reward-drawdown-penalty-scale", "0.12",
-    "--reward-action-bonus-scale", "0.005",
-    "--reward-turnover-penalty-scale", "0.01",
+    "--reward-drawdown-penalty-scale", $rewardDrawdownPenaltyScale,
+    "--reward-action-bonus-scale", $rewardActionBonusScale,
+    "--reward-turnover-penalty-scale", $rewardTurnoverPenaltyScale,
     "--reward-clip", $rewardClip,
-    "--no-reward-ignore-transaction-cost",
-    "--n-envs", $nEnvs,
+    "--reward-ignore-transaction-cost",
+    "--max-weight-delta-per-step", $maxWeightDeltaPerStep,
     "--append",
-    "--run-label", "$runLabelPrefix-balanced"
+    "--run-label", $runLabel
 )
-Invoke-Experiment -RunLabel "$runLabelPrefix-balanced" -Args $balancedArgs
 
-$conservativeArgs = @(
-    "src/experiments.py",
-    "--ticker", $ticker,
-    "--include-news",
-    "--use-stationary-features",
-    "--seeds", $seeds,
-    "--timesteps", $timesteps,
-    "--learning-rates", $learningRates,
-    "--gammas", $gammas,
-    "--ent-coefs", "0.05",
-    "--threshold", $threshold,
-    "--horizon", "1",
-    "--transaction-cost-rate", $transactionCostRate,
-    "--trade-penalty", $tradePenalty,
-    "--execution-mode", "next_bar",
-    "--reward-mode", "sharpe",
-    "--reward-return-scale", $rewardReturnScale,
-    "--reward-direction-scale", "0.20",
-    "--reward-hold-penalty-scale", "0.15",
-    "--reward-drawdown-penalty-scale", "0.20",
-    "--reward-action-bonus-scale", "0.00",
-    "--reward-turnover-penalty-scale", "0.03",
-    "--reward-clip", $rewardClip,
-    "--no-reward-ignore-transaction-cost",
-    "--n-envs", $nEnvs,
-    "--append",
-    "--run-label", "$runLabelPrefix-conservative"
-)
-Invoke-Experiment -RunLabel "$runLabelPrefix-conservative" -Args $conservativeArgs
+Invoke-Experiment -RunLabel $runLabel -Args $baselineArgs
 
-$aggressiveArgs = @(
-    "src/experiments.py",
-    "--ticker", $ticker,
-    "--include-news",
-    "--use-stationary-features",
-    "--seeds", $seeds,
-    "--timesteps", $timesteps,
-    "--learning-rates", $learningRates,
-    "--gammas", $gammas,
-    "--ent-coefs", "0.05",
-    "--threshold", $threshold,
-    "--horizon", "1",
-    "--transaction-cost-rate", $transactionCostRate,
-    "--trade-penalty", $tradePenalty,
-    "--execution-mode", "next_bar",
-    "--reward-mode", "sharpe",
-    "--reward-return-scale", $rewardReturnScale,
-    "--reward-direction-scale", "0.50",
-    "--reward-hold-penalty-scale", "0.05",
-    "--reward-drawdown-penalty-scale", "0.08",
-    "--reward-action-bonus-scale", "0.01",
-    "--reward-turnover-penalty-scale", "0.005",
-    "--reward-clip", $rewardClip,
-    "--no-reward-ignore-transaction-cost",
-    "--n-envs", $nEnvs,
-    "--append",
-    "--run-label", "$runLabelPrefix-aggressive"
-)
-Invoke-Experiment -RunLabel "$runLabelPrefix-aggressive" -Args $aggressiveArgs
-
-Write-Host "NVDA reward-calibration batch complete." -ForegroundColor Green
+Write-Host "NVDA realism baseline batch complete." -ForegroundColor Green
