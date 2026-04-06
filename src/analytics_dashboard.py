@@ -966,8 +966,9 @@ def render_charts(
     
     # Combined dashboard with VConcat
     combined = alt.vconcat(price_main, volume_chart).resolve_scale(x='shared').configure_view(stroke=None)
-    
-    st.altair_chart(combined, width="stretch")
+
+    # Keep y-scales stable while allowing intuitive horizontal zoom/pan on time.
+    st.altair_chart(combined.interactive(bind_y=False), width="stretch")
     if len(signal_df):
         st.caption("Tip: hover any Buy/Sell marker to pin the annotation; hover another marker to update it.")
     else:
@@ -1054,7 +1055,7 @@ def render_charts(
         pnl_hover_rule,
         pnl_hover_point,
         pnl_hover_text,
-    ).properties(width="container")
+    ).properties(height=420, width="container")
     st.altair_chart(pnl_chart.interactive(), width="stretch")
 
     if show_horizon_panel:
