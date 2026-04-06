@@ -18,7 +18,6 @@ fi
 
 PYTHON="${PYTHON:-python}"
 
-# Detect hardware acceleration: CUDA (NVIDIA), MPS (Apple Silicon), or CPU
 if "$PYTHON" -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
   DEVICE="cuda"
 elif "$PYTHON" -c "import torch; exit(0 if torch.backends.mps.is_available() else 1)" 2>/dev/null; then
@@ -27,11 +26,12 @@ else
   DEVICE="cpu"
 fi
 
-echo "Environment: Mac (Apple Silicon) detected via MPS or fallback."
-echo "Acceleration: $DEVICE (CUDA is default if available, fallback to MPS/CPU)"
+echo "Environment detected."
+echo "Acceleration: $DEVICE (CUDA preferred, then MPS, then CPU)"
 
 TICKER="nvda"
-SEEDS="7,13,21,42,84"
+SEEDS_BASE="101,202,303,404,505"
+SEEDS_LOW_HOLD="101,202,303"
 TIMESTEPS="20000"
 LEARNING_RATES="0.0003"
 GAMMAS="0.99"
@@ -39,9 +39,11 @@ THRESHOLD="0.002"
 TRANSACTION_COST_RATE="0.001"
 TRADE_PENALTY="0.05"
 REWARD_RETURN_SCALE="1.0"
-REWARD_ACTION_BONUS_SCALE="0.02"
-REWARD_HOLD_PENALTY_SCALE="0.10"
+REWARD_DIRECTION_SCALE="0.35"
+REWARD_HOLD_PENALTY_SCALE_BASE="0.05"
+REWARD_HOLD_PENALTY_SCALE_LOW="0.03"
 REWARD_DRAWDOWN_PENALTY_SCALE="0.10"
+REWARD_ACTION_BONUS_SCALE="0.02"
 REWARD_TURNOVER_PENALTY_SCALE="0.05"
 REWARD_CLIP="1.0"
 MAX_WEIGHT_DELTA_PER_STEP="0.25"
@@ -50,13 +52,14 @@ EXECUTION_MODE="next_bar"
 
 run_experiment() {
   local run_label="$1"
-  local direction_scale="$2"
+  local seeds="$2"
+  local hold_penalty="$3"
 
-  echo "Running: $PYTHON src/experiments.py --device $DEVICE --ticker $TICKER --seeds $SEEDS --timesteps $TIMESTEPS --learning-rates $LEARNING_RATES --gammas $GAMMAS --ent-coefs 0.05 --threshold $THRESHOLD --horizon 1 --transaction-cost-rate $TRANSACTION_COST_RATE --trade-penalty $TRADE_PENALTY --execution-mode $EXECUTION_MODE --spread-bps 0.0 --slippage-bps 0.0 --reward-mode $REWARD_MODE --reward-return-scale $REWARD_RETURN_SCALE --reward-direction-scale $direction_scale --reward-hold-penalty-scale $REWARD_HOLD_PENALTY_SCALE --reward-drawdown-penalty-scale $REWARD_DRAWDOWN_PENALTY_SCALE --reward-action-bonus-scale $REWARD_ACTION_BONUS_SCALE --reward-turnover-penalty-scale $REWARD_TURNOVER_PENALTY_SCALE --reward-clip $REWARD_CLIP --reward-ignore-transaction-cost --max-weight-delta-per-step $MAX_WEIGHT_DELTA_PER_STEP --append --run-label $run_label"
+  echo "Running: $PYTHON src/experiments.py --device $DEVICE --ticker $TICKER --seeds $seeds --timesteps $TIMESTEPS --learning-rates $LEARNING_RATES --gammas $GAMMAS --ent-coefs 0.05 --threshold $THRESHOLD --horizon 1 --transaction-cost-rate $TRANSACTION_COST_RATE --trade-penalty $TRADE_PENALTY --execution-mode $EXECUTION_MODE --spread-bps 0.0 --slippage-bps 0.0 --reward-mode $REWARD_MODE --reward-return-scale $REWARD_RETURN_SCALE --reward-direction-scale $REWARD_DIRECTION_SCALE --reward-hold-penalty-scale $hold_penalty --reward-drawdown-penalty-scale $REWARD_DRAWDOWN_PENALTY_SCALE --reward-action-bonus-scale $REWARD_ACTION_BONUS_SCALE --reward-turnover-penalty-scale $REWARD_TURNOVER_PENALTY_SCALE --reward-clip $REWARD_CLIP --reward-ignore-transaction-cost --max-weight-delta-per-step $MAX_WEIGHT_DELTA_PER_STEP --append --run-label $run_label"
   "$PYTHON" src/experiments.py \
     --device "$DEVICE" \
     --ticker "$TICKER" \
-    --seeds "$SEEDS" \
+    --seeds "$seeds" \
     --timesteps "$TIMESTEPS" \
     --learning-rates "$LEARNING_RATES" \
     --gammas "$GAMMAS" \
@@ -70,8 +73,8 @@ run_experiment() {
     --slippage-bps 0.0 \
     --reward-mode "$REWARD_MODE" \
     --reward-return-scale "$REWARD_RETURN_SCALE" \
-    --reward-direction-scale "$direction_scale" \
-    --reward-hold-penalty-scale "$REWARD_HOLD_PENALTY_SCALE" \
+    --reward-direction-scale "$REWARD_DIRECTION_SCALE" \
+    --reward-hold-penalty-scale "$hold_penalty" \
     --reward-drawdown-penalty-scale "$REWARD_DRAWDOWN_PENALTY_SCALE" \
     --reward-action-bonus-scale "$REWARD_ACTION_BONUS_SCALE" \
     --reward-turnover-penalty-scale "$REWARD_TURNOVER_PENALTY_SCALE" \
@@ -82,9 +85,9 @@ run_experiment() {
     --run-label "$run_label"
 }
 
-echo "Starting NVDA directional-strength A/B batch..."
+echo "Starting NVDA sharpe follow-up batch..."
 
-run_experiment "nvda-direction-ab-20k-ent05-bonus002-dir035" "0.35"
-run_experiment "nvda-direction-ab-20k-ent05-bonus002-dir040" "0.40"
+run_experiment "nvda-sharpe-base-replication" "$SEEDS_BASE" "$REWARD_HOLD_PENALTY_SCALE_BASE"
+run_experiment "nvda-sharpe-low-hold" "$SEEDS_LOW_HOLD" "$REWARD_HOLD_PENALTY_SCALE_LOW"
 
-echo "Directional-strength A/B batch complete."
+echo "NVDA sharpe follow-up batch complete."
