@@ -45,7 +45,7 @@ REWARD_DRAWDOWN_PENALTY_SCALE="0.10"
 REWARD_TURNOVER_PENALTY_SCALE="0.05"
 REWARD_CLIP="1.0"
 MAX_WEIGHT_DELTA_PER_STEP="0.25"
-REWARD_MODE="legacy"  # Changed from sharpe to legacy because sharpe mode ignores direction_scale
+REWARD_MODE="sharpe"
 EXECUTION_MODE="next_bar"
 
 run_experiment() {

@@ -5,7 +5,14 @@ ACTION="${1:-start}"
 PORT="${2:-8501}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
+
+# Detect OS and set appropriate paths
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+  VENV_PYTHON="$ROOT_DIR/.venv/Scripts/python.exe"
+else
+  VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
+fi
+
 DASHBOARD_SCRIPT="$ROOT_DIR/src/analytics_dashboard.py"
 PID_FILE="$ROOT_DIR/.streamlit_dashboard.pid"
 

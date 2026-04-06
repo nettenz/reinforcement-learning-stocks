@@ -136,9 +136,11 @@ class RewardEvaluator:
             risk_metric = self._sortino()
             base_reward = self.return_scale * risk_metric
         else:  # legacy
-            base_reward = (self.return_scale * portfolio_return) + (self.dir_scale * directional_reward)
+            base_reward = self.return_scale * portfolio_return
 
-        total = base_reward + hold_penalty + action_bonus + turnover_penalty + dd_penalty
+        # Directional shaping and penalties apply across all reward modes
+        # so hyperparameters behave consistently in legacy/sharpe/sortino experiments.
+        total = base_reward + (self.dir_scale * directional_reward) + hold_penalty + action_bonus + turnover_penalty + dd_penalty
         return (
             float(np.clip(total, -self.clip, self.clip)),
             risk_metric,

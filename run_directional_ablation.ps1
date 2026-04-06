@@ -9,6 +9,30 @@ if (-not (Test-Path $pythonExe)) {
 
 . (Join-Path $PSScriptRoot ".venv\Scripts\Activate.ps1")
 
+function Get-AccelerationDevice {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonExe
+    )
+
+    $deviceProbe = @"
+import torch
+if torch.cuda.is_available():
+    print('cuda')
+elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+    print('mps')
+else:
+    print('cpu')
+"@
+
+    $detected = (& $PythonExe -c $deviceProbe).Trim().ToLower()
+    if (-not $detected) {
+        return "cpu"
+    }
+
+    return $detected
+}
+
 $ticker = "nvda"
 $seeds = "7,13,21,42,84"
 $timesteps = "20000"
@@ -26,6 +50,9 @@ $rewardClip = "1.0"
 $maxWeightDeltaPerStep = "0.25"
 $rewardMode = "sharpe"
 $executionMode = "next_bar"
+$device = Get-AccelerationDevice -PythonExe $pythonExe
+
+Write-Host "Acceleration device detected: $device" -ForegroundColor DarkCyan
 
 function Invoke-Experiment {
     param(
@@ -52,6 +79,7 @@ function New-ExperimentArgs {
 
     return @(
         "src/experiments.py",
+        "--device", $device,
         "--ticker", $ticker,
         "--seeds", $seeds,
         "--timesteps", $timesteps,
