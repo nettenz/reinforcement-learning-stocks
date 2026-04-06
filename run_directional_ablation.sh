@@ -17,6 +17,19 @@ else
 fi
 
 PYTHON="${PYTHON:-python}"
+
+# Detect hardware acceleration: CUDA (NVIDIA), MPS (Apple Silicon), or CPU
+if "$PYTHON" -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+  DEVICE="cuda"
+elif "$PYTHON" -c "import torch; exit(0 if torch.backends.mps.is_available() else 1)" 2>/dev/null; then
+  DEVICE="mps"
+else
+  DEVICE="cpu"
+fi
+
+echo "Environment: Mac (Apple Silicon) detected via MPS or fallback."
+echo "Acceleration: $DEVICE (CUDA is default if available, fallback to MPS/CPU)"
+
 TICKER="nvda"
 SEEDS="7,13,21,42,84"
 TIMESTEPS="20000"
@@ -32,15 +45,16 @@ REWARD_DRAWDOWN_PENALTY_SCALE="0.10"
 REWARD_TURNOVER_PENALTY_SCALE="0.05"
 REWARD_CLIP="1.0"
 MAX_WEIGHT_DELTA_PER_STEP="0.25"
-REWARD_MODE="sharpe"
+REWARD_MODE="legacy"  # Changed from sharpe to legacy because sharpe mode ignores direction_scale
 EXECUTION_MODE="next_bar"
 
 run_experiment() {
   local run_label="$1"
   local direction_scale="$2"
 
-  echo "Running: $PYTHON src/experiments.py --ticker $TICKER --seeds $SEEDS --timesteps $TIMESTEPS --learning-rates $LEARNING_RATES --gammas $GAMMAS --ent-coefs 0.05 --threshold $THRESHOLD --horizon 1 --transaction-cost-rate $TRANSACTION_COST_RATE --trade-penalty $TRADE_PENALTY --execution-mode $EXECUTION_MODE --spread-bps 0.0 --slippage-bps 0.0 --reward-mode $REWARD_MODE --reward-return-scale $REWARD_RETURN_SCALE --reward-direction-scale $direction_scale --reward-hold-penalty-scale $REWARD_HOLD_PENALTY_SCALE --reward-drawdown-penalty-scale $REWARD_DRAWDOWN_PENALTY_SCALE --reward-action-bonus-scale $REWARD_ACTION_BONUS_SCALE --reward-turnover-penalty-scale $REWARD_TURNOVER_PENALTY_SCALE --reward-clip $REWARD_CLIP --reward-ignore-transaction-cost --max-weight-delta-per-step $MAX_WEIGHT_DELTA_PER_STEP --append --run-label $run_label"
+  echo "Running: $PYTHON src/experiments.py --device $DEVICE --ticker $TICKER --seeds $SEEDS --timesteps $TIMESTEPS --learning-rates $LEARNING_RATES --gammas $GAMMAS --ent-coefs 0.05 --threshold $THRESHOLD --horizon 1 --transaction-cost-rate $TRANSACTION_COST_RATE --trade-penalty $TRADE_PENALTY --execution-mode $EXECUTION_MODE --spread-bps 0.0 --slippage-bps 0.0 --reward-mode $REWARD_MODE --reward-return-scale $REWARD_RETURN_SCALE --reward-direction-scale $direction_scale --reward-hold-penalty-scale $REWARD_HOLD_PENALTY_SCALE --reward-drawdown-penalty-scale $REWARD_DRAWDOWN_PENALTY_SCALE --reward-action-bonus-scale $REWARD_ACTION_BONUS_SCALE --reward-turnover-penalty-scale $REWARD_TURNOVER_PENALTY_SCALE --reward-clip $REWARD_CLIP --reward-ignore-transaction-cost --max-weight-delta-per-step $MAX_WEIGHT_DELTA_PER_STEP --append --run-label $run_label"
   "$PYTHON" src/experiments.py \
+    --device "$DEVICE" \
     --ticker "$TICKER" \
     --seeds "$SEEDS" \
     --timesteps "$TIMESTEPS" \
