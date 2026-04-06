@@ -31,7 +31,6 @@ echo "Acceleration: $DEVICE (CUDA preferred, then MPS, then CPU)"
 
 TICKER="nvda"
 SEEDS_BASE="101,202,303,404,505"
-SEEDS_LOW_HOLD="101,202,303"
 TIMESTEPS="20000"
 LEARNING_RATES="0.0003"
 GAMMAS="0.99"
@@ -40,9 +39,9 @@ TRANSACTION_COST_RATE="0.001"
 TRADE_PENALTY="0.05"
 REWARD_RETURN_SCALE="1.0"
 REWARD_DIRECTION_SCALE="0.35"
-REWARD_HOLD_PENALTY_SCALE_BASE="0.05"
-REWARD_HOLD_PENALTY_SCALE_LOW="0.03"
-REWARD_DRAWDOWN_PENALTY_SCALE="0.10"
+REWARD_HOLD_PENALTY_SCALE="0.10"
+REWARD_DRAWDOWN_PENALTY_SCALE_BASE="0.10"
+REWARD_DRAWDOWN_PENALTY_SCALE_HIGH="0.15"
 REWARD_ACTION_BONUS_SCALE="0.02"
 REWARD_TURNOVER_PENALTY_SCALE="0.05"
 REWARD_CLIP="1.0"
@@ -52,14 +51,13 @@ EXECUTION_MODE="next_bar"
 
 run_experiment() {
   local run_label="$1"
-  local seeds="$2"
-  local hold_penalty="$3"
+  local drawdown_penalty="$2"
 
-  echo "Running: $PYTHON src/experiments.py --device $DEVICE --ticker $TICKER --seeds $seeds --timesteps $TIMESTEPS --learning-rates $LEARNING_RATES --gammas $GAMMAS --ent-coefs 0.05 --threshold $THRESHOLD --horizon 1 --transaction-cost-rate $TRANSACTION_COST_RATE --trade-penalty $TRADE_PENALTY --execution-mode $EXECUTION_MODE --spread-bps 0.0 --slippage-bps 0.0 --reward-mode $REWARD_MODE --reward-return-scale $REWARD_RETURN_SCALE --reward-direction-scale $REWARD_DIRECTION_SCALE --reward-hold-penalty-scale $hold_penalty --reward-drawdown-penalty-scale $REWARD_DRAWDOWN_PENALTY_SCALE --reward-action-bonus-scale $REWARD_ACTION_BONUS_SCALE --reward-turnover-penalty-scale $REWARD_TURNOVER_PENALTY_SCALE --reward-clip $REWARD_CLIP --reward-ignore-transaction-cost --max-weight-delta-per-step $MAX_WEIGHT_DELTA_PER_STEP --append --run-label $run_label"
+  echo "Running: $PYTHON src/experiments.py --device $DEVICE --ticker $TICKER --seeds $SEEDS_BASE --timesteps $TIMESTEPS --learning-rates $LEARNING_RATES --gammas $GAMMAS --ent-coefs 0.05 --threshold $THRESHOLD --horizon 1 --transaction-cost-rate $TRANSACTION_COST_RATE --trade-penalty $TRADE_PENALTY --execution-mode $EXECUTION_MODE --spread-bps 0.0 --slippage-bps 0.0 --reward-mode $REWARD_MODE --reward-return-scale $REWARD_RETURN_SCALE --reward-direction-scale $REWARD_DIRECTION_SCALE --reward-hold-penalty-scale $REWARD_HOLD_PENALTY_SCALE --reward-drawdown-penalty-scale $drawdown_penalty --reward-action-bonus-scale $REWARD_ACTION_BONUS_SCALE --reward-turnover-penalty-scale $REWARD_TURNOVER_PENALTY_SCALE --reward-clip $REWARD_CLIP --reward-ignore-transaction-cost --max-weight-delta-per-step $MAX_WEIGHT_DELTA_PER_STEP --append --run-label $run_label"
   "$PYTHON" src/experiments.py \
     --device "$DEVICE" \
     --ticker "$TICKER" \
-    --seeds "$seeds" \
+    --seeds "$SEEDS_BASE" \
     --timesteps "$TIMESTEPS" \
     --learning-rates "$LEARNING_RATES" \
     --gammas "$GAMMAS" \
@@ -74,8 +72,8 @@ run_experiment() {
     --reward-mode "$REWARD_MODE" \
     --reward-return-scale "$REWARD_RETURN_SCALE" \
     --reward-direction-scale "$REWARD_DIRECTION_SCALE" \
-    --reward-hold-penalty-scale "$hold_penalty" \
-    --reward-drawdown-penalty-scale "$REWARD_DRAWDOWN_PENALTY_SCALE" \
+    --reward-hold-penalty-scale "$REWARD_HOLD_PENALTY_SCALE" \
+    --reward-drawdown-penalty-scale "$drawdown_penalty" \
     --reward-action-bonus-scale "$REWARD_ACTION_BONUS_SCALE" \
     --reward-turnover-penalty-scale "$REWARD_TURNOVER_PENALTY_SCALE" \
     --reward-clip "$REWARD_CLIP" \
@@ -85,9 +83,9 @@ run_experiment() {
     --run-label "$run_label"
 }
 
-echo "Starting NVDA sharpe follow-up batch..."
+echo "Starting NVDA sharpe downside-control A/B batch..."
 
-run_experiment "nvda-sharpe-base-replication" "$SEEDS_BASE" "$REWARD_HOLD_PENALTY_SCALE_BASE"
-run_experiment "nvda-sharpe-low-hold" "$SEEDS_LOW_HOLD" "$REWARD_HOLD_PENALTY_SCALE_LOW"
+run_experiment "nvda-downside-ab-20k-ent05-dir035-dd010" "$REWARD_DRAWDOWN_PENALTY_SCALE_BASE"
+run_experiment "nvda-downside-ab-20k-ent05-dir035-dd015" "$REWARD_DRAWDOWN_PENALTY_SCALE_HIGH"
 
-echo "NVDA sharpe follow-up batch complete."
+echo "NVDA sharpe downside-control A/B batch complete."
