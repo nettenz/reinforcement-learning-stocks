@@ -192,6 +192,7 @@ class TradingEnv(gym.Env):
         execution_mode="same_bar",
         spread_bps=0.0,
         slippage_bps=0.0,
+        max_weight_delta_per_step=0.0,
         market_feature_columns=None,
         reward_mode="legacy",
         rolling_reward_window=100,
@@ -205,6 +206,11 @@ class TradingEnv(gym.Env):
         self.price_column = 'RawClose' if 'RawClose' in self.df.columns else 'Close'
         self.execution_mode = str(execution_mode).lower()
         self.reward_ignore_transaction_cost = bool(reward_ignore_transaction_cost)
+        self.max_weight_delta_per_step = float(max_weight_delta_per_step)
+        if self.max_weight_delta_per_step < 0.0:
+            raise ValueError("max_weight_delta_per_step must be >= 0.0")
+        if self.max_weight_delta_per_step > 2.0:
+            raise ValueError("max_weight_delta_per_step must be <= 2.0")
         if self.execution_mode not in {"same_bar", "next_bar"}:
             raise ValueError("execution_mode must be one of: same_bar, next_bar")
         self.pending_target_weight = 0.0
@@ -223,7 +229,7 @@ class TradingEnv(gym.Env):
             reward_drawdown_penalty_scale, reward_action_bonus_scale, reward_turnover_penalty_scale, reward_clip,
             sharpe_scale=reward_sharpe_scale
         )
-        
+
         # Continuous Action Space: [-1.0 (Full Short), 1.0 (Full Long)]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
 
@@ -249,13 +255,25 @@ class TradingEnv(gym.Env):
 
         # Base market + news + [balance, shares_held]
         state_count = 2
-        
+
         # + [current_weight, unrealized_pnl, time_in_position]
         if self.include_position:
-            state_count += 3 
-            
+            state_count += 3
+
         observation_size = len(self.market_feature_columns) + len(self.active_news_columns) + state_count
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(observation_size,), dtype=np.float32)
+
+    def _apply_max_weight_delta(self, current_weight, desired_weight):
+        """Cap exposure changes per step when realism gating is enabled."""
+        desired_weight = float(np.clip(desired_weight, -1.0, 1.0))
+        if self.max_weight_delta_per_step <= 0.0:
+            return desired_weight, False
+
+        lower = max(-1.0, float(current_weight) - self.max_weight_delta_per_step)
+        upper = min(1.0, float(current_weight) + self.max_weight_delta_per_step)
+        capped_weight = float(np.clip(desired_weight, lower, upper))
+        was_limited = abs(capped_weight - desired_weight) > 1e-12
+        return capped_weight, was_limited
 
     def _get_obs(self, unrealized_pnl=0.0):
         row = self.df.loc[self.current_step]
@@ -308,9 +326,15 @@ class TradingEnv(gym.Env):
             self.pending_target_weight = desired_target_weight
         else:
             execution_target_weight = desired_target_weight
+
+        execution_target_weight_pre_cap = float(execution_target_weight)
             
         current_price = max(float(self.df.loc[self.current_step, self.price_column]), 1e-8)
         pre_trade_weight = float(self.pm.current_weight)
+        execution_target_weight, weight_delta_limited = self._apply_max_weight_delta(
+            pre_trade_weight,
+            execution_target_weight,
+        )
         prev_net_worth = float(self.pm.net_worth)
         
         prev_step = max(0, self.current_step - 1)
@@ -363,7 +387,10 @@ class TradingEnv(gym.Env):
             "reward_mode": self.re.mode,
             "reward_risk_metric": risk_metric,
             "execution_mode": self.execution_mode,
+            "max_weight_delta_per_step": self.max_weight_delta_per_step,
+            "execution_weight_delta_limited": int(weight_delta_limited),
             "execution_target_weight": execution_target_weight,
+            "execution_target_weight_pre_cap": execution_target_weight_pre_cap,
             "desired_target_weight": desired_target_weight,
             "execution_price": execution_price,
             "execution_fee": execution_fee,

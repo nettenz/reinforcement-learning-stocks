@@ -43,6 +43,7 @@ def test_simulate_with_new_reward():
     env_kwargs = {
         'reward_direction_scale': 0.35,
         'reward_return_scale': 1.0,
+        'max_weight_delta_per_step': 0.25,
     }
     signals = _simulate_with_model(model, test_data, env_kwargs)
     

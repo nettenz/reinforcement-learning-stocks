@@ -229,6 +229,7 @@ def _attach_config_stability_metrics(leaderboard: pd.DataFrame) -> pd.DataFrame:
         "execution_mode",
         "spread_bps",
         "slippage_bps",
+        "max_weight_delta_per_step",
         "reward_mode",
         "rolling_reward_window",
         "reward_epsilon",
@@ -477,6 +478,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         "execution_mode": args.execution_mode,
         "spread_bps": args.spread_bps,
         "slippage_bps": args.slippage_bps,
+        "max_weight_delta_per_step": args.max_weight_delta_per_step,
         "reward_clip": args.reward_clip,
         "reward_ignore_transaction_cost": args.reward_ignore_transaction_cost,
         "reward_mode": args.reward_mode,
@@ -591,6 +593,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "execution_mode": args.execution_mode,
             "spread_bps": args.spread_bps,
             "slippage_bps": args.slippage_bps,
+            "max_weight_delta_per_step": args.max_weight_delta_per_step,
             "reward_mode": args.reward_mode,
             "rolling_reward_window": args.rolling_reward_window,
             "reward_epsilon": args.reward_epsilon,
@@ -670,6 +673,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--execution-mode", default="same_bar", choices=["same_bar", "next_bar"], help="Execution timing model.")
     parser.add_argument("--spread-bps", type=float, default=0.0, help="Half-spread is applied around mid for buys/sells (in bps).")
     parser.add_argument("--slippage-bps", type=float, default=0.0, help="Additional one-way slippage added to execution price (in bps).")
+    parser.add_argument("--max-weight-delta-per-step", type=float, default=0.0, help="Maximum absolute change in target weight allowed per step.")
     parser.add_argument("--reward-return-scale", default="1.0", help="Weight for portfolio-return reward term (list).")
     parser.add_argument("--reward-direction-scale", default="0.35", help="Weight for directional-alignment reward term (list).")
     parser.add_argument("--reward-hold-penalty-scale", default="0.10", help="Penalty scale for hold during movement (list).")

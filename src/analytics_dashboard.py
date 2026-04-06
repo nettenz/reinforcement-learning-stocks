@@ -396,6 +396,10 @@ def _make_command_from_config(
         f"--horizon {int(config['horizon'])} "
         f"--transaction-cost-rate {_format_float(float(config['transaction_cost_rate']))} "
         f"--trade-penalty {_format_float(float(config['trade_penalty']))} "
+        f"--execution-mode {str(config.get('execution_mode', 'next_bar'))} "
+        f"--spread-bps {_format_float(float(config.get('spread_bps', 0.0)))} "
+        f"--slippage-bps {_format_float(float(config.get('slippage_bps', 0.0)))} "
+        f"--max-weight-delta-per-step {_format_float(float(config.get('max_weight_delta_per_step', 0.0)))} "
         f"--reward-mode {str(config.get('reward_mode', 'legacy'))} "
         f"--rolling-reward-window {int(config.get('rolling_reward_window', 100))} "
         f"--reward-epsilon {_format_float(float(config.get('reward_epsilon', 1e-6)))} "
@@ -544,6 +548,10 @@ def _config_from_row(row: pd.Series) -> dict[str, float | int | bool | str]:
         "horizon": int(_safe_get(row, "horizon", 1)),
         "transaction_cost_rate": float(_safe_get(row, "transaction_cost_rate", 0.001)),
         "trade_penalty": float(_safe_get(row, "trade_penalty", 0.05)),
+        "execution_mode": str(_safe_get(row, "execution_mode", "next_bar")),
+        "spread_bps": float(_safe_get(row, "spread_bps", 0.0)),
+        "slippage_bps": float(_safe_get(row, "slippage_bps", 0.0)),
+        "max_weight_delta_per_step": float(_safe_get(row, "max_weight_delta_per_step", 0.0)),
         "reward_mode": str(_safe_get(row, "reward_mode", "sharpe")),
         "rolling_reward_window": int(_safe_get(row, "rolling_reward_window", 100)),
         "reward_epsilon": float(_safe_get(row, "reward_epsilon", 1e-6)),
@@ -1240,6 +1248,17 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
         horizon = st.number_input("Eval horizon", min_value=1, max_value=10, value=1, step=1)
         transaction_cost_rate = st.number_input("Transaction cost rate", min_value=0.0, max_value=0.02, value=0.001, step=0.0005, format="%.4f")
         trade_penalty = st.number_input("Trade penalty", min_value=0.0, max_value=1.0, value=0.05, step=0.01)
+        execution_mode = st.selectbox("Execution mode", options=["same_bar", "next_bar"], index=1)
+        spread_bps = st.number_input("Spread (bps)", min_value=0.0, max_value=100.0, value=0.0, step=0.5)
+        slippage_bps = st.number_input("Slippage (bps)", min_value=0.0, max_value=100.0, value=0.0, step=0.5)
+        max_weight_delta_per_step = st.number_input(
+            "Max weight delta / step",
+            min_value=0.0,
+            max_value=2.0,
+            value=0.0,
+            step=0.05,
+            help="Caps how much target exposure may change on a single step. 0 disables the cap.",
+        )
         reward_return_scale = st.number_input("Reward: portfolio-return scale", min_value=0.0, max_value=5.0, value=1.0, step=0.05)
         reward_direction_scale = st.number_input(
             "Reward: directional scale", 
@@ -1287,6 +1306,10 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
             val_ratio=0.15,
             transaction_cost_rate=float(transaction_cost_rate),
             trade_penalty=float(trade_penalty),
+            execution_mode=str(execution_mode),
+            spread_bps=float(spread_bps),
+            slippage_bps=float(slippage_bps),
+            max_weight_delta_per_step=float(max_weight_delta_per_step),
             reward_return_scale=float(reward_return_scale),
             reward_direction_scale=float(reward_direction_scale),
             reward_hold_penalty_scale=float(reward_hold_penalty_scale),
@@ -1690,7 +1713,10 @@ def main() -> None:
         # Ticker selector
         available_tickers = _detect_leaderboard_tickers(str(DEFAULT_LEADERBOARD_PATH))
         supported_ticker_options = sorted(list(TICKER_PRESETS.keys()))
-        ticker_options = [t for t in supported_ticker_options if t in available_tickers] or supported_ticker_options
+        # Always expose all supported tickers; prioritize those present in current leaderboard.
+        prioritized = [t for t in supported_ticker_options if t in available_tickers]
+        remaining = [t for t in supported_ticker_options if t not in available_tickers]
+        ticker_options = prioritized + remaining
         default_index = ticker_options.index(DEFAULT_TICKER) if DEFAULT_TICKER in ticker_options else 0
         ticker = st.selectbox(
             "Ticker",
@@ -1699,6 +1725,9 @@ def main() -> None:
             format_func=lambda k: str(TICKER_PRESETS.get(k, (k.upper(),))[0]),
             help="Select ticker preset for this session. Supported: AAPL, NVDA, AMD."
         )
+        if available_tickers:
+            detected_symbols = [str(TICKER_PRESETS.get(k, (k.upper(),))[0]) for k in ticker_options if k in available_tickers]
+            st.caption(f"Detected in leaderboard: {', '.join(detected_symbols)}")
         
         # Model Selection Dropdown
         if not available_models:
