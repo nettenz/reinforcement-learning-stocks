@@ -29,7 +29,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from src.market_data import get_tech_training_data, TICKER_PRESETS
 from src.signal_analytics import compute_metrics, enrich_with_truth_labels
-from src.trading_env import TradingEnv
+from src.trading_env import LEADERBOARD_VERSION, TradingEnv
 from src.market_data import fetch_yahoo_ohlcv
 
 
@@ -98,6 +98,7 @@ def _simulate_with_model(model, df: pd.DataFrame, env_kwargs: dict[str, float | 
                 "net_worth": float(env.net_worth),
                 "reward_portfolio_return": float(info.get("reward_portfolio_return", 0.0)),
                 "reward_direction": float(info.get("reward_direction", 0.0)),
+                "reward_pnl": float(info.get("reward_pnl", 0.0)),
                 "reward_hold_penalty": float(info.get("reward_hold_penalty", 0.0)),
                 "reward_action_bonus": float(info.get("reward_action_bonus", 0.0)),
                 "reward_drawdown_penalty": float(info.get("reward_drawdown_penalty", 0.0)),
@@ -118,6 +119,7 @@ def _summarize_rewards(signal_df: pd.DataFrame, prefix: str) -> dict[str, float]
             f"{prefix}_reward_total_sum": 0.0,
             f"{prefix}_reward_portfolio_return_mean": 0.0,
             f"{prefix}_reward_direction_mean": 0.0,
+            f"{prefix}_reward_pnl_mean": 0.0,
             f"{prefix}_reward_hold_penalty_mean": 0.0,
             f"{prefix}_reward_action_bonus_mean": 0.0,
             f"{prefix}_reward_turnover_penalty_mean": 0.0,
@@ -130,6 +132,7 @@ def _summarize_rewards(signal_df: pd.DataFrame, prefix: str) -> dict[str, float]
         f"{prefix}_reward_total_sum": float(signal_df["reward"].sum()),
         f"{prefix}_reward_portfolio_return_mean": float(signal_df["reward_portfolio_return"].mean()),
         f"{prefix}_reward_direction_mean": float(signal_df["reward_direction"].mean()),
+        f"{prefix}_reward_pnl_mean": float(signal_df.get("reward_pnl", pd.Series([0.0])).mean()),
         f"{prefix}_reward_hold_penalty_mean": float(signal_df["reward_hold_penalty"].mean()),
         f"{prefix}_reward_action_bonus_mean": float(signal_df.get("reward_action_bonus", pd.Series([0.0])).mean()),
         f"{prefix}_reward_turnover_penalty_mean": float(signal_df.get("reward_turnover_penalty", pd.Series([0.0])).mean()),
@@ -214,7 +217,18 @@ def _attach_config_stability_metrics(leaderboard: pd.DataFrame) -> pd.DataFrame:
     if leaderboard.empty:
         return leaderboard
 
+    leaderboard = leaderboard.copy()
+    if "leaderboard_version" not in leaderboard.columns:
+        leaderboard["leaderboard_version"] = 1
+    else:
+        leaderboard["leaderboard_version"] = leaderboard["leaderboard_version"].fillna(1).astype(int)
+    if "reward_pnl_scale" not in leaderboard.columns:
+        leaderboard["reward_pnl_scale"] = 0.0
+    else:
+        leaderboard["reward_pnl_scale"] = pd.to_numeric(leaderboard["reward_pnl_scale"], errors="coerce").fillna(0.0)
+
     config_keys = [
+        "leaderboard_version",
         "ticker",
         "timesteps",
         "learning_rate",
@@ -234,6 +248,7 @@ def _attach_config_stability_metrics(leaderboard: pd.DataFrame) -> pd.DataFrame:
         "rolling_reward_window",
         "reward_epsilon",
         "reward_return_scale",
+        "reward_pnl_scale",
         "reward_direction_scale",
         "reward_hold_penalty_scale",
         "reward_drawdown_penalty_scale",
@@ -385,9 +400,20 @@ def write_experiment_outputs(
     reward_leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
+    leaderboard = leaderboard.copy()
+    if "leaderboard_version" not in leaderboard.columns:
+        leaderboard["leaderboard_version"] = LEADERBOARD_VERSION
+    else:
+        leaderboard["leaderboard_version"] = leaderboard["leaderboard_version"].fillna(LEADERBOARD_VERSION).astype(int)
+
     if append_results and leaderboard_path.exists():
         try:
             existing = pd.read_csv(leaderboard_path)
+            existing = existing.copy()
+            if "leaderboard_version" not in existing.columns:
+                existing["leaderboard_version"] = 1
+            else:
+                existing["leaderboard_version"] = existing["leaderboard_version"].fillna(1).astype(int)
             # Fix #2: Validate ticker consistency before appending (CRITICAL for leaderboard integrity)
             existing_tickers = {
                 str(t).strip().upper()
@@ -406,20 +432,35 @@ def write_experiment_outputs(
                     "Recommend using separate leaderboards per ticker: --leaderboard-path data/experiment_leaderboard_<ticker>.csv"
                 )
             leaderboard = pd.concat([existing, leaderboard], ignore_index=True)
-            leaderboard = leaderboard.sort_values("ranking_score", ascending=False).reset_index(drop=True)
+            leaderboard = leaderboard.sort_values(["leaderboard_version", "ranking_score"], ascending=[False, False]).reset_index(drop=True)
         except Exception as e:
             print(f"Warning: could not append to existing leaderboard: {e}")
 
-    leaderboard.to_csv(leaderboard_path, index=False)
-    reward_leaderboard = leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
+    leaderboard = leaderboard.sort_values(["leaderboard_version", "ranking_score"], ascending=[False, False]).reset_index(drop=True)
+    comparable_leaderboard = leaderboard[leaderboard["leaderboard_version"] == LEADERBOARD_VERSION].copy()
+    if comparable_leaderboard.empty:
+        comparable_leaderboard = leaderboard.copy()
+
+    historical_leaderboard_path = leaderboard_path.with_name(f"{leaderboard_path.stem}_history{leaderboard_path.suffix}")
+    historical_reward_leaderboard_path = reward_leaderboard_path.with_name(f"{reward_leaderboard_path.stem}_history{reward_leaderboard_path.suffix}")
+
+    comparable_leaderboard.to_csv(leaderboard_path, index=False)
+    reward_leaderboard = comparable_leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
     reward_leaderboard.to_csv(reward_leaderboard_path, index=False)
+    leaderboard.to_csv(historical_leaderboard_path, index=False)
+    leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True).to_csv(
+        historical_reward_leaderboard_path, index=False
+    )
 
     timestamp = _timestamp_slug()
     summary: dict[str, object] = {
-        "rows": int(len(leaderboard)),
+        "rows": int(len(comparable_leaderboard)),
         "generated_at_utc": timestamp,
         "leaderboard_path": str(leaderboard_path),
         "reward_leaderboard_path": str(reward_leaderboard_path),
+        "leaderboard_history_path": str(historical_leaderboard_path),
+        "reward_leaderboard_history_path": str(historical_reward_leaderboard_path),
+        "leaderboard_version": LEADERBOARD_VERSION,
         "top3": leaderboard.head(3).to_dict(orient="records"),
     }
 
@@ -430,17 +471,28 @@ def write_experiment_outputs(
         snapshot_reward_leaderboard_path = snapshot_dir / f"experiment_reward_leaderboard_{suffix}.csv"
         snapshot_summary_path = snapshot_dir / f"experiment_summary_{suffix}.json"
 
-        leaderboard.to_csv(snapshot_leaderboard_path, index=False)
+        comparable_leaderboard.to_csv(snapshot_leaderboard_path, index=False)
         reward_leaderboard.to_csv(snapshot_reward_leaderboard_path, index=False)
+        snapshot_history_leaderboard_path = snapshot_dir / f"experiment_leaderboard_history_{suffix}.csv"
+        snapshot_history_reward_path = snapshot_dir / f"experiment_reward_leaderboard_history_{suffix}.csv"
+        leaderboard.to_csv(snapshot_history_leaderboard_path, index=False)
+        leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True).to_csv(
+            snapshot_history_reward_path,
+            index=False,
+        )
         snapshot_summary = {
             **summary,
             "leaderboard_path": str(snapshot_leaderboard_path),
             "reward_leaderboard_path": str(snapshot_reward_leaderboard_path),
+            "leaderboard_history_path": str(snapshot_history_leaderboard_path),
+            "reward_leaderboard_history_path": str(snapshot_history_reward_path),
         }
         snapshot_summary_path.write_text(json.dumps(snapshot_summary, indent=2), encoding="utf-8")
         summary["snapshot_paths"] = {
             "leaderboard": str(snapshot_leaderboard_path),
             "reward_leaderboard": str(snapshot_reward_leaderboard_path),
+            "leaderboard_history": str(snapshot_history_leaderboard_path),
+            "reward_leaderboard_history": str(snapshot_history_reward_path),
             "summary": str(snapshot_summary_path),
         }
 
@@ -484,9 +536,11 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         "reward_mode": args.reward_mode,
         "rolling_reward_window": 100,  # Default; will be overridden per-run
         "reward_epsilon": args.reward_epsilon,
+        "reward_pnl_scale": args.reward_pnl_scale,
     }
 
     reward_return_scales = _parse_float_list(args.reward_return_scale)
+    reward_pnl_scales = _parse_float_list(args.reward_pnl_scale)
     reward_direction_scales = _parse_float_list(args.reward_direction_scale)
     reward_hold_penalty_scales = _parse_float_list(args.reward_hold_penalty_scale)
     reward_drawdown_penalty_scales = _parse_float_list(args.reward_drawdown_penalty_scale)
@@ -496,7 +550,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
 
     configs = list(itertools.product(
         seeds, timesteps_list, learning_rates, gammas, ent_coefs,
-        reward_return_scales, reward_direction_scales, reward_hold_penalty_scales,
+        reward_return_scales, reward_pnl_scales, reward_direction_scales, reward_hold_penalty_scales,
         reward_drawdown_penalty_scales, reward_action_bonus_scales, reward_turnover_penalty_scales,
         rolling_reward_windows
     ))
@@ -508,7 +562,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     print(f"Running {len(configs)} experiment runs...")
 
     for idx, (seed, timesteps, learning_rate, gamma, ent_coef,
-              ret_scale, dir_scale, hold_scale, dd_scale, bonus_scale, turnover_scale, rolling_window) in enumerate(configs, start=1):
+              ret_scale, pnl_scale, dir_scale, hold_scale, dd_scale, bonus_scale, turnover_scale, rolling_window) in enumerate(configs, start=1):
         print(
             f"[{idx}/{len(configs)}] seed={seed} timesteps={timesteps} lr={learning_rate} "
             f"gamma={gamma} ent_coef={ent_coef} dir_scale={dir_scale} mode={args.reward_mode}"
@@ -519,6 +573,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         env_kwargs_run = env_kwargs.copy()
         env_kwargs_run.update({
             "reward_return_scale": ret_scale,
+            "reward_pnl_scale": pnl_scale,
             "reward_direction_scale": dir_scale,
             "reward_hold_penalty_scale": hold_scale,
             "reward_drawdown_penalty_scale": dd_scale,
@@ -577,6 +632,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         test_strategy_risk = _risk_metrics_from_equity(test_signals["net_worth"], prefix="test")
 
         row: dict[str, float | int | str] = {
+            "leaderboard_version": LEADERBOARD_VERSION,
             "ticker": canonical_ticker,
             "run_label": args.run_label.strip(),
             "seed": seed,
@@ -597,6 +653,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "reward_mode": args.reward_mode,
             "rolling_reward_window": args.rolling_reward_window,
             "reward_epsilon": args.reward_epsilon,
+            "reward_pnl_scale": pnl_scale,
             "reward_return_scale": ret_scale,
             "reward_direction_scale": dir_scale,
             "reward_hold_penalty_scale": hold_scale,
@@ -675,6 +732,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slippage-bps", type=float, default=0.0, help="Additional one-way slippage added to execution price (in bps).")
     parser.add_argument("--max-weight-delta-per-step", type=float, default=0.0, help="Maximum absolute change in target weight allowed per step.")
     parser.add_argument("--reward-return-scale", default="1.0", help="Weight for portfolio-return reward term (list).")
+    parser.add_argument("--reward-pnl-scale", default="0.0", help="Additional weight for realized portfolio P&L (list).")
     parser.add_argument("--reward-direction-scale", default="0.35", help="Weight for directional-alignment reward term (list).")
     parser.add_argument("--reward-hold-penalty-scale", default="0.10", help="Penalty scale for hold during movement (list).")
     parser.add_argument("--reward-drawdown-penalty-scale", default="0.10", help="Penalty scale for drawdown term (list).")

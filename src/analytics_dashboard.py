@@ -158,6 +158,18 @@ def _ticker_match_mask(series: pd.Series, ticker_key: str) -> pd.Series:
     return normalized.str.lower().eq(ticker_key.lower()) | normalized.str.upper().eq(ticker_symbol)
 
 
+def _latest_comparable_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "leaderboard_version" not in df.columns:
+        return df
+    version_series = pd.to_numeric(df["leaderboard_version"], errors="coerce")
+    if version_series.notna().any():
+        latest_version = int(version_series.max())
+        filtered = df[version_series.fillna(-1).astype(int) == latest_version].copy()
+        if not filtered.empty:
+            return filtered
+    return df
+
+
 def _top_ranked_models_from_leaderboard(max_count: int, ticker_key: str) -> list[Path]:
     """Returns top model paths by leaderboard rank, filtered to existing files."""
     if max_count <= 0 or not DEFAULT_LEADERBOARD_PATH.exists():
@@ -167,6 +179,8 @@ def _top_ranked_models_from_leaderboard(max_count: int, ticker_key: str) -> list
         leaderboard = pd.read_csv(DEFAULT_LEADERBOARD_PATH)
     except Exception:
         return []
+
+    leaderboard = _latest_comparable_leaderboard(leaderboard)
 
     if leaderboard.empty or "model_path" not in leaderboard.columns:
         return []
@@ -218,6 +232,7 @@ def _curate_model_choices(all_models: list[Path], max_count: int, ticker_key: st
     if DEFAULT_LEADERBOARD_PATH.exists():
         try:
             lb = pd.read_csv(DEFAULT_LEADERBOARD_PATH)
+            lb = _latest_comparable_leaderboard(lb)
             if "model_path" in lb.columns and "ticker" in lb.columns:
                 lb = lb[_ticker_match_mask(lb["ticker"], ticker_key=ticker_key)]
                 for raw in lb["model_path"].dropna().tolist():
@@ -1355,6 +1370,7 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
         return
 
     leaderboard = pd.read_csv(leaderboard_path)
+    leaderboard = _latest_comparable_leaderboard(leaderboard)
     if "ticker" in leaderboard.columns:
         leaderboard = leaderboard[_ticker_match_mask(leaderboard["ticker"], ticker_key=ticker)].copy()
     st.subheader("1) Leaderboard")
@@ -1507,6 +1523,7 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
 
     if reward_leaderboard_path.exists():
         reward_leaderboard = pd.read_csv(reward_leaderboard_path)
+        reward_leaderboard = _latest_comparable_leaderboard(reward_leaderboard)
         if "ticker" in reward_leaderboard.columns:
             reward_leaderboard = reward_leaderboard[
                 _ticker_match_mask(reward_leaderboard["ticker"], ticker_key=ticker)

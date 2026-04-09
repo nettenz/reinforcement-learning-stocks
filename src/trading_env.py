@@ -3,6 +3,9 @@ from gymnasium import spaces
 import numpy as np
 from collections import deque
 
+
+LEADERBOARD_VERSION = 2
+
 class PositionManager:
     """Handles portfolio math, fractional/integer scaling, and transaction costs."""
     def __init__(self, initial_balance, transaction_cost_rate, trade_penalty, spread_bps=0.0, slippage_bps=0.0):
@@ -95,6 +98,7 @@ class RewardEvaluator:
         rolling_window,
         epsilon,
         return_scale,
+        pnl_scale,
         dir_scale,
         hold_scale,
         dd_scale,
@@ -106,6 +110,7 @@ class RewardEvaluator:
         self.mode = mode.lower()
         self.epsilon = epsilon
         self.return_scale = return_scale
+        self.pnl_scale = pnl_scale
         self.dir_scale = dir_scale
         self.hold_scale = hold_scale
         self.dd_scale = dd_scale
@@ -119,6 +124,7 @@ class RewardEvaluator:
         strategy_realized_return = exposure_weight * realized_return
         self.returns_buffer.append(strategy_realized_return)
 
+        pnl_reward = self._pnl_reward(portfolio_return)
         hold_penalty = -self.hold_scale * abs(realized_return) if abs(exposure_weight) < 0.1 else 0.0
         action_bonus = self.action_scale if trade_executed else 0.0
         turnover_penalty = -self.turnover_scale * abs(weight_change)
@@ -140,17 +146,21 @@ class RewardEvaluator:
 
         # Directional shaping and penalties apply across all reward modes
         # so hyperparameters behave consistently in legacy/sharpe/sortino experiments.
-        total = base_reward + (self.dir_scale * directional_reward) + hold_penalty + action_bonus + turnover_penalty + dd_penalty
+        total = base_reward + pnl_reward + (self.dir_scale * directional_reward) + hold_penalty + action_bonus + turnover_penalty + dd_penalty
         return (
             float(np.clip(total, -self.clip, self.clip)),
             risk_metric,
             strategy_realized_return,
             directional_reward,
+            pnl_reward,
             hold_penalty,
             action_bonus,
             turnover_penalty,
             dd_penalty,
         )
+
+    def _pnl_reward(self, portfolio_return):
+        return self.pnl_scale * float(portfolio_return)
 
     def _sharpe(self):
         if len(self.returns_buffer) < 2: return 0.0
@@ -184,6 +194,7 @@ class TradingEnv(gym.Env):
         transaction_cost_rate=0.0,
         trade_penalty=0.0,
         reward_return_scale=1.0,
+        reward_pnl_scale=0.0,
         reward_direction_scale=0.40,
         reward_hold_penalty_scale=0.10,
         reward_drawdown_penalty_scale=0.10,
@@ -227,7 +238,7 @@ class TradingEnv(gym.Env):
         )
         self.re = RewardEvaluator(
             reward_mode, rolling_reward_window, reward_epsilon,
-            reward_return_scale, reward_direction_scale, reward_hold_penalty_scale,
+            reward_return_scale, reward_pnl_scale, reward_direction_scale, reward_hold_penalty_scale,
             reward_drawdown_penalty_scale, reward_action_bonus_scale, reward_turnover_penalty_scale, reward_clip,
             sharpe_scale=reward_sharpe_scale
         )
@@ -362,7 +373,7 @@ class TradingEnv(gym.Env):
             reward_portfolio_return = float(portfolio_return)
         
         # Evaluate reward
-        reward, risk_metric, strategy_realized_return, dir_rew, hold_pen, action_bon, turnover_pen, dd_pen = self.re.calculate(
+        reward, risk_metric, strategy_realized_return, dir_rew, pnl_rew, hold_pen, action_bon, turnover_pen, dd_pen = self.re.calculate(
             reward_portfolio_return,
             realized_return,
             exposure_weight,
@@ -379,6 +390,7 @@ class TradingEnv(gym.Env):
             "reward_total": reward,
             "reward_portfolio_return": portfolio_return,
             "reward_direction": dir_rew,
+            "reward_pnl": pnl_rew,
             "reward_hold_penalty": hold_pen,
             "reward_action_bonus": action_bon,
             "reward_turnover_penalty": turnover_pen,

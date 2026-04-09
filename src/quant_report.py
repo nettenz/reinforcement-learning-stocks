@@ -97,6 +97,18 @@ DEFAULT_LEADERBOARD = ROOT_DIR / "data" / "experiment_leaderboard.csv"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "sessions"
 
 
+def _latest_comparable_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "leaderboard_version" not in df.columns:
+        return df
+    version_series = pd.to_numeric(df["leaderboard_version"], errors="coerce")
+    if version_series.notna().any():
+        latest_version = int(version_series.max())
+        filtered = df[version_series.fillna(-1).astype(int) == latest_version].copy()
+        if not filtered.empty:
+            return filtered
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Core analysis functions
 # ---------------------------------------------------------------------------
@@ -479,6 +491,7 @@ def main():
         sys.exit(1)
 
     df = pd.read_csv(input_path)
+    df = _latest_comparable_leaderboard(df)
     if df.empty:
         print("ERROR: Leaderboard is empty.")
         sys.exit(1)

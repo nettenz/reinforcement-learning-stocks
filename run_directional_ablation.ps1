@@ -44,7 +44,7 @@ $tradePenalty = "0.05"
 $rewardReturnScale = "1.0"
 $rewardActionBonusScale = "0.02"
 $rewardHoldPenaltyScale = "0.10"
-$rewardDrawdownPenaltyScale = "0.10"
+$rewardDrawdownPenaltyScales = @("0.10", "0.15")
 $rewardTurnoverPenaltyScale = "0.05"
 $rewardClip = "1.0"
 $maxWeightDeltaPerStep = "0.25"
@@ -74,6 +74,8 @@ function New-ExperimentArgs {
         [Parameter(Mandatory = $true)]
         [string]$DirectionScale,
         [Parameter(Mandatory = $true)]
+        [string]$DrawdownPenaltyScale,
+        [Parameter(Mandatory = $true)]
         [string]$RunLabel
     )
 
@@ -97,7 +99,7 @@ function New-ExperimentArgs {
         "--reward-return-scale", $rewardReturnScale,
         "--reward-direction-scale", $DirectionScale,
         "--reward-hold-penalty-scale", $rewardHoldPenaltyScale,
-        "--reward-drawdown-penalty-scale", $rewardDrawdownPenaltyScale,
+        "--reward-drawdown-penalty-scale", $DrawdownPenaltyScale,
         "--reward-action-bonus-scale", $rewardActionBonusScale,
         "--reward-turnover-penalty-scale", $rewardTurnoverPenaltyScale,
         "--reward-clip", $rewardClip,
@@ -108,12 +110,12 @@ function New-ExperimentArgs {
     )
 }
 
-Write-Host "Starting NVDA directional-strength A/B batch..." -ForegroundColor Cyan
+Write-Host "Starting NVDA downside-control batch..." -ForegroundColor Cyan
 
-foreach ($directionScale in @("0.35", "0.40")) {
-    $runLabel = "nvda-direction-ab-20k-ent05-bonus002-dir$($directionScale -replace '\\.', '')"
-    $args = New-ExperimentArgs -DirectionScale $directionScale -RunLabel $runLabel
+foreach ($drawdownScale in $rewardDrawdownPenaltyScales) {
+    $runLabel = "nvda-downside-ab-20k-ent05-bonus002-dd$($drawdownScale -replace '\\.', '')"
+    $args = New-ExperimentArgs -DirectionScale "0.35" -DrawdownPenaltyScale $drawdownScale -RunLabel $runLabel
     Invoke-Experiment -RunLabel $runLabel -Args $args
 }
 
-Write-Host "Directional-strength A/B batch complete." -ForegroundColor Green
+Write-Host "Downside-control batch complete." -ForegroundColor Green
