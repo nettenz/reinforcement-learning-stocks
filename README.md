@@ -148,6 +148,51 @@ Snapshot controls:
 - `--disable-snapshots`: keep overwrite-only behavior for this run
 - `--run-label`: append a readable suffix to snapshot filenames
 
+### Data Sanitation Tools (v0.2.0 + v0.1.0)
+
+Clean contaminated leaderboard data with a two-phase safe, reversible pipeline:
+
+**Phase 1: Detection** — `sanity_scan.py`
+```bash
+python sanity_scan.py --root-dir . --apply dry-run
+```
+Detects:
+- Mixed experiment families in leaderboards
+- Snapshot CSV contamination
+- Missing/corrupt JSON artifacts
+- Orphaned model files
+- Downstream script dependencies
+- Invalid metrics/data
+
+**Phase 2: Safe Mutation** — `sanitize_apply.py`
+```bash
+python sanitize_apply.py --dry-run                 # Preview (safe)
+python sanitize_apply.py --execute                 # Apply mutations
+python sanitize_apply.py --execute --remove-orphans # Also clean orphaned models
+```
+
+Features:
+- ✅ Full backups before any mutation
+- ✅ Quarantine for removed rows (audit trail)
+- ✅ Archive originals (timestamped)
+- ✅ Idempotency (prevents double-sanitization)
+- ✅ Auto-generated rollback guide
+- ✅ Checksums for integrity verification
+
+**Output:**
+```
+backups/sanity_backup_<timestamp>/      ← Immutable originals
+archives/experiment_leaderboard_*.csv    ← Renamed old data
+quarantine/*_bad_rows_*.csv              ← Removed rows (recoverable)
+data/experiment_leaderboard.csv          ← CLEANED (new)
+docs/ROLLBACK_GUIDE.md                   ← Auto-generated recovery
+```
+
+Reference:
+- `docs/INDEX.md` — Documentation index
+- `docs/SANITIZE_APPLY_QUICKSTART.md` — 5-minute quickstart
+- `docs/SANITIZATION_TOOLS_SUMMARY.md` — Complete reference
+
 ### macOS / Linux (Bash/Zsh)
 1.  **Create Virtual Env:** `python3 -m venv .venv`
 2.  **Activate Virtual Env:** `source .venv/bin/activate`
@@ -158,6 +203,78 @@ Snapshot controls:
 7.  **Run Dashboard Launcher (optional):** `chmod +x run_dashboard.sh && ./run_dashboard.sh start 8501`
 8.  **Run Experiments (example):** `python src/experiments.py --include-news --seeds 7,13 --timesteps 2000 --learning-rates 0.0003 --gammas 0.99 --ent-coefs 0.0 --max-runs 2`
 9.  **Explore Basics:** Open `notebooks/getting-started.ipynb` in Jupyter.
+
+## Data Sanitization Tools
+
+### Diagnostic: sanity_scan.py (v0.2.0)
+Comprehensive data quality audit for experiment leaderboards, identifying issues with:
+- Missing or corrupted data
+- Outliers and anomalies
+- Duplicate configurations
+- Orphaned model references
+- Data integrity violations
+
+**Usage:**
+```bash
+python sanity_scan.py --root-dir .
+```
+
+Generates:
+- `reports/sanity_scan_report.json` - Detailed findings
+- `reports/sanity_quarantine.json` - Rows to remove
+- `reports/sanity_scan_summary.md` - Human-readable summary
+
+See `docs/SANITY_SCAN_GUIDE.md` for details.
+
+### Mutation: sanitize_apply.py (v0.1.0)
+Safe, reversible data mutation tool that reads `sanity_scan.py` output and applies fixes.
+
+**Key Features:**
+- ✅ Dry-run by default (--execute to apply)
+- ✅ Full backup strategy with immutable files
+- ✅ Idempotency checks (warn on re-run)
+- ✅ Quarantine storage for bad rows
+- ✅ Archive originals with checksums
+- ✅ Auto-generated rollback guide
+- ✅ Full audit trail
+
+**Usage:**
+```bash
+# Preview mutations (default)
+python sanitize_apply.py --root-dir .
+
+# Apply mutations
+python sanitize_apply.py --root-dir . --execute
+
+# Re-apply with force (dangerous)
+python sanitize_apply.py --root-dir . --execute --force
+```
+
+**Output Structure:**
+```
+backups/sanity_backup_<TIMESTAMP>/    (immutable originals)
+archives/                             (original files + metadata)
+quarantine/                           (bad rows for recovery)
+metadata/sanitization_log.json        (audit trail)
+docs/ROLLBACK_GUIDE.md               (recovery procedures)
+```
+
+**Typical Workflow:**
+```bash
+# 1. Scan for issues
+python sanity_scan.py --root-dir .
+
+# 2. Preview mutations
+python sanitize_apply.py --root-dir . --dry-run
+
+# 3. Apply mutations
+python sanitize_apply.py --root-dir . --execute
+
+# 4. Verify clean state
+python sanity_scan.py --root-dir .
+```
+
+See `docs/SANITIZE_APPLY_GUIDE.md` for detailed documentation.
 
 ## Development Strategy:
 The long-term goal is to implement a robust **Shorting Strategy** (see `docs/PLAN.md`).

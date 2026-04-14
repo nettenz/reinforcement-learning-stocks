@@ -27,7 +27,14 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from src.market_data import get_tech_training_data, TICKER_PRESETS
+from src.market_data import (
+    get_interval_bars_per_year,
+    get_tech_training_data,
+    interval_slug,
+    is_intraday_interval,
+    normalize_interval_key,
+    TICKER_PRESETS,
+)
 from src.signal_analytics import compute_metrics, enrich_with_truth_labels
 from src.trading_env import LEADERBOARD_VERSION, TradingEnv
 from src.market_data import fetch_yahoo_ohlcv
@@ -53,6 +60,40 @@ def _parse_float_list(value: str) -> list[float]:
 
 def _parse_int_list(value: str) -> list[int]:
     return [int(x.strip()) for x in value.split(",") if x.strip()]
+
+
+def _as_naive_datetime(series: pd.Series) -> pd.Series:
+    values = pd.to_datetime(series)
+    if getattr(values.dt, "tz", None) is not None:
+        values = values.dt.tz_localize(None)
+    return values
+
+
+def _model_interval_suffix(interval: str) -> str:
+    interval_key = normalize_interval_key(interval)
+    return f"_{interval_slug(interval_key)}" if is_intraday_interval(interval_key) else ""
+
+
+def _apply_experiment_preset(args: argparse.Namespace) -> argparse.Namespace:
+    preset = str(getattr(args, "experiment_preset", "daily")).strip().lower()
+    if preset == "intraday_5m":
+        cli_args = sys.argv[1:]
+        threshold_explicit = ("--threshold" in cli_args)
+        horizon_explicit = ("--horizon" in cli_args)
+
+        args.interval = "5m"
+        args.include_news = False
+        args.use_stationary_features = True
+        args.execution_mode = "next_bar"
+        args.reward_mode = "sortino"
+        # Keep explicit CLI overrides; only apply preset defaults when flag not provided.
+        if not threshold_explicit:
+            args.threshold = 0.001
+        if not horizon_explicit:
+            args.horizon = 3
+        args.train_ratio = 0.60
+        args.val_ratio = 0.20
+    return args
 
 
 def _split_walk_forward(df: pd.DataFrame, train_ratio: float, val_ratio: float) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -168,17 +209,17 @@ def _timestamp_slug() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
 
 
-def _annualized_sharpe(returns: pd.Series) -> float:
+def _annualized_sharpe(returns: pd.Series, periods_per_year: int = 252) -> float:
     clean = pd.Series(returns).replace([np.inf, -np.inf], np.nan).dropna()
     if clean.empty:
         return 0.0
     std = float(clean.std(ddof=0))
     if std <= 1e-12:
         return 0.0
-    return float(np.sqrt(252.0) * clean.mean() / std)
+    return float(np.sqrt(max(periods_per_year, 1)) * clean.mean() / std)
 
 
-def _annualized_sortino(returns: pd.Series) -> float:
+def _annualized_sortino(returns: pd.Series, periods_per_year: int = 252) -> float:
     clean = pd.Series(returns).replace([np.inf, -np.inf], np.nan).dropna()
     if clean.empty:
         return 0.0
@@ -186,10 +227,10 @@ def _annualized_sortino(returns: pd.Series) -> float:
     downside_std = float(downside.std(ddof=0)) if not downside.empty else 0.0
     if downside_std <= 1e-12:
         return 0.0
-    return float(np.sqrt(252.0) * clean.mean() / downside_std)
+    return float(np.sqrt(max(periods_per_year, 1)) * clean.mean() / downside_std)
 
 
-def _risk_metrics_from_equity(equity: pd.Series, prefix: str) -> dict[str, float]:
+def _risk_metrics_from_equity(equity: pd.Series, prefix: str, periods_per_year: int = 252) -> dict[str, float]:
     curve = pd.Series(equity).replace([np.inf, -np.inf], np.nan).dropna()
     if curve.empty:
         return {
@@ -207,8 +248,8 @@ def _risk_metrics_from_equity(equity: pd.Series, prefix: str) -> dict[str, float
 
     return {
         f"{prefix}_cumulative_return": cumulative_return,
-        f"{prefix}_sharpe_ratio": _annualized_sharpe(returns),
-        f"{prefix}_sortino_ratio": _annualized_sortino(returns),
+        f"{prefix}_sharpe_ratio": _annualized_sharpe(returns, periods_per_year=periods_per_year),
+        f"{prefix}_sortino_ratio": _annualized_sortino(returns, periods_per_year=periods_per_year),
         f"{prefix}_max_drawdown": max_drawdown,
     }
 
@@ -230,6 +271,8 @@ def _attach_config_stability_metrics(leaderboard: pd.DataFrame) -> pd.DataFrame:
     config_keys = [
         "leaderboard_version",
         "ticker",
+        "interval",
+        "experiment_preset",
         "timesteps",
         "learning_rate",
         "gamma",
@@ -302,24 +345,33 @@ def _passes_promotion_gates(row: pd.Series, args: argparse.Namespace) -> bool:
     )
 
 
-def _fetch_qqq_prices(start_date: pd.Timestamp, end_date: pd.Timestamp) -> pd.DataFrame:
+def _fetch_qqq_prices(start_date: pd.Timestamp, end_date: pd.Timestamp, interval: str = "1d") -> pd.DataFrame:
     raw = fetch_yahoo_ohlcv(
         tickers=("QQQ",),
         start=pd.to_datetime(start_date).strftime("%Y-%m-%d"),
         end=(pd.to_datetime(end_date) + pd.Timedelta(days=5)).strftime("%Y-%m-%d"),
-        interval="1d",
+        interval=interval,
     )
     qqq = raw[["Date", "Close"]].copy()
-    qqq["Date"] = pd.to_datetime(qqq["Date"]).dt.tz_localize(None).dt.normalize()
+    qqq["Date"] = _as_naive_datetime(qqq["Date"])
+    if not is_intraday_interval(interval):
+        qqq["Date"] = qqq["Date"].dt.normalize()
     qqq = qqq.sort_values("Date").drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
     return qqq
 
 
-def _benchmark_equity_curve(period_df: pd.DataFrame, qqq_prices: pd.DataFrame, initial_balance: float = 1000.0) -> pd.Series:
+def _benchmark_equity_curve(
+    period_df: pd.DataFrame,
+    qqq_prices: pd.DataFrame,
+    initial_balance: float = 1000.0,
+    interval: str = "1d",
+) -> pd.Series:
     if "Date" not in period_df.columns:
         raise ValueError("QQQ benchmark requires a Date column in the period dataframe.")
 
-    period_dates = pd.to_datetime(period_df["Date"]).dt.tz_localize(None).dt.normalize()
+    period_dates = _as_naive_datetime(period_df["Date"])
+    if not is_intraday_interval(interval):
+        period_dates = period_dates.dt.normalize()
     aligned = pd.DataFrame({"Date": period_dates}).merge(qqq_prices, on="Date", how="left")
     aligned["Close"] = aligned["Close"].ffill().bfill()
 
@@ -400,57 +452,47 @@ def write_experiment_outputs(
     reward_leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
-    leaderboard = leaderboard.copy()
-    if "leaderboard_version" not in leaderboard.columns:
-        leaderboard["leaderboard_version"] = LEADERBOARD_VERSION
+    new_results = leaderboard.copy()
+    if "leaderboard_version" not in new_results.columns:
+        new_results["leaderboard_version"] = LEADERBOARD_VERSION
     else:
-        leaderboard["leaderboard_version"] = leaderboard["leaderboard_version"].fillna(LEADERBOARD_VERSION).astype(int)
+        new_results["leaderboard_version"] = new_results["leaderboard_version"].fillna(LEADERBOARD_VERSION).astype(int)
 
+    # 1. Update Historical Cumulative Data (ALWAYS)
+    historical_leaderboard_path = leaderboard_path.with_name(f"{leaderboard_path.stem}_history{leaderboard_path.suffix}")
+    historical_reward_leaderboard_path = reward_leaderboard_path.with_name(f"{reward_leaderboard_path.stem}_history{reward_leaderboard_path.suffix}")
+    
+    cumulative_history = new_results.copy()
+    if historical_leaderboard_path.exists():
+        try:
+            existing_history = pd.read_csv(historical_leaderboard_path)
+            cumulative_history = pd.concat([existing_history, new_results], ignore_index=True)
+        except Exception as e:
+            print(f"Warning: could not read existing history: {e}")
+            
+    # Save the cumulative history
+    cumulative_history.sort_values(["leaderboard_version", "ranking_score"], ascending=[False, False]).to_csv(historical_leaderboard_path, index=False)
+    cumulative_history.sort_values("val_reward_total_mean", ascending=False).to_csv(historical_reward_leaderboard_path, index=False)
+
+    # 2. Update Current Leaderboard (Conditional on --append)
     if append_results and leaderboard_path.exists():
         try:
             existing = pd.read_csv(leaderboard_path)
-            existing = existing.copy()
-            if "leaderboard_version" not in existing.columns:
-                existing["leaderboard_version"] = 1
-            else:
-                existing["leaderboard_version"] = existing["leaderboard_version"].fillna(1).astype(int)
-            # Fix #2: Validate ticker consistency before appending (CRITICAL for leaderboard integrity)
-            existing_tickers = {
-                str(t).strip().upper()
-                for t in existing.get("ticker", pd.Series(dtype="object")).dropna().unique()
-                if str(t).strip()
-            }
-            new_tickers = {
-                str(t).strip().upper()
-                for t in leaderboard.get("ticker", pd.Series(dtype="object")).dropna().unique()
-                if str(t).strip()
-            }
-            if existing_tickers and new_tickers and existing_tickers != new_tickers:
-                print(
-                    f"WARNING: Appending ticker(s) {new_tickers} to leaderboard with {existing_tickers}. "
-                    "This creates a mixed-ticker leaderboard where config-level metrics are non-comparable. "
-                    "Recommend using separate leaderboards per ticker: --leaderboard-path data/experiment_leaderboard_<ticker>.csv"
-                )
-            leaderboard = pd.concat([existing, leaderboard], ignore_index=True)
-            leaderboard = leaderboard.sort_values(["leaderboard_version", "ranking_score"], ascending=[False, False]).reset_index(drop=True)
+            leaderboard = pd.concat([existing, new_results], ignore_index=True)
         except Exception as e:
             print(f"Warning: could not append to existing leaderboard: {e}")
+            leaderboard = new_results.copy()
+    else:
+        leaderboard = new_results.copy()
 
     leaderboard = leaderboard.sort_values(["leaderboard_version", "ranking_score"], ascending=[False, False]).reset_index(drop=True)
     comparable_leaderboard = leaderboard[leaderboard["leaderboard_version"] == LEADERBOARD_VERSION].copy()
     if comparable_leaderboard.empty:
         comparable_leaderboard = leaderboard.copy()
 
-    historical_leaderboard_path = leaderboard_path.with_name(f"{leaderboard_path.stem}_history{leaderboard_path.suffix}")
-    historical_reward_leaderboard_path = reward_leaderboard_path.with_name(f"{reward_leaderboard_path.stem}_history{reward_leaderboard_path.suffix}")
-
     comparable_leaderboard.to_csv(leaderboard_path, index=False)
     reward_leaderboard = comparable_leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True)
     reward_leaderboard.to_csv(reward_leaderboard_path, index=False)
-    leaderboard.to_csv(historical_leaderboard_path, index=False)
-    leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True).to_csv(
-        historical_reward_leaderboard_path, index=False
-    )
 
     timestamp = _timestamp_slug()
     summary: dict[str, object] = {
@@ -471,15 +513,20 @@ def write_experiment_outputs(
         snapshot_reward_leaderboard_path = snapshot_dir / f"experiment_reward_leaderboard_{suffix}.csv"
         snapshot_summary_path = snapshot_dir / f"experiment_summary_{suffix}.json"
 
+        # Snapshots now accurately reflect the state of the leaderboard after this update
         comparable_leaderboard.to_csv(snapshot_leaderboard_path, index=False)
         reward_leaderboard.to_csv(snapshot_reward_leaderboard_path, index=False)
+        
         snapshot_history_leaderboard_path = snapshot_dir / f"experiment_leaderboard_history_{suffix}.csv"
         snapshot_history_reward_path = snapshot_dir / f"experiment_reward_leaderboard_history_{suffix}.csv"
-        leaderboard.to_csv(snapshot_history_leaderboard_path, index=False)
-        leaderboard.sort_values("val_reward_total_mean", ascending=False).reset_index(drop=True).to_csv(
+        
+        # Save historical snapshots too
+        cumulative_history.to_csv(snapshot_history_leaderboard_path, index=False)
+        cumulative_history.sort_values("val_reward_total_mean", ascending=False).to_csv(
             snapshot_history_reward_path,
             index=False,
         )
+        
         snapshot_summary = {
             **summary,
             "leaderboard_path": str(snapshot_leaderboard_path),
@@ -501,6 +548,8 @@ def write_experiment_outputs(
 
 
 def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
+    interval = str(args.interval)
+    bars_per_year = get_interval_bars_per_year(interval)
     seeds = _parse_int_list(args.seeds)
     learning_rates = _parse_float_list(args.learning_rates)
     gammas = _parse_float_list(args.gammas)
@@ -509,6 +558,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
 
     df = get_tech_training_data(
         ticker_preset=args.ticker,
+        interval=interval,
         include_news=args.include_news,
         refresh=args.refresh_data,
         news_refresh=args.refresh_news,
@@ -518,11 +568,12 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     qqq_prices = _fetch_qqq_prices(
         start_date=pd.to_datetime(val_df["Date"]).min(),
         end_date=pd.to_datetime(test_df["Date"]).max(),
+        interval=interval,
     )
-    val_benchmark_equity = _benchmark_equity_curve(val_df, qqq_prices=qqq_prices)
-    test_benchmark_equity = _benchmark_equity_curve(test_df, qqq_prices=qqq_prices)
-    val_benchmark_risk = _risk_metrics_from_equity(val_benchmark_equity, prefix="val_benchmark")
-    test_benchmark_risk = _risk_metrics_from_equity(test_benchmark_equity, prefix="test_benchmark")
+    val_benchmark_equity = _benchmark_equity_curve(val_df, qqq_prices=qqq_prices, interval=interval)
+    test_benchmark_equity = _benchmark_equity_curve(test_df, qqq_prices=qqq_prices, interval=interval)
+    val_benchmark_risk = _risk_metrics_from_equity(val_benchmark_equity, prefix="val_benchmark", periods_per_year=bars_per_year)
+    test_benchmark_risk = _risk_metrics_from_equity(test_benchmark_equity, prefix="test_benchmark", periods_per_year=bars_per_year)
 
     env_kwargs: dict[str, float | bool | str | int] = {
         "transaction_cost_rate": args.transaction_cost_rate,
@@ -559,7 +610,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
 
     rows: list[dict[str, float | int | str]] = []
     canonical_ticker = TICKER_PRESETS.get(args.ticker, (args.ticker.upper(),))[0]
-    print(f"Running {len(configs)} experiment runs...")
+    print(f"Running {len(configs)} experiment runs on interval={interval} (preset={args.experiment_preset})...")
 
     for idx, (seed, timesteps, learning_rate, gamma, ent_coef,
               ret_scale, pnl_scale, dir_scale, hold_scale, dd_scale, bonus_scale, turnover_scale, rolling_window) in enumerate(configs, start=1):
@@ -610,7 +661,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         # --- Intelligence Synchronization: Save Model Weights ---
         timestamp = _timestamp_slug()
         run_label_slug = _safe_label(args.run_label) if args.run_label else "run"
-        model_filename = f"model_{timestamp}_{run_label_slug}_seed{seed}.zip"
+        model_filename = f"model_{timestamp}_{run_label_slug}_seed{seed}{_model_interval_suffix(interval)}.zip"
         model_save_path = Path(args.snapshot_dir) / model_filename
         model_save_path.parent.mkdir(parents=True, exist_ok=True)
         model.save(model_save_path)
@@ -634,6 +685,8 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         row: dict[str, float | int | str] = {
             "leaderboard_version": LEADERBOARD_VERSION,
             "ticker": canonical_ticker,
+            "interval": interval,
+            "experiment_preset": args.experiment_preset,
             "run_label": args.run_label.strip(),
             "seed": seed,
             "timesteps": timesteps,
@@ -662,6 +715,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "reward_turnover_penalty_scale": turnover_scale,
             "reward_clip": args.reward_clip,
             "reward_ignore_transaction_cost": int(args.reward_ignore_transaction_cost),
+            "bars_per_year": bars_per_year,
             "val_overall_accuracy": val_metrics.overall_accuracy,
             "val_actionable_accuracy": val_metrics.actionable_accuracy,
             "val_actionable_support": val_metrics.actionable_support,
@@ -710,8 +764,10 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Aggressive multi-seed SAC experiment runner.")
+    parser.add_argument("--experiment-preset", default="daily", choices=["daily", "intraday_5m"], help="Apply a preset for the overall experiment family.")
     parser.add_argument("--ticker", default="aapl", choices=list(TICKER_PRESETS.keys()), 
                         help=f"Stock ticker preset to train on. Options: {', '.join(TICKER_PRESETS.keys())}")
+    parser.add_argument("--interval", default="1d", help="Yahoo Finance candle interval, such as 1d or 5m.")
     parser.add_argument("--include-news", action="store_true", help="Train with merged sentiment features.")
     parser.add_argument("--refresh-data", action="store_true", help="Refresh OHLCV training data cache.")
     parser.add_argument("--refresh-news", action="store_true", help="Refresh news sentiment cache.")
@@ -790,6 +846,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    args = _apply_experiment_preset(args)
 
     # Update global device if provided
     global DEFAULT_DEVICE
@@ -802,6 +859,8 @@ def main() -> None:
     snapshot_dir = None if args.disable_snapshots else Path(args.snapshot_dir)
     run_label = args.run_label.strip() or None
     canonical_ticker = TICKER_PRESETS.get(args.ticker, (args.ticker.upper(),))[0]
+    interval = str(args.interval)
+    model_suffix = _model_interval_suffix(interval)
     reward_leaderboard, summary = write_experiment_outputs(
         leaderboard=leaderboard,
         leaderboard_path=leaderboard_path,
@@ -837,7 +896,7 @@ def main() -> None:
                 import shutil
 
                 # Store ticker-aware champion to prevent cross-ticker contamination
-                default_model_path = ROOT_DIR / "models" / f"sac_trading_bot_{best_ticker}.zip"
+                default_model_path = ROOT_DIR / "models" / f"sac_trading_bot_{best_ticker}{model_suffix}.zip"
                 default_model_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(best_model_path, default_model_path)
                 print(
@@ -866,6 +925,7 @@ def main() -> None:
         compact_cols = [
             "run_label",
             "ticker",
+            "interval",
             "seed",
             "trade_penalty",
             "reward_action_bonus_scale",

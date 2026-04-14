@@ -15,16 +15,17 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from src.market_data import get_tech_training_data, TICKER_PRESETS
+from src.market_data import get_tech_training_data, TICKER_PRESETS, interval_slug, is_intraday_interval, normalize_interval_key
 from src.trading_env import TradingEnv
-
-DATA_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
-MODEL_PATH = ROOT_DIR / "models" / "sac_trading_bot"
 
 def main():
     parser = argparse.ArgumentParser(description="Train an SAC continuous trading bot.")
     parser.add_argument("--ticker", default="aapl", choices=list(TICKER_PRESETS.keys()), 
                         help=f"Stock ticker preset to train on. Options: {', '.join(TICKER_PRESETS.keys())}")
+    parser.add_argument("--interval", default="1d", help="Yahoo Finance candle interval, such as 1d or 5m.")
+    parser.add_argument("--include-news", action=argparse.BooleanOptionalAction, default=True, help="Merge news sentiment features into the training frame.")
+    parser.add_argument("--use-stationary-features", action="store_true", help="Use stationary features instead of the mixed OHLCV-style schema.")
+    parser.add_argument("--execution-mode", default="same_bar", choices=["same_bar", "next_bar"], help="Execution timing model.")
     parser.add_argument("--reward-mode", default="legacy", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
     parser.add_argument("--rolling-reward-window", type=int, default=100, help="Window size for rolling rewards.")
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
@@ -43,12 +44,22 @@ def main():
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="SAC device (auto, cuda, cpu, mps).")
     args = parser.parse_args()
 
-    # Load normalized Yahoo Finance data for selected ticker with merged daily news sentiment features
-    print(f"Loading training data for ticker: {args.ticker.upper()}...")
-    df = get_tech_training_data(ticker_preset=args.ticker, include_news=True)
+    interval_key = normalize_interval_key(args.interval)
+    if is_intraday_interval(interval_key) and args.execution_mode == "same_bar":
+        print("Intraday training is usually safer with --execution-mode next_bar.")
+
+    # Load normalized Yahoo Finance data for selected ticker with optional news sentiment features
+    print(f"Loading training data for ticker: {args.ticker.upper()} (interval={args.interval})...")
+    df = get_tech_training_data(
+        ticker_preset=args.ticker,
+        interval=args.interval,
+        include_news=args.include_news,
+        use_stationary_features=args.use_stationary_features,
+    )
 
     # Create the environment
     env_kwargs = {
+        "execution_mode": args.execution_mode,
         "reward_mode": args.reward_mode,
         "rolling_reward_window": args.rolling_reward_window,
         "reward_epsilon": args.reward_epsilon,
@@ -77,13 +88,18 @@ def main():
     )
 
     # Train the model
-    print(f"Training Continuous SAC agent on {args.ticker.upper()} (mode={args.reward_mode}, window={args.rolling_reward_window})...")
+    print(
+        f"Training Continuous SAC agent on {args.ticker.upper()} "
+        f"(interval={args.interval}, mode={args.reward_mode}, window={args.rolling_reward_window})..."
+    )
     model.learn(total_timesteps=args.timesteps)
 
     # Save the trained model
-    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    model.save(MODEL_PATH.as_posix())
-    print(f"Model saved as {MODEL_PATH.name}.zip")
+    model_suffix = f"_{args.ticker}_{interval_slug(interval_key)}" if is_intraday_interval(interval_key) else ""
+    model_path = ROOT_DIR / "models" / f"sac_trading_bot{model_suffix}.zip"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(model_path.as_posix())
+    print(f"Model saved as {model_path.name}")
 
     # Test the model
     # SB3 models expect the observation array directly for .predict()

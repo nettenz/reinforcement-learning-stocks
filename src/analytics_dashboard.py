@@ -37,6 +37,10 @@ DEFAULT_TICKER = "aapl"
 DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
 STATIONARY_DATA_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.parquet"
 FALLBACK_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
+INTRADAY_5M_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_leaderboard_intraday_5m.csv"
+INTRADAY_5M_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderboard_intraday_5m.csv"
+INTRADAY_5M_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary_intraday_5m.json"
+INTRADAY_5M_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots" / "intraday_5m"
 DEFAULT_ACTIONABLE_TARGET = 0.55
 RECOMMENDED_THRESHOLD = 0.0020
 RECOMMENDED_HORIZON = 1
@@ -100,9 +104,60 @@ def _data_path_is_compatible_with_expected_shape(data_path: str | Path, expected
         return False
 
 
-def _preferred_data_path_for_model(ticker: str, expected_obs_dim: int | None) -> Path:
-    ticker_non_stationary = get_data_path_for_ticker(ticker, use_stationary=False)
-    ticker_stationary = get_data_path_for_ticker(ticker, use_stationary=True)
+def _normalize_dashboard_interval(interval: str | None) -> str:
+    raw = str(interval or "1d").strip().lower()
+    return "5m" if raw in {"5m", "intraday_5m"} else "1d"
+
+
+def _infer_interval_from_model_path(model_path: str | Path | None) -> str:
+    if not model_path:
+        return "1d"
+    text = str(model_path).lower().replace("\\", "/")
+    if "intraday_5m" in text:
+        return "5m"
+    if re.search(r"(^|[/_\-.])5m($|[/_\-.])", text):
+        return "5m"
+    return "1d"
+
+
+def _artifact_paths_for_interval(interval: str | None) -> tuple[Path, Path, Path, Path]:
+    if _normalize_dashboard_interval(interval) == "5m":
+        return (
+            INTRADAY_5M_LEADERBOARD_PATH,
+            INTRADAY_5M_REWARD_LEADERBOARD_PATH,
+            INTRADAY_5M_SUMMARY_PATH,
+            INTRADAY_5M_SNAPSHOT_DIR,
+        )
+    return (
+        DEFAULT_LEADERBOARD_PATH,
+        DEFAULT_REWARD_LEADERBOARD_PATH,
+        DEFAULT_SUMMARY_PATH,
+        DEFAULT_SNAPSHOT_DIR,
+    )
+
+
+def _leaderboard_paths_for_interval_hint(interval_hint: str | None) -> list[Path]:
+    raw_hint = str(interval_hint).strip().lower() if interval_hint is not None else ""
+    if raw_hint in {"1d", "5m", "intraday_5m"}:
+        preferred, _, _, _ = _artifact_paths_for_interval(raw_hint)
+        ordered: list[Path] = [preferred]
+    else:
+        ordered = [DEFAULT_LEADERBOARD_PATH, INTRADAY_5M_LEADERBOARD_PATH]
+    resolved: set[Path] = set()
+    paths: list[Path] = []
+    for candidate in ordered:
+        key = candidate.resolve() if candidate.exists() else candidate
+        if key in resolved:
+            continue
+        resolved.add(key)
+        paths.append(candidate)
+    return paths
+
+
+def _preferred_data_path_for_model(ticker: str, expected_obs_dim: int | None, interval_hint: str | None = None) -> Path:
+    interval = _normalize_dashboard_interval(interval_hint)
+    ticker_non_stationary = get_data_path_for_ticker(ticker, use_stationary=False, interval=interval)
+    ticker_stationary = get_data_path_for_ticker(ticker, use_stationary=True, interval=interval)
     fallback_candidates = [ticker_non_stationary, ticker_stationary, DEFAULT_DATA_PATH, STATIONARY_DATA_PATH]
 
     preferred_candidates = (
@@ -140,7 +195,7 @@ def _list_available_models() -> list[Path]:
     
     snapshots_dir = ROOT_DIR / "data" / "experiment_snapshots"
     if snapshots_dir.exists():
-        model_paths.extend(list(snapshots_dir.glob("*.zip")))
+        model_paths.extend(list(snapshots_dir.rglob("*.zip")))
     
     # Sort by mtime (newest first)
     model_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -170,43 +225,48 @@ def _latest_comparable_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _top_ranked_models_from_leaderboard(max_count: int, ticker_key: str) -> list[Path]:
+def _top_ranked_models_from_leaderboard(max_count: int, ticker_key: str, interval_hint: str | None = None) -> list[Path]:
     """Returns top model paths by leaderboard rank, filtered to existing files."""
-    if max_count <= 0 or not DEFAULT_LEADERBOARD_PATH.exists():
+    if max_count <= 0:
         return []
-
-    try:
-        leaderboard = pd.read_csv(DEFAULT_LEADERBOARD_PATH)
-    except Exception:
-        return []
-
-    leaderboard = _latest_comparable_leaderboard(leaderboard)
-
-    if leaderboard.empty or "model_path" not in leaderboard.columns:
-        return []
-
-    if "ticker" in leaderboard.columns:
-        ticker_mask = _ticker_match_mask(leaderboard["ticker"], ticker_key=ticker_key)
-        leaderboard = leaderboard[ticker_mask].copy()
-    if leaderboard.empty:
-        return []
-
-    if "ranking_score" in leaderboard.columns:
-        leaderboard = leaderboard.sort_values("ranking_score", ascending=False)
-    elif "test_actionable_accuracy" in leaderboard.columns:
-        leaderboard = leaderboard.sort_values("test_actionable_accuracy", ascending=False)
 
     ranked: list[Path] = []
     seen: set[Path] = set()
-    for raw_path in leaderboard["model_path"].dropna().tolist():
-        candidate = Path(str(raw_path))
-        if not candidate.exists():
+    for leaderboard_path in _leaderboard_paths_for_interval_hint(interval_hint):
+        if not leaderboard_path.exists():
             continue
-        resolved = candidate.resolve()
-        if resolved in seen:
+
+        try:
+            leaderboard = pd.read_csv(leaderboard_path)
+        except Exception:
             continue
-        ranked.append(candidate)
-        seen.add(resolved)
+
+        leaderboard = _latest_comparable_leaderboard(leaderboard)
+        if leaderboard.empty or "model_path" not in leaderboard.columns:
+            continue
+
+        if "ticker" in leaderboard.columns:
+            ticker_mask = _ticker_match_mask(leaderboard["ticker"], ticker_key=ticker_key)
+            leaderboard = leaderboard[ticker_mask].copy()
+        if leaderboard.empty:
+            continue
+
+        if "ranking_score" in leaderboard.columns:
+            leaderboard = leaderboard.sort_values("ranking_score", ascending=False)
+        elif "test_actionable_accuracy" in leaderboard.columns:
+            leaderboard = leaderboard.sort_values("test_actionable_accuracy", ascending=False)
+
+        for raw_path in leaderboard["model_path"].dropna().tolist():
+            candidate = _resolve_model_path(raw_path)
+            if candidate is None:
+                continue
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            ranked.append(candidate)
+            seen.add(resolved)
+            if len(ranked) >= max_count:
+                break
         if len(ranked) >= max_count:
             break
 
@@ -220,29 +280,72 @@ def _format_model_label(path: Path) -> str:
         return path.as_posix()
 
 
-def _curate_model_choices(all_models: list[Path], max_count: int, ticker_key: str) -> list[Path]:
+def _resolve_model_path(raw_path: str | Path) -> Path | None:
+    candidate = Path(str(raw_path))
+    if candidate.exists():
+        return candidate
+    if not candidate.is_absolute():
+        rooted = ROOT_DIR / candidate
+        if rooted.exists():
+            return rooted
+    return None
+
+
+def _model_path_matches_ticker(path: Path, ticker_key: str) -> bool:
+    ticker_symbol = _ticker_symbol_from_key(ticker_key)
+    text = path.as_posix().lower()
+    return ticker_key.lower() in text or ticker_symbol.lower() in text
+
+
+def _infer_recent_interval_for_ticker(ticker_key: str, all_models: list[Path]) -> str:
+    # Prefer recently-created snapshot models because promoted champions may be stale.
+    for candidate in all_models:
+        text = candidate.as_posix().lower()
+        if "experiment_snapshots" not in text:
+            continue
+        if _model_path_matches_ticker(candidate, ticker_key=ticker_key):
+            return _infer_interval_from_model_path(candidate)
+    for candidate in all_models:
+        if _model_path_matches_ticker(candidate, ticker_key=ticker_key):
+            return _infer_interval_from_model_path(candidate)
+    return "1d"
+
+
+def _curate_model_choices(
+    all_models: list[Path],
+    max_count: int,
+    ticker_key: str,
+    interval_hint: str | None = None,
+) -> list[Path]:
     if max_count <= 0:
         return []
 
     curated: list[Path] = []
     seen: set[Path] = set()
     ticker_symbol = _ticker_symbol_from_key(ticker_key)
+    requested_interval = _normalize_dashboard_interval(interval_hint)
 
     leaderboard_model_set: set[Path] = set()
-    if DEFAULT_LEADERBOARD_PATH.exists():
+    for leaderboard_path in _leaderboard_paths_for_interval_hint(interval_hint):
+        if not leaderboard_path.exists():
+            continue
         try:
-            lb = pd.read_csv(DEFAULT_LEADERBOARD_PATH)
+            lb = pd.read_csv(leaderboard_path)
             lb = _latest_comparable_leaderboard(lb)
             if "model_path" in lb.columns and "ticker" in lb.columns:
                 lb = lb[_ticker_match_mask(lb["ticker"], ticker_key=ticker_key)]
                 for raw in lb["model_path"].dropna().tolist():
-                    candidate = Path(str(raw))
-                    if candidate.exists():
+                    candidate = _resolve_model_path(raw)
+                    if candidate is not None:
                         leaderboard_model_set.add(candidate.resolve())
         except Exception:
-            pass
+            continue
 
-    for p in _top_ranked_models_from_leaderboard(max_count=max_count, ticker_key=ticker_key):
+    for p in _top_ranked_models_from_leaderboard(
+        max_count=max_count,
+        ticker_key=ticker_key,
+        interval_hint=interval_hint,
+    ):
         resolved = p.resolve()
         if resolved in seen:
             continue
@@ -250,7 +353,7 @@ def _curate_model_choices(all_models: list[Path], max_count: int, ticker_key: st
         seen.add(resolved)
 
     champion_path = ROOT_DIR / "models" / f"sac_trading_bot_{ticker_symbol}.zip"
-    if champion_path.exists():
+    if champion_path.exists() and _infer_interval_from_model_path(champion_path) == requested_interval:
         resolved = champion_path.resolve()
         if resolved not in seen:
             curated.append(champion_path)
@@ -286,9 +389,9 @@ def _curate_model_choices(all_models: list[Path], max_count: int, ticker_key: st
     return curated
 
 
-def get_data_path_for_ticker(ticker: str, use_stationary: bool = False) -> Path:
+def get_data_path_for_ticker(ticker: str, use_stationary: bool = False, interval: str = "1d") -> Path:
     """Get the appropriate data path for a given ticker."""
-    return get_cache_path_for_ticker(ticker, stationary=use_stationary)
+    return get_cache_path_for_ticker(ticker, stationary=use_stationary, interval=interval)
 
 
 @st.cache_data(show_spinner=False)
@@ -926,7 +1029,7 @@ def render_charts(
     line = base.mark_line(strokeWidth=2.5, interpolate="monotone")
 
     signal_df = chart_df[chart_df["action_label"].isin([ACTION_LABELS[1], ACTION_LABELS[2]])].copy()
-    hover_signal = alt.selection_point(fields=[x_key], nearest=True, on="mouseover", empty=False, clear=False)
+    hover_signal = alt.selection_point(name="hover_signal", fields=[x_key], nearest=True, on="mouseover", empty=False, clear=False)
     signal_points = (
         alt.Chart(signal_df)
         .mark_circle(size=65, opacity=1.0, stroke="white", strokeWidth=1)
@@ -1236,7 +1339,7 @@ def render_signal_analytics_page(
     )
 
 
-def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
+def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") -> None:
     st.header(f"Experiments - {ticker.upper()}")
     st.caption("Run multi-seed SAC (continuous) sweeps and rank configurations on validation performance.")
 
@@ -1300,14 +1403,15 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
         max_runs = st.number_input("Max runs (0=all)", min_value=0, max_value=200, value=10, step=1)
         run_experiment = st.button("Run experiments", type="primary", width="stretch", key="run_experiments")
 
-    leaderboard_path = DEFAULT_LEADERBOARD_PATH
-    reward_leaderboard_path = DEFAULT_REWARD_LEADERBOARD_PATH
-    summary_path = DEFAULT_SUMMARY_PATH
-    snapshot_dir = DEFAULT_SNAPSHOT_DIR
+    interval_key = _normalize_dashboard_interval(interval)
+    experiment_preset = "intraday_5m" if interval_key == "5m" else "daily"
+    leaderboard_path, reward_leaderboard_path, summary_path, snapshot_dir = _artifact_paths_for_interval(interval_key)
 
     if run_experiment:
         args = argparse.Namespace(
             ticker=ticker,
+            interval=interval_key,
+            experiment_preset=experiment_preset,
             include_news=include_news,
             refresh_data=False,
             refresh_news=False,
@@ -1543,12 +1647,11 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER) -> None:
         st.code(summary_path.read_text(encoding="utf-8"), language="json")
 
 
-def render_experiment_insights_page(ticker: str = DEFAULT_TICKER) -> None:
+def render_experiment_insights_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") -> None:
     st.header("Experiment Insights")
     st.caption("Visualize snapshot history and generate next experiment commands to improve actionable accuracy.")
 
-    leaderboard_path = DEFAULT_LEADERBOARD_PATH
-    snapshot_dir = DEFAULT_SNAPSHOT_DIR
+    leaderboard_path, _, _, snapshot_dir = _artifact_paths_for_interval(interval)
 
     with st.sidebar:
         st.subheader("Insights controls")
@@ -1729,7 +1832,9 @@ def main() -> None:
         page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights"], index=0)
         
         # Ticker selector
-        available_tickers = _detect_leaderboard_tickers(str(DEFAULT_LEADERBOARD_PATH))
+        available_tickers: set[str] = set()
+        for discovery_path in [DEFAULT_LEADERBOARD_PATH, INTRADAY_5M_LEADERBOARD_PATH]:
+            available_tickers.update(_detect_leaderboard_tickers(str(discovery_path)))
         supported_ticker_options = sorted(list(TICKER_PRESETS.keys()))
         # Always expose all supported tickers; prioritize those present in current leaderboard.
         prioritized = [t for t in supported_ticker_options if t in available_tickers]
@@ -1747,10 +1852,29 @@ def main() -> None:
             detected_symbols = [str(TICKER_PRESETS.get(k, (k.upper(),))[0]) for k in ticker_options if k in available_tickers]
             st.caption(f"Detected in leaderboard: {', '.join(detected_symbols)}")
         
+        model_interval_key = "signal_dashboard_model_interval"
+        interval_mode_key = "signal_dashboard_interval_mode"
+        auto_interval = _infer_recent_interval_for_ticker(ticker_key=ticker, all_models=available_models)
+        previous_mode = str(st.session_state.get(interval_mode_key, "Auto"))
+        interval_mode_options = ["Auto", "5m", "1d"]
+        mode_default_idx = interval_mode_options.index(previous_mode) if previous_mode in interval_mode_options else 0
+        interval_mode = st.selectbox(
+            "Model/Data interval",
+            options=interval_mode_options,
+            index=mode_default_idx,
+            help="Auto uses the most recent ticker-matching snapshot family. Set 5m or 1d to force interval selection.",
+        )
+        st.session_state[interval_mode_key] = interval_mode
+        preferred_interval = auto_interval if interval_mode == "Auto" else _normalize_dashboard_interval(interval_mode)
+        curation_interval_hint: str | None = preferred_interval
+        if interval_mode == "Auto":
+            st.caption(f"Auto interval resolved to: {preferred_interval}")
+
         # Model Selection Dropdown
         if not available_models:
             st.sidebar.error("No .zip models found in `models/` or `snapshots/`.")
             model_path = ""
+            selected_interval = preferred_interval
         else:
             total_models = len(available_models)
             if total_models >= 10:
@@ -1766,24 +1890,50 @@ def main() -> None:
                 model_limit = total_models
                 st.caption(f"Showing all available models ({total_models}).")
 
-            model_choices = _curate_model_choices(available_models, max_count=int(model_limit), ticker_key=ticker)
+            model_choices = _curate_model_choices(
+                available_models,
+                max_count=int(model_limit),
+                ticker_key=ticker,
+                interval_hint=curation_interval_hint,
+            )
             model_labels = [_format_model_label(p) for p in model_choices]
 
-            # Try to find default promoted champion
+            # Try to find default interval-matching model first, then promoted champion.
             default_idx = 0
             ticker_symbol = _ticker_symbol_from_key(ticker)
             for idx, name in enumerate(model_labels):
-                if f"sac_trading_bot_{ticker_symbol.lower()}.zip" in name.lower():
+                name_lower = name.lower()
+                name_interval = "5m" if ("intraday_5m" in name_lower or re.search(r"(^|[/_\-.])5m($|[/_\-.])", name_lower)) else "1d"
+                if name_interval == preferred_interval:
                     default_idx = idx
                     break
+            if default_idx == 0:
+                for idx, name in enumerate(model_labels):
+                    if f"sac_trading_bot_{ticker_symbol.lower()}.zip" in name.lower():
+                        default_idx = idx
+                        break
+
+            model_select_key = "signal_dashboard_model_path"
+            model_last_ticker_key = "signal_dashboard_model_last_ticker"
+            model_last_interval_key = "signal_dashboard_model_last_interval_pref"
+            model_state_ticker_changed = st.session_state.get(model_last_ticker_key) != ticker
+            model_state_interval_changed = st.session_state.get(model_last_interval_key) != preferred_interval
+            model_state_missing = st.session_state.get(model_select_key) not in model_labels
+            if model_state_ticker_changed or model_state_interval_changed or model_state_missing:
+                st.session_state[model_select_key] = model_labels[default_idx]
+                st.session_state[model_last_ticker_key] = ticker
+                st.session_state[model_last_interval_key] = preferred_interval
             
             selected_model_name = st.selectbox(
                 "Model weights (.zip)",
                 options=model_labels,
                 index=default_idx,
+                key=model_select_key,
                 help="Choose a specific model snapshot or the latest promoted champion."
             )
             model_path = str(model_choices[model_labels.index(selected_model_name)])
+            selected_interval = _infer_interval_from_model_path(model_path)
+            st.session_state[model_interval_key] = selected_interval
             st.caption(f"Showing {len(model_choices)} of {total_models} discovered models.")
 
         expected_obs_dim = None
@@ -1793,21 +1943,36 @@ def main() -> None:
             except Exception:
                 expected_obs_dim = None
 
-        selected_default_data = _preferred_data_path_for_model(ticker, expected_obs_dim)
+        selected_default_data = _preferred_data_path_for_model(
+            ticker,
+            expected_obs_dim,
+            interval_hint=selected_interval,
+        )
         if not selected_default_data.exists():
             selected_default_data = default_data
 
         data_path_key = "signal_dashboard_data_path"
-        if data_path_key not in st.session_state:
+        last_ticker_key = "signal_dashboard_last_ticker"
+        last_interval_key = "signal_dashboard_last_interval"
+
+        # Update data path if ticker/interval changed OR if there's a shape mismatch.
+        ticker_changed = st.session_state.get(last_ticker_key) != ticker
+        interval_changed = st.session_state.get(last_interval_key) != selected_interval
+        shape_mismatch = (
+            expected_obs_dim is not None 
+            and data_path_key in st.session_state
+            and not _data_path_is_compatible_with_expected_shape(st.session_state[data_path_key], expected_obs_dim)
+        )
+
+        if data_path_key not in st.session_state or ticker_changed or interval_changed or shape_mismatch:
             st.session_state[data_path_key] = str(selected_default_data)
-        elif expected_obs_dim is not None and not _data_path_is_compatible_with_expected_shape(
-            st.session_state[data_path_key],
-            expected_obs_dim,
-        ):
-            st.session_state[data_path_key] = str(selected_default_data)
+            st.session_state[last_ticker_key] = ticker
+            st.session_state[last_interval_key] = selected_interval
 
         data_path = st.text_input("Data CSV path", key=data_path_key)
-        st.caption(f"Suggested compatible data path for this model: {selected_default_data}")
+        st.caption(
+            f"Detected interval: {selected_interval} | Suggested compatible data path for this model: {selected_default_data}"
+        )
         
         threshold = st.number_input(
             "Movement threshold",
@@ -1841,10 +2006,10 @@ def main() -> None:
         return
 
     if page == "Experiment Insights":
-        render_experiment_insights_page(ticker=ticker)
+        render_experiment_insights_page(ticker=ticker, interval=selected_interval)
         return
 
-    render_experiments_page(ticker=ticker)
+    render_experiments_page(ticker=ticker, interval=selected_interval)
 
 
 if __name__ == "__main__":
