@@ -99,11 +99,3 @@ Analysis of how varying hyperparameters impacted performance (averaged across se
 
 ---
 
-> [!ERROR]
-> **AI Analysis Failed**: HTTP 429 from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=REDACTED_GEMINI_KEY: {
-  "error": {
-    "code": 429,
-    "message": "Resource exhausted. Please try again later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.",
-    "status": "RESOURCE_EXHAUSTED"
-  }
-}
