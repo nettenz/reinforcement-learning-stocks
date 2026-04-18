@@ -59,6 +59,39 @@ def _xgboost_base_kwargs() -> dict[str, Any]:
     return kwargs
 
 
+def get_acceleration_report() -> dict[str, Any]:
+    """Return a lightweight report of CPU/GPU acceleration availability."""
+    report: dict[str, Any] = {
+        "xgboost_installed": False,
+        "xgboost_cuda_enabled": False,
+        "xgboost_cuda_params": {},
+        "torch_installed": False,
+        "torch_cuda_available": False,
+        "torch_cuda_device_count": 0,
+    }
+
+    try:
+        import xgboost  # noqa: F401
+
+        report["xgboost_installed"] = True
+        cuda_params = _detect_xgboost_cuda_params()
+        report["xgboost_cuda_enabled"] = bool(cuda_params)
+        report["xgboost_cuda_params"] = cuda_params
+    except Exception:
+        report["xgboost_installed"] = False
+
+    try:
+        import torch
+
+        report["torch_installed"] = True
+        report["torch_cuda_available"] = bool(torch.cuda.is_available())
+        report["torch_cuda_device_count"] = int(torch.cuda.device_count()) if torch.cuda.is_available() else 0
+    except Exception:
+        report["torch_installed"] = False
+
+    return report
+
+
 class BaselinePolicy:
     """Base class for all policies (RL and supervised)."""
     

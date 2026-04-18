@@ -61,3 +61,49 @@ This allows quant reporting to read the current Stage 1 implementation outputs d
 After running the 3 steps, compare outputs in `logs/` and decide:
 - If NVDA improves vs flat with stable behavior, proceed to confirmatory rerun.
 - If NVDA still fails across threshold/horizon checks, pause tuning and move to feature/target redesign under Stage 1 rules.
+
+## Latest Batch Generated
+
+Fresh batch analysis was generated from the current leaderboard:
+- `sessions/next-batch-analysis-20260418.md`
+
+Batch readout:
+- Verdict: `bearish`
+- Main issues: severe val/test overfitting, low seed stability, and action collapse
+- Benchmark status: still below QQQ on test, with only a small fraction of runs beating it
+
+## Next Steps After Step 4
+
+Stage 1 remains the active gate because baseline prediction is still the blocker.
+
+Recommended next work:
+1. Directional target / classification comparison for AAPL, AMD, and NVDA.
+2. Threshold confirmation and calibration around the current 1-step horizon.
+3. Simple momentum and mean-reversion baselines to establish a stronger non-RL reference.
+4. Keep RL sweeps paused until the Stage 1 baseline gate can pass on stable, test-backed evidence.
+
+## Next Run Strategy
+
+Use one small diagnostic batch for the next run, not a broad sweep.
+
+Run order:
+1. Compare supervised regression vs supervised classification on the same ticker/horizon/data split.
+2. Sweep thresholds only around the current best 1-step settings.
+3. Add simple momentum and mean-reversion baselines to measure whether the signal is better than trivial rules.
+4. Re-check only the strongest ticker candidates, then stop if test-backed signal is still weak.
+
+Stop rule:
+- If test-side performance stays weak or unstable, do not escalate to RL tuning.
+- If one configuration clearly generalizes, use that as the only confirmatory candidate for the next session.
+
+Current conclusion:
+- This session ends with Stage 1 still unresolved, but with a clearer diagnosis path and no justification for RL expansion yet.
+
+## Generated Next Script
+
+New runner created for the next session:
+- `run_stage1_step5_next_diagnostics.ps1`
+
+Purpose:
+- Run a compact Stage 1 diagnostic batch with supervised baselines and thresholded trading evals.
+- Keep the work inside Stage 1 signal diagnosis until a test-backed signal proves stable.

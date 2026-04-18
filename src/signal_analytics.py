@@ -5,8 +5,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from stable_baselines3 import SAC
-from stable_baselines3 import PPO
 
 from src.trading_env import TradingEnv
 
@@ -81,6 +79,8 @@ def resolve_model_path(model_path: str | Path) -> Path:
 def _load_model(model_path: str | Path):
     """Auto-detect and load either SAC or PPO model."""
     resolved = resolve_model_path(model_path).as_posix()
+    from stable_baselines3 import PPO, SAC
+
     try:
         return SAC.load(resolved), "sac"
     except Exception:

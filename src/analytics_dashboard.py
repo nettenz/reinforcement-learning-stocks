@@ -1,24 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-from src.experiments import (
-    DEFAULT_LEADERBOARD_PATH,
-    DEFAULT_REWARD_LEADERBOARD_PATH,
-    DEFAULT_SNAPSHOT_DIR,
-    DEFAULT_SUMMARY_PATH,
-    TICKER_PRESETS,
-    run_experiments,
-    write_experiment_outputs,
-)
 from src.signal_analytics import (
     ACTION_LABELS,
     _align_features_to_model,
@@ -30,17 +27,23 @@ from src.signal_analytics import (
     simulate_agent_signals,
 )
 from src.trading_env import TradingEnv
-from src.market_data import get_cache_path_for_ticker
+from src.market_data import TICKER_PRESETS, get_cache_path_for_ticker
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_TICKER = "aapl"
 DEFAULT_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.parquet"
 STATIONARY_DATA_PATH = ROOT_DIR / "data" / "tech_training_data_stationary.parquet"
 FALLBACK_DATA_PATH = ROOT_DIR / "data" / "tech_training_data.csv"
+DEFAULT_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_leaderboard.csv"
+DEFAULT_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderboard.csv"
+DEFAULT_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary.json"
+DEFAULT_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots"
 INTRADAY_5M_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_leaderboard_intraday_5m.csv"
 INTRADAY_5M_REWARD_LEADERBOARD_PATH = ROOT_DIR / "data" / "experiment_reward_leaderboard_intraday_5m.csv"
 INTRADAY_5M_SUMMARY_PATH = ROOT_DIR / "data" / "experiment_summary_intraday_5m.json"
 INTRADAY_5M_SNAPSHOT_DIR = ROOT_DIR / "data" / "experiment_snapshots" / "intraday_5m"
+STAGE1_RESULTS_DIR = ROOT_DIR / "results" / "stage1"
+STAGE1_CONFIRMATION_DIR = ROOT_DIR / "results" / "stage1_confirmation_3seed"
+STAGE1_PIVOT_REPORT_PATH = ROOT_DIR / "sessions" / "stage1-step4-quant-report-smoketest.md"
 DEFAULT_ACTIONABLE_TARGET = 0.55
 RECOMMENDED_THRESHOLD = 0.0020
 RECOMMENDED_HORIZON = 1
@@ -120,6 +123,28 @@ def _infer_interval_from_model_path(model_path: str | Path | None) -> str:
     return "1d"
 
 
+def build_model_cache_buster() -> str:
+    files: list[Path] = []
+    for root in [ROOT_DIR / "models", ROOT_DIR / "data" / "experiment_snapshots"]:
+        if not root.exists():
+            continue
+        files.extend(sorted(root.rglob("*.zip")))
+
+    fingerprints: list[str] = []
+    seen: set[Path] = set()
+    for file_path in files:
+        resolved = file_path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
+        fingerprints.append(f"{resolved}:{int(stat.st_mtime_ns)}:{stat.st_size}")
+    return "|".join(fingerprints)
+
+
 def _artifact_paths_for_interval(interval: str | None) -> tuple[Path, Path, Path, Path]:
     if _normalize_dashboard_interval(interval) == "5m":
         return (
@@ -154,6 +179,23 @@ def _leaderboard_paths_for_interval_hint(interval_hint: str | None) -> list[Path
     return paths
 
 
+@st.cache_data(show_spinner=False)
+def _list_available_models(cache_buster: str = "") -> list[Path]:
+    """Scans for all .zip model files in models/ and experiment snapshots."""
+    _ = cache_buster
+    model_paths: list[Path] = []
+    models_dir = ROOT_DIR / "models"
+    if models_dir.exists():
+        model_paths.extend(list(models_dir.glob("*.zip")))
+
+    snapshots_dir = ROOT_DIR / "data" / "experiment_snapshots"
+    if snapshots_dir.exists():
+        model_paths.extend(list(snapshots_dir.rglob("*.zip")))
+
+    model_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return model_paths
+
+
 def _preferred_data_path_for_model(ticker: str, expected_obs_dim: int | None, interval_hint: str | None = None) -> Path:
     interval = _normalize_dashboard_interval(interval_hint)
     ticker_non_stationary = get_data_path_for_ticker(ticker, use_stationary=False, interval=interval)
@@ -185,21 +227,6 @@ def _preferred_data_path_for_model(ticker: str, expected_obs_dim: int | None, in
             return candidate
 
     return DEFAULT_DATA_PATH if DEFAULT_DATA_PATH.exists() else STATIONARY_DATA_PATH
-
-def _list_available_models() -> list[Path]:
-    """Scans for all .zip model files in models/ and experiment snapshots."""
-    model_paths = []
-    models_dir = ROOT_DIR / "models"
-    if models_dir.exists():
-        model_paths.extend(list(models_dir.glob("*.zip")))
-    
-    snapshots_dir = ROOT_DIR / "data" / "experiment_snapshots"
-    if snapshots_dir.exists():
-        model_paths.extend(list(snapshots_dir.rglob("*.zip")))
-    
-    # Sort by mtime (newest first)
-    model_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return model_paths
 
 
 def _ticker_symbol_from_key(ticker_key: str) -> str:
@@ -607,6 +634,131 @@ def build_history_cache_buster(snapshot_dir: str, leaderboard_path: str) -> str:
             continue
         fingerprints.append(f"{resolved}:{int(stat.st_mtime_ns)}:{stat.st_size}")
     return "|".join(fingerprints)
+
+
+def build_stage1_cache_buster() -> str:
+    files: list[Path] = []
+    for root in [STAGE1_RESULTS_DIR, STAGE1_CONFIRMATION_DIR]:
+        if not root.exists():
+            continue
+        files.extend(sorted(root.glob("stage1_baseline_*.json")))
+
+    fingerprints: list[str] = []
+    seen: set[Path] = set()
+    for file_path in files:
+        resolved = file_path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
+        fingerprints.append(f"{resolved}:{int(stat.st_mtime_ns)}:{stat.st_size}")
+    return "|".join(fingerprints)
+
+
+@st.cache_data(show_spinner=False)
+def load_stage1_snapshot_history(results_dir: str, confirmation_dir: str, cache_buster: str = "") -> pd.DataFrame:
+    _ = cache_buster
+    files: list[Path] = []
+    for directory in [Path(results_dir), Path(confirmation_dir)]:
+        if directory.exists():
+            files.extend(sorted(directory.glob("stage1_baseline_*.json")))
+
+    seen: set[Path] = set()
+    rows: list[dict[str, object]] = []
+    for file_path in files:
+        resolved = file_path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            payload = json.loads(file_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        row = dict(payload)
+        row["source_path"] = str(file_path)
+        row["source_family"] = "confirmation" if "stage1_confirmation_3seed" in file_path.as_posix() else "stage1"
+        row["snapshot_time"] = pd.to_datetime(row.get("timestamp"), utc=True, errors="coerce")
+        row["ticker"] = str(row.get("ticker", "")).upper()
+        row["model_type"] = str(row.get("model_type", "")).lower()
+        row["horizon"] = int(row.get("horizon", 0) or 0)
+        row["val_test_r2_gap"] = float(row.get("test_r2", np.nan)) - float(row.get("val_r2", np.nan))
+        row["val_test_mae_gap"] = float(row.get("test_mae", np.nan)) - float(row.get("val_mae", np.nan))
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    history = pd.DataFrame(rows)
+    if "snapshot_time" in history.columns:
+        history["snapshot_time"] = pd.to_datetime(history["snapshot_time"], utc=True, errors="coerce")
+    sort_cols = [c for c in ["ticker", "horizon", "model_type", "test_r2", "snapshot_time"] if c in history.columns]
+    if sort_cols:
+        ascending = [True, True, True, False, False][: len(sort_cols)]
+        history = history.sort_values(sort_cols, ascending=ascending).reset_index(drop=True)
+    return history
+
+
+@st.cache_data(show_spinner=False)
+def load_stage1_gate_summary(report_path: str = str(STAGE1_PIVOT_REPORT_PATH)) -> dict[str, object]:
+    candidates: list[Path] = []
+    for pattern in ["stage1*.md", "stage1_gate_report*.json"]:
+        for root in [ROOT_DIR / "sessions", ROOT_DIR / "logs"]:
+            if root.exists():
+                candidates.extend(sorted(root.glob(pattern)))
+
+    if report_path:
+        explicit = Path(report_path)
+        if explicit.exists():
+            candidates.insert(0, explicit)
+
+    chosen: Path | None = None
+    if candidates:
+        seen: set[Path] = set()
+        unique_candidates: list[Path] = []
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            unique_candidates.append(candidate)
+        try:
+            chosen = max(unique_candidates, key=lambda p: p.stat().st_mtime)
+        except OSError:
+            chosen = unique_candidates[0]
+
+    if chosen is None or not chosen.exists():
+        return {}
+
+    if chosen.suffix.lower() == ".json":
+        try:
+            payload = json.loads(chosen.read_text(encoding="utf-8"))
+        except Exception:
+            return {"source_path": str(chosen)}
+        return {
+            "source_path": str(chosen),
+            "generated": payload.get("generated_at"),
+            "verdict": payload.get("verdict"),
+            "baseline_passed": str(payload.get("baseline_gate_passed")),
+            "trading_passed": str(payload.get("trading_gate_passed")),
+        }
+
+    text = chosen.read_text(encoding="utf-8", errors="replace")
+
+    def _match(pattern: str) -> str | None:
+        match = re.search(pattern, text, flags=re.MULTILINE)
+        return match.group(1).strip() if match else None
+
+    return {
+        "source_path": str(chosen),
+        "generated": _match(r"\*\*Generated:\*\*\s*(.+)$"),
+        "verdict": _match(r"\*\*Overall Verdict:\*\* `([^`]+)`"),
+        "baseline_passed": _match(r"\*\*Baseline Gate Passed:\*\* `([^`]+)`"),
+        "trading_passed": _match(r"\*\*Trading Gate Passed:\*\* `([^`]+)`"),
+    }
 
 
 def summarize_snapshot_bests(history: pd.DataFrame) -> pd.DataFrame:
@@ -1408,6 +1560,8 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") 
     leaderboard_path, reward_leaderboard_path, summary_path, snapshot_dir = _artifact_paths_for_interval(interval_key)
 
     if run_experiment:
+        from src.experiments import run_experiments, write_experiment_outputs
+
         args = argparse.Namespace(
             ticker=ticker,
             interval=interval_key,
@@ -1448,7 +1602,7 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") 
             disable_snapshots=False,
             snapshot_dir=str(snapshot_dir),
             run_label=run_label.strip(),
-            device="cuda" if __import__('torch').cuda.is_available() else "cpu",
+            device="cpu",
             use_lr_schedule=False,
             n_envs=1,
             append=True,
@@ -1817,6 +1971,121 @@ def render_experiment_insights_page(ticker: str = DEFAULT_TICKER, interval: str 
             st.code(str(rec["command"]), language="bash")
 
 
+def render_stage1_pivot_page(ticker: str = DEFAULT_TICKER) -> None:
+    st.header("Stage 1 Pivot")
+    st.caption("Visualize the signal-first pivot separately from the RL leaderboard views.")
+
+    cache_buster = build_stage1_cache_buster()
+    stage1 = load_stage1_snapshot_history(
+        results_dir=str(STAGE1_RESULTS_DIR),
+        confirmation_dir=str(STAGE1_CONFIRMATION_DIR),
+        cache_buster=cache_buster,
+    )
+
+    gate_summary = load_stage1_gate_summary()
+
+    with st.sidebar:
+        st.subheader("Stage 1 controls")
+        source_family = st.selectbox("Source family", options=["All", "stage1", "confirmation"], index=0)
+        horizon_filter = st.selectbox("Horizon", options=["All", 1, 3], index=0)
+        model_filter = st.selectbox("Model type", options=["All", "linear", "rf", "xgb", "mlp"], index=0)
+
+    if stage1.empty:
+        st.info("No Stage 1 snapshot JSON files found yet. Run the Stage 1 baseline script to populate results/stage1.")
+        return
+
+    filtered = stage1.copy()
+    if "ticker" in filtered.columns:
+        filtered = filtered[_ticker_match_mask(filtered["ticker"], ticker_key=ticker)].copy()
+    if source_family != "All" and "source_family" in filtered.columns:
+        filtered = filtered[filtered["source_family"] == source_family].copy()
+    if horizon_filter != "All" and "horizon" in filtered.columns:
+        filtered = filtered[filtered["horizon"] == int(horizon_filter)].copy()
+    if model_filter != "All" and "model_type" in filtered.columns:
+        filtered = filtered[filtered["model_type"] == model_filter].copy()
+
+    if filtered.empty:
+        st.info("No Stage 1 rows match the current filters.")
+        return
+
+    best_idx = filtered["test_r2"].idxmax() if "test_r2" in filtered.columns else filtered.index[0]
+    best = filtered.loc[best_idx]
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Snapshots", f"{len(filtered)}")
+    c2.metric("Best test R2", f"{float(best.get('test_r2', np.nan)):.4f}")
+    c3.metric("Best val R2", f"{float(best.get('val_r2', np.nan)):.4f}")
+    c4.metric("R2 gap", f"{float(best.get('val_test_r2_gap', np.nan)):.4f}")
+
+    if gate_summary:
+        verdict = str(gate_summary.get("verdict", "unknown"))
+        if verdict == "signal_exists":
+            st.success(f"Gate verdict: {verdict} | baseline={gate_summary.get('baseline_passed')} | trading={gate_summary.get('trading_passed')}")
+        elif verdict == "signal_weak":
+            st.warning(f"Gate verdict: {verdict} | baseline={gate_summary.get('baseline_passed')} | trading={gate_summary.get('trading_passed')}")
+        else:
+            st.info(f"Gate summary loaded from {gate_summary.get('source_path', 'unknown')}")
+
+    chart_cols = [c for c in ["val_r2", "test_r2", "val_test_r2_gap"] if c in filtered.columns]
+    if chart_cols:
+        st.subheader("1) Stage 1 Snapshot Comparison")
+        chart_df = filtered[["ticker", "model_type", "horizon", "source_family", *chart_cols]].copy()
+        chart_df = chart_df.rename(columns={"ticker": "ticker", "model_type": "model_type"})
+        chart_long = chart_df.melt(
+            id_vars=["ticker", "model_type", "horizon", "source_family"],
+            var_name="metric",
+            value_name="value",
+        )
+        scatter = (
+            alt.Chart(chart_long)
+            .mark_circle(size=100, opacity=0.85)
+            .encode(
+                x=alt.X("horizon:O", title="Horizon"),
+                y=alt.Y("value:Q", title="Metric value"),
+                color=alt.Color("metric:N", title="Metric"),
+                shape=alt.Shape("source_family:N", title="Source family"),
+                column=alt.Column("ticker:N", title="Ticker"),
+                tooltip=["ticker:N", "model_type:N", "horizon:O", "source_family:N", alt.Tooltip("metric:N", title="Metric"), alt.Tooltip("value:Q", format=".4f")],
+            )
+        )
+        st.altair_chart(scatter.interactive(), width="stretch")
+
+    st.subheader("2) Snapshot Table")
+    table_cols = [
+        c for c in [
+            "ticker",
+            "horizon",
+            "model_type",
+            "source_family",
+            "seed",
+            "val_r2",
+            "test_r2",
+            "val_test_r2_gap",
+            "val_mae",
+            "test_mae",
+            "val_test_mae_gap",
+            "source_path",
+        ] if c in filtered.columns
+    ]
+    st.dataframe(filtered.sort_values([c for c in ["ticker", "horizon", "model_type"] if c in filtered.columns], ascending=True)[table_cols], width="stretch")
+
+    st.subheader("3) Best Runs")
+    best_runs = (
+        filtered.sort_values("test_r2", ascending=False)
+        .groupby([c for c in ["ticker", "horizon"] if c in filtered.columns], dropna=False)
+        .head(1)
+        .reset_index(drop=True)
+    )
+    best_visible_cols = [c for c in ["ticker", "horizon", "model_type", "source_family", "val_r2", "test_r2", "val_test_r2_gap", "source_path"] if c in best_runs.columns]
+    st.dataframe(best_runs[best_visible_cols], width="stretch")
+
+    st.subheader("4) Interpretation")
+    if float(best.get("test_r2", np.nan)) > 0:
+        st.success("At least one Stage 1 configuration is above zero test R2 in the current filtered view.")
+    else:
+        st.warning("Current Stage 1 view remains weak on raw test R2; use the gate/trading view to check whether thresholded trading still adds value.")
+
+
 def main() -> None:
     st.set_page_config(page_title="RL Signal Analytics Dashboard", layout="wide")
     st.title("RL Buy/Sell Signal Analytics")
@@ -1825,11 +2094,11 @@ def main() -> None:
     default_data = DEFAULT_DATA_PATH if DEFAULT_DATA_PATH.exists() else FALLBACK_DATA_PATH
     
     # Intelligence Synchronization: Model Discovery
-    available_models = _list_available_models()
+    available_models = _list_available_models(cache_buster=build_model_cache_buster())
     
     with st.sidebar:
         st.header("Global inputs")
-        page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights"], index=0)
+        page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights", "Stage 1 Pivot"], index=0)
         
         # Ticker selector
         available_tickers: set[str] = set()
@@ -2007,6 +2276,10 @@ def main() -> None:
 
     if page == "Experiment Insights":
         render_experiment_insights_page(ticker=ticker, interval=selected_interval)
+        return
+
+    if page == "Stage 1 Pivot":
+        render_stage1_pivot_page(ticker=ticker)
         return
 
     render_experiments_page(ticker=ticker, interval=selected_interval)

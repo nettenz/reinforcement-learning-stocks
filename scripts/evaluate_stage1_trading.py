@@ -66,6 +66,38 @@ class PredictionThresholdPolicyWrapper:
         return 0.0, None
 
 
+class MomentumFeatureRulePolicy:
+    """Trade with the sign of the first market feature (typically recent return)."""
+
+    def __init__(self, threshold: float = 0.0005):
+        self.threshold = float(threshold)
+
+    def predict(self, obs, deterministic: bool = True):
+        obs_array = np.asarray(obs).reshape(-1)
+        value = float(obs_array[0]) if len(obs_array) else 0.0
+        if value > self.threshold:
+            return 1.0, None
+        if value < -self.threshold:
+            return -1.0, None
+        return 0.0, None
+
+
+class MeanReversionFeatureRulePolicy:
+    """Trade opposite to the sign of the first market feature."""
+
+    def __init__(self, threshold: float = 0.0005):
+        self.threshold = float(threshold)
+
+    def predict(self, obs, deterministic: bool = True):
+        obs_array = np.asarray(obs).reshape(-1)
+        value = float(obs_array[0]) if len(obs_array) else 0.0
+        if value > self.threshold:
+            return -1.0, None
+        if value < -self.threshold:
+            return 1.0, None
+        return 0.0, None
+
+
 def parse_csv_values(raw: str, cast) -> list:
     out: list = []
     for part in raw.split(","):
@@ -214,7 +246,7 @@ def evaluate_policy(frame: pd.DataFrame, feature_cols: list[str], policy, policy
     )
 
 
-def run_for_ticker(ticker: str, horizon: int, include_news: bool, model_type: str, threshold: float) -> dict:
+def run_for_ticker(ticker: str, horizon: int, include_news: bool, model_type: str, threshold: float, include_simple_rules: bool) -> dict:
     frame = prepare_dataframe(ticker=ticker, include_news=include_news, use_stationary_features=True)
     feature_cols = select_feature_columns(frame, include_news=include_news)
     splits = split_walk_forward(frame)
@@ -227,6 +259,13 @@ def run_for_ticker(ticker: str, horizon: int, include_news: bool, model_type: st
         ("flat", FlatPolicy()),
         ("buy_hold", BuyHoldPolicy()),
     ]
+    if include_simple_rules:
+        policies.extend(
+            [
+                ("momentum_rule", MomentumFeatureRulePolicy(threshold=threshold)),
+                ("mean_reversion_rule", MeanReversionFeatureRulePolicy(threshold=threshold)),
+            ]
+        )
 
     report: dict = {
         "ticker": ticker,
@@ -266,6 +305,7 @@ def main() -> int:
     parser.add_argument("--horizon", type=int, default=1, help="Prediction horizon used for supervised policy training")
     parser.add_argument("--output", type=str, default=str(ROOT / "logs" / "stage1_trading_eval.json"), help="Output JSON path")
     parser.add_argument("--include-news", action="store_true", help="Include news features")
+    parser.add_argument("--include-simple-rules", action="store_true", help="Add momentum and mean-reversion rule baselines")
     parser.add_argument("--model-type", type=str, default="linear", choices=["linear", "rf", "xgb", "mlp"], help="Supervised model type")
     parser.add_argument("--threshold", type=float, default=0.0005, help="Prediction threshold for long/flat/short trading rule")
     args = parser.parse_args()
@@ -289,6 +329,7 @@ def main() -> int:
             include_news=args.include_news,
             model_type=args.model_type,
             threshold=args.threshold,
+            include_simple_rules=bool(args.include_simple_rules),
         )
         payload["reports"].append(report)
 

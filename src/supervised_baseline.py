@@ -50,7 +50,8 @@ def train_supervised_baseline(
     train_ratio: float = 0.70,
     val_ratio: float = 0.15,
     output_dir: str = 'results/',
-    seed: int = 42
+    seed: int = 42,
+    output_name: str | None = None,
 ) -> Dict:
     """
     Train and evaluate a supervised baseline for Stage 1.
@@ -248,7 +249,10 @@ def train_supervised_baseline(
     # Save results
     os.makedirs(output_dir, exist_ok=True)
     
-    results_file = os.path.join(output_dir, f'stage1_baseline_{ticker}_{model_type}_{horizon}h.json')
+    if output_name:
+        results_file = os.path.join(output_dir, output_name)
+    else:
+        results_file = os.path.join(output_dir, f'stage1_baseline_{ticker}_{model_type}_{horizon}h.json')
     with open(results_file, 'w') as f:
         json.dump(results, f, indent=2)
     
@@ -275,6 +279,8 @@ if __name__ == '__main__':
                        help='Output directory for results')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
+    parser.add_argument('--output-name', type=str, default='',
+                       help='Optional output filename override (e.g., stage1_baseline_AAPL_linear_1h_seed7.json)')
     
     args = parser.parse_args()
     
@@ -284,7 +290,8 @@ if __name__ == '__main__':
         model_type=args.model_type,
         use_news=args.use_news,
         output_dir=args.output_dir,
-        seed=args.seed
+        seed=args.seed,
+        output_name=(args.output_name.strip() or None)
     )
     
     print(f"Summary: {results}")
