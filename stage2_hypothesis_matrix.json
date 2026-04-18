@@ -1,0 +1,187 @@
+{
+  "project": "reinforcement-learning-stocks",
+  "created_date": "2026-04-18",
+  "stage": "Stage 2",
+  "status": "draft_local_only",
+  "global_rules": {
+    "required_validation": [
+      "rolling_window_validation",
+      "trivial_baseline_comparison",
+      "cost_aware_evaluation",
+      "recent_window_evaluation"
+    ],
+    "forbidden_failure_modes": [
+      "single_split_success_only",
+      "buy_hold_cleanly_dominates",
+      "threshold_artifact_without_predictive_support",
+      "single_ticker_or_single_regime_dependency"
+    ],
+    "rl_escalation_rule": {
+      "requires": [
+        "durable_forward_economic_edge",
+        "acceptable_regime_stability",
+        "baseline_superiority"
+      ],
+      "default_if_not_met": "block_rl"
+    }
+  },
+  "hypotheses": [
+    {
+      "hypothesis_id": "H2",
+      "priority": 1,
+      "title": "Longer-Horizon Targets",
+      "thesis": "Longer horizons may reduce noise sensitivity and improve stability versus short-horizon targets.",
+      "target_definition": {
+        "type": "multi_horizon_forward_return",
+        "horizons": [
+          "1d",
+          "3d",
+          "5d"
+        ],
+        "optional_directional_target": "forward_return_above_threshold"
+      },
+      "asset_universe": [
+        "AAPL",
+        "AMD",
+        "NVDA",
+        "QQQ",
+        "SPY"
+      ],
+      "baseline_models": [
+        "linear_regression_or_logistic",
+        "tree_based_baseline",
+        "naive_momentum"
+      ],
+      "rolling_window_scheme": {
+        "windows_min": 3,
+        "train_fraction": 0.2,
+        "val_fraction": 0.2,
+        "test_fraction": 0.2,
+        "slide_fraction": 0.33,
+        "must_include_recent_window": true
+      },
+      "benchmark_set": [
+        "buy_hold",
+        "naive_momentum",
+        "flat_policy"
+      ],
+      "go_no_go_rules": [
+        "mean_rolling_net_performance_positive",
+        "at_least_2_of_3_windows_beat_buy_hold_or_momentum",
+        "stability_not_dominated_by_single_window",
+        "risk_adjusted_returns_positive_after_costs"
+      ],
+      "kill_criteria": [
+        "predictive_metrics_near_or_below_naive",
+        "economic_edge_weaker_than_trivial_momentum",
+        "recent_window_collapse",
+        "net_edge_non_positive_after_costs"
+      ],
+      "status": "killed"
+    },
+    {
+      "hypothesis_id": "H1",
+      "priority": 2,
+      "title": "Event-Driven Prediction",
+      "thesis": "Sparse high-information event contexts may offer better signal-to-noise than continuous prediction.",
+      "target_definition": {
+        "type": "event_conditioned_direction_or_return",
+        "event_tags": [
+          "earnings_window",
+          "macro_event_day",
+          "volatility_expansion",
+          "abnormal_volume",
+          "sentiment_shock"
+        ]
+      },
+      "asset_universe": [
+        "AAPL",
+        "AMD",
+        "NVDA",
+        "QQQ",
+        "SPY"
+      ],
+      "baseline_models": [
+        "logistic_regression",
+        "random_forest_or_gradient_boosting",
+        "threshold_event_rules"
+      ],
+      "rolling_window_scheme": {
+        "windows_min": 3,
+        "train_fraction": 0.2,
+        "val_fraction": 0.2,
+        "test_fraction": 0.2,
+        "slide_fraction": 0.33,
+        "must_include_recent_window": true
+      },
+      "benchmark_set": [
+        "buy_hold",
+        "event_relevant_naive_baseline",
+        "flat_policy"
+      ],
+      "go_no_go_rules": [
+        "at_least_2_of_3_windows_show_positive_net_edge",
+        "predictive_quality_above_naive",
+        "edge_not_carried_by_single_event_cluster",
+        "edge_survives_transaction_costs"
+      ],
+      "kill_criteria": [
+        "single_window_only_success",
+        "insufficient_event_count_for_inference",
+        "edge_disappears_after_costs",
+        "recent_window_failure"
+      ],
+        "status": "killed"
+    },
+    {
+      "hypothesis_id": "H3",
+      "priority": 3,
+      "title": "Cross-Sectional Ranking",
+      "thesis": "Relative ranking may be more learnable than absolute direction and can reveal durable relative-strength structure.",
+      "target_definition": {
+        "type": "rebalance_date_rank_forward_return",
+        "portfolio_rule": "long_top_ranked_optional_short_bottom_ranked",
+        "rebalance_frequency": "monthly"
+      },
+      "asset_universe": [
+        "AAPL",
+        "AMD",
+        "NVDA",
+        "QQQ",
+        "SPY",
+        "optional_sector_etfs"
+      ],
+      "baseline_models": [
+        "linear_rank_model",
+        "tree_rank_surrogate",
+        "momentum_ranking_baseline"
+      ],
+      "rolling_window_scheme": {
+        "windows_min": 3,
+        "train_fraction": 0.2,
+        "val_fraction": 0.2,
+        "test_fraction": 0.2,
+        "slide_fraction": 0.33,
+        "must_include_recent_window": true
+      },
+      "benchmark_set": [
+        "equal_weight_portfolio",
+        "buy_hold",
+        "momentum_ranking_baseline"
+      ],
+      "go_no_go_rules": [
+        "at_least_2_of_3_windows_outperform_equal_weight_and_buy_hold",
+        "ranking_quality_persistent_across_windows",
+        "performance_not_explained_by_single_ticker",
+        "turnover_reasonable_and_net_edge_positive_after_costs"
+      ],
+      "kill_criteria": [
+        "top_picks_unstable_random",
+        "single_ticker_dominates_gains",
+        "net_outperformance_disappears_after_costs",
+        "recent_window_failure"
+      ],
+      "status": "killed"
+    }
+  ]
+}
