@@ -105,10 +105,23 @@ Always return sections in this exact order:
 4. **Most likely explanations**
 5. **Confidence level for current conclusions**
 6. **Recommended next experiment batch**
-7. **Priority order**
-8. **Success/failure interpretation plan**
-9. **Leaderboard comparability impact (REQUIRED)**
-10. **Promotion readiness assessment**
+7. **Next proposed experiments or runs**
+8. **Priority order**
+9. **Success/failure interpretation plan**
+10. **Leaderboard comparability impact (REQUIRED)**
+11. **Promotion readiness assessment**
+
+Section rule:
+- Put concrete run commands or runner names in section 7 when implementation is requested.
+- If analysis-only mode is requested, section 7 should still list the exact proposed runs without patch instructions.
+
+Run specification rule (MANDATORY):
+- For each proposed run, include:
+  - environment activation command (for example, `.venv` activation)
+  - runner command
+  - full relative script path when the runner is not in repository root (for example `scripts/runner_name.py`)
+  - key args and expected output artifact path(s)
+- Do not provide bare script names when the file lives in a subdirectory.
 
 ## Required Reasoning Rules
 - Do not treat the best single run as truth.

@@ -47,12 +47,12 @@ def _detect_xgboost_cuda_params() -> dict[str, Any]:
     return {}
 
 
-def _xgboost_base_kwargs() -> dict[str, Any]:
+def _xgboost_base_kwargs(random_state: int = 42) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "n_estimators": 100,
         "max_depth": 6,
         "learning_rate": 0.05,
-        "random_state": 42,
+        "random_state": int(random_state),
         "verbosity": 0,
     }
     kwargs.update(_detect_xgboost_cuda_params())
@@ -179,7 +179,7 @@ class SupervisedRegressionPolicy(BaselinePolicy):
     Supports sklearn-compatible regressors: LinearRegression, RandomForestRegressor, etc.
     """
     
-    def __init__(self, model_class: str = 'linear'):
+    def __init__(self, model_class: str = 'linear', random_state: int = 42):
         """
         Initialize policy with specified model type.
         
@@ -187,6 +187,7 @@ class SupervisedRegressionPolicy(BaselinePolicy):
             model_class: 'linear', 'rf', 'xgb', or 'mlp'
         """
         self.model_class = model_class
+        self.random_state = int(random_state)
         self.model = None
         self._is_trained = False
     
@@ -201,14 +202,14 @@ class SupervisedRegressionPolicy(BaselinePolicy):
             self.model = RandomForestRegressor(
                 n_estimators=100,
                 max_depth=10,
-                random_state=42,
+                random_state=self.random_state,
                 n_jobs=-1
             )
         
         elif self.model_class == 'xgb':
             try:
                 import xgboost as xgb
-                self.model = xgb.XGBRegressor(**_xgboost_base_kwargs())
+                self.model = xgb.XGBRegressor(**_xgboost_base_kwargs(random_state=self.random_state))
             except ImportError:
                 raise ImportError("xgboost not installed. Install with: pip install xgboost")
         
@@ -217,7 +218,7 @@ class SupervisedRegressionPolicy(BaselinePolicy):
             self.model = MLPRegressor(
                 hidden_layer_sizes=(64, 32),
                 max_iter=500,
-                random_state=42,
+                random_state=self.random_state,
                 early_stopping=True,
                 validation_fraction=0.1
             )
@@ -273,7 +274,7 @@ class SupervisedClassificationPolicy(BaselinePolicy):
     Supports sklearn-compatible classifiers.
     """
     
-    def __init__(self, model_class: str = 'rf'):
+    def __init__(self, model_class: str = 'rf', random_state: int = 42):
         """
         Initialize policy with specified model type.
         
@@ -281,6 +282,7 @@ class SupervisedClassificationPolicy(BaselinePolicy):
             model_class: 'rf', 'xgb', 'svm', 'mlp'
         """
         self.model_class = model_class
+        self.random_state = int(random_state)
         self.model = None
         self._is_trained = False
     
@@ -291,27 +293,27 @@ class SupervisedClassificationPolicy(BaselinePolicy):
             self.model = RandomForestClassifier(
                 n_estimators=100,
                 max_depth=10,
-                random_state=42,
+                random_state=self.random_state,
                 n_jobs=-1
             )
         
         elif self.model_class == 'xgb':
             try:
                 import xgboost as xgb
-                self.model = xgb.XGBClassifier(**_xgboost_base_kwargs())
+                self.model = xgb.XGBClassifier(**_xgboost_base_kwargs(random_state=self.random_state))
             except ImportError:
                 raise ImportError("xgboost not installed. Install with: pip install xgboost")
         
         elif self.model_class == 'svm':
             from sklearn.svm import SVC
-            self.model = SVC(kernel='rbf', probability=True, random_state=42)
+            self.model = SVC(kernel='rbf', probability=True, random_state=self.random_state)
         
         elif self.model_class == 'mlp':
             from sklearn.neural_network import MLPClassifier
             self.model = MLPClassifier(
                 hidden_layer_sizes=(64, 32),
                 max_iter=500,
-                random_state=42,
+                random_state=self.random_state,
                 early_stopping=True,
                 validation_fraction=0.1
             )

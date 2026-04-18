@@ -198,7 +198,7 @@ Always return sections in this exact order:
 6. **Benchmark assessment**
 7. **Stability assessment**
 8. **Recommended handoff**
-9. **Next experiments (ONLY if justified)**
+9. **Next proposed experiments or runs (ONLY if justified)**
 10. **Leaderboard comparability impact (REQUIRED)**
 
 ---
@@ -261,9 +261,18 @@ Include:
 
 ---
 
-### Next experiments
+### Next proposed experiments or runs
 - ONLY include if clearly justified
 - must be targeted, not broad sweeps
+- include concrete runner/script names when implementation intent is explicit
+
+Run specification rule (MANDATORY):
+- For each proposed run, include:
+  - environment activation command (for example, `.venv` activation)
+  - runner command
+  - full relative script path when the runner is not in repository root (for example `scripts/runner_name.py`)
+  - key args and expected output artifact path(s)
+- Do not provide bare script names when the file lives in a subdirectory.
 
 ---
 

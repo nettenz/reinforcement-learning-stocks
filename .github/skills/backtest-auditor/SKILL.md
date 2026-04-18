@@ -101,7 +101,16 @@ Always structure output in this order:
 - Missing baselines
 - Reproducibility gaps
 - Recommended fixes
+- Next proposed experiments or runs (if requested or justified)
 - Leaderboard comparability impact (REQUIRED)
+
+Run specification rule (MANDATORY):
+- For each proposed run, include:
+	- environment activation command (for example, `.venv` activation)
+	- runner command
+	- full relative script path when the runner is not in repository root (for example `scripts/runner_name.py`)
+	- key args and expected output artifact path(s)
+- Do not provide bare script names when the file lives in a subdirectory.
 
 For Stage 1 pivot audits, also state whether the evidence supports:
 - `signal_exists`

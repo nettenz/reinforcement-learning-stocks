@@ -169,14 +169,33 @@ def price_column(frame: pd.DataFrame) -> str:
     raise ValueError(f"No RawClose/Close column present. Columns: {list(frame.columns)}")
 
 
-def make_supervised_policy(train_frame: pd.DataFrame, feature_cols: list[str], horizon: int, model_type: str) -> SupervisedRegressionPolicy:
+def _build_targets(prices: pd.Series, horizon: int, target_mode: str) -> pd.Series:
+    future_prices = prices.shift(-horizon)
+    raw_targets = np.log(future_prices / prices).replace([np.inf, -np.inf], np.nan)
+    if target_mode == "raw":
+        return raw_targets
+    rolling_vol = raw_targets.rolling(20, min_periods=20).std().shift(1)
+    targets = raw_targets / (rolling_vol + 1e-8)
+    if target_mode == "vol_norm_clipped":
+        targets = targets.clip(-3.0, 3.0)
+    return targets.replace([np.inf, -np.inf], np.nan)
+
+
+def make_supervised_policy(
+    train_frame: pd.DataFrame,
+    feature_cols: list[str],
+    horizon: int,
+    model_type: str,
+    target_mode: str,
+    seed: int,
+) -> SupervisedRegressionPolicy:
     price_col = price_column(train_frame)
     prices = pd.to_numeric(train_frame[price_col], errors="coerce")
     features = train_frame[feature_cols].replace([np.inf, -np.inf], np.nan)
     valid_mask = np.isfinite(features.to_numpy()).all(axis=1)
 
     future_prices = prices.shift(-horizon)
-    targets = np.log(future_prices / prices).replace([np.inf, -np.inf], np.nan)
+    targets = _build_targets(prices=prices, horizon=horizon, target_mode=target_mode)
     valid_mask &= prices.notna().to_numpy() & future_prices.notna().to_numpy() & targets.notna().to_numpy()
 
     X_train = features.to_numpy()[valid_mask]
@@ -184,7 +203,7 @@ def make_supervised_policy(train_frame: pd.DataFrame, feature_cols: list[str], h
     if len(X_train) < 20:
         raise ValueError(f"Too few valid training rows: {len(X_train)}")
 
-    policy = SupervisedRegressionPolicy(model_class=model_type)
+    policy = SupervisedRegressionPolicy(model_class=model_type, random_state=seed)
     policy.train(X_train, y_train)
     return policy
 
@@ -246,12 +265,33 @@ def evaluate_policy(frame: pd.DataFrame, feature_cols: list[str], policy, policy
     )
 
 
-def run_for_ticker(ticker: str, horizon: int, include_news: bool, model_type: str, threshold: float, include_simple_rules: bool) -> dict:
+def run_for_ticker(
+    ticker: str,
+    horizon: int,
+    include_news: bool,
+    model_type: str,
+    threshold: float,
+    include_simple_rules: bool,
+    target_mode: str,
+    seed: int,
+    train_ratio: float,
+    val_ratio: float,
+) -> dict:
+    if train_ratio <= 0 or val_ratio <= 0 or (train_ratio + val_ratio) >= 1.0:
+        raise ValueError(f"Invalid split ratios: train_ratio={train_ratio}, val_ratio={val_ratio}. Require train>0, val>0, train+val<1.")
+
     frame = prepare_dataframe(ticker=ticker, include_news=include_news, use_stationary_features=True)
     feature_cols = select_feature_columns(frame, include_news=include_news)
-    splits = split_walk_forward(frame)
+    splits = split_walk_forward(frame, train_ratio=train_ratio, val_ratio=val_ratio)
 
-    supervised_policy = make_supervised_policy(splits["train"], feature_cols=feature_cols, horizon=horizon, model_type=model_type)
+    supervised_policy = make_supervised_policy(
+        splits["train"],
+        feature_cols=feature_cols,
+        horizon=horizon,
+        model_type=model_type,
+        target_mode=target_mode,
+        seed=seed,
+    )
     supervised_policy = MarketFeaturePolicyWrapper(supervised_policy, market_feature_count=len(feature_cols))
     supervised_policy = PredictionThresholdPolicyWrapper(supervised_policy, long_threshold=threshold)
     policies: list[tuple[str, object]] = [
@@ -271,6 +311,11 @@ def run_for_ticker(ticker: str, horizon: int, include_news: bool, model_type: st
         "ticker": ticker,
         "horizon": horizon,
         "include_news": include_news,
+        "target_mode": target_mode,
+        "seed": int(seed),
+        "train_ratio": float(train_ratio),
+        "val_ratio": float(val_ratio),
+        "test_ratio": float(1 - train_ratio - val_ratio),
         "feature_count": len(feature_cols),
         "feature_columns": feature_cols,
         "splits": {},
@@ -307,6 +352,10 @@ def main() -> int:
     parser.add_argument("--include-news", action="store_true", help="Include news features")
     parser.add_argument("--include-simple-rules", action="store_true", help="Add momentum and mean-reversion rule baselines")
     parser.add_argument("--model-type", type=str, default="linear", choices=["linear", "rf", "xgb", "mlp"], help="Supervised model type")
+    parser.add_argument("--target-mode", type=str, default="raw", choices=["raw", "vol_norm", "vol_norm_clipped"], help="Supervised target construction mode")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for supervised model")
+    parser.add_argument("--train-ratio", type=float, default=0.70, help="Train split ratio (default: 0.70)")
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="Validation split ratio (default: 0.15)")
     parser.add_argument("--threshold", type=float, default=0.0005, help="Prediction threshold for long/flat/short trading rule")
     args = parser.parse_args()
 
@@ -318,6 +367,11 @@ def main() -> int:
         "horizon": args.horizon,
         "include_news": bool(args.include_news),
         "model_type": args.model_type,
+        "target_mode": args.target_mode,
+        "seed": int(args.seed),
+        "train_ratio": float(args.train_ratio),
+        "val_ratio": float(args.val_ratio),
+        "test_ratio": float(1 - args.train_ratio - args.val_ratio),
         "reports": [],
     }
 
@@ -330,6 +384,10 @@ def main() -> int:
             model_type=args.model_type,
             threshold=args.threshold,
             include_simple_rules=bool(args.include_simple_rules),
+            target_mode=args.target_mode,
+            seed=int(args.seed),
+            train_ratio=float(args.train_ratio),
+            val_ratio=float(args.val_ratio),
         )
         payload["reports"].append(report)
 

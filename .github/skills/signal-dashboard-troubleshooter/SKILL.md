@@ -169,7 +169,16 @@ Always return sections in this exact order:
 4. **Exact file/function locations**
 5. **Recommended patch plan**
 6. **Regression checks**
-7. **Leaderboard comparability impact (REQUIRED)**
+7. **Next proposed experiments or runs (if requested or justified)**
+8. **Leaderboard comparability impact (REQUIRED)**
+
+Run specification rule (MANDATORY):
+- For each proposed run, include:
+  - environment activation command (for example, `.venv` activation)
+  - runner command
+  - full relative script path when the runner is not in repository root (for example `scripts/runner_name.py`)
+  - key args and expected output artifact path(s)
+- Do not provide bare script names when the file lives in a subdirectory.
 
 ## Stage 1 Pivot Rule
 When Stage 1 pivot artifacts are involved, explicitly state whether the dashboard should:

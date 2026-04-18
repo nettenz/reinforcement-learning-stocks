@@ -52,6 +52,7 @@ def train_supervised_baseline(
     output_dir: str = 'results/',
     seed: int = 42,
     output_name: str | None = None,
+    target_mode: str = 'raw',
 ) -> Dict:
     """
     Train and evaluate a supervised baseline for Stage 1.
@@ -66,6 +67,7 @@ def train_supervised_baseline(
         val_ratio: Fraction of data for validation
         output_dir: Directory to save results
         seed: Random seed
+        target_mode: 'raw', 'vol_norm', or 'vol_norm_clipped'
     
     Returns:
         Results dictionary with metrics and model info
@@ -77,8 +79,12 @@ def train_supervised_baseline(
     print(f"{'='*70}")
     print(f"Horizon: {horizon} days")
     print(f"Model: {model_type}")
+    print(f"Target mode: {target_mode}")
     print(f"Features: stationary={use_stationary}, news={use_news}")
     print(f"Train/Val/Test: {train_ratio:.0%} / {val_ratio:.0%} / {1-train_ratio-val_ratio:.0%}")
+
+    if train_ratio <= 0 or val_ratio <= 0 or (train_ratio + val_ratio) >= 1.0:
+        raise ValueError(f"Invalid split ratios: train_ratio={train_ratio}, val_ratio={val_ratio}. Require train>0, val>0, train+val<1.")
     
     # Step 1: Load data (includes stationary features if use_stationary=True)
     print(f"\n[1/6] Loading data for {ticker}...")
@@ -137,8 +143,16 @@ def train_supervised_baseline(
     # Predict the forward log return over the requested horizon.
     # For horizon=1 this is log(P[t+1] / P[t]).
     future_prices = price_series.shift(-horizon)
-    targets = np.log(future_prices / price_series)
-    targets = targets.replace([np.inf, -np.inf], np.nan)
+    raw_targets = np.log(future_prices / price_series).replace([np.inf, -np.inf], np.nan)
+
+    if target_mode == 'raw':
+        targets = raw_targets
+    else:
+        rolling_vol = raw_targets.rolling(20, min_periods=20).std().shift(1)
+        targets = raw_targets / (rolling_vol + 1e-8)
+        if target_mode == 'vol_norm_clipped':
+            targets = targets.clip(-3.0, 3.0)
+        targets = targets.replace([np.inf, -np.inf], np.nan)
 
     valid_price_mask = price_series.notna() & (price_series > 0)
     valid_future_mask = future_prices.notna() & (future_prices > 0)
@@ -196,7 +210,7 @@ def train_supervised_baseline(
     
     # Step 5: Train model
     print(f"\n[5/6] Training {model_type} model...")
-    model = SupervisedRegressionPolicy(model_class=model_type)
+    model = SupervisedRegressionPolicy(model_class=model_type, random_state=seed)
     model.train(X_train, y_train)
     print(f"  Model trained and ready for inference")
     
@@ -207,10 +221,14 @@ def train_supervised_baseline(
         'ticker': ticker,
         'horizon': horizon,
         'model_type': model_type,
+        'target_mode': target_mode,
         'use_stationary': use_stationary,
         'use_news': use_news,
         'n_features': X.shape[1],
         'feature_names': feature_cols,
+        'train_ratio': float(train_ratio),
+        'val_ratio': float(val_ratio),
+        'test_ratio': float(1 - train_ratio - val_ratio),
         'train_samples': len(X_train),
         'val_samples': len(X_val),
         'test_samples': len(X_test),
@@ -275,10 +293,17 @@ if __name__ == '__main__':
                        help='Model type (default: linear)')
     parser.add_argument('--use-news', action='store_true',
                        help='Include news sentiment features')
+    parser.add_argument('--train-ratio', type=float, default=0.70,
+                       help='Train split ratio (default: 0.70)')
+    parser.add_argument('--val-ratio', type=float, default=0.15,
+                       help='Validation split ratio (default: 0.15)')
     parser.add_argument('--output-dir', type=str, default='results/stage1/',
                        help='Output directory for results')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
+    parser.add_argument('--target-mode', type=str, default='raw',
+                       choices=['raw', 'vol_norm', 'vol_norm_clipped'],
+                       help='Target construction mode (default: raw)')
     parser.add_argument('--output-name', type=str, default='',
                        help='Optional output filename override (e.g., stage1_baseline_AAPL_linear_1h_seed7.json)')
     
@@ -289,9 +314,12 @@ if __name__ == '__main__':
         horizon=args.horizon,
         model_type=args.model_type,
         use_news=args.use_news,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
         output_dir=args.output_dir,
         seed=args.seed,
-        output_name=(args.output_name.strip() or None)
+        output_name=(args.output_name.strip() or None),
+        target_mode=args.target_mode,
     )
     
     print(f"Summary: {results}")

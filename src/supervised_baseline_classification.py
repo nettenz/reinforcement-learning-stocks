@@ -126,7 +126,7 @@ def run_baseline(
     y_val_cls = _classify_targets(y_val, class_threshold=class_threshold)
     y_test_cls = _classify_targets(y_test, class_threshold=class_threshold)
 
-    policy = SupervisedClassificationPolicy(model_class=model_type)
+    policy = SupervisedClassificationPolicy(model_class=model_type, random_state=seed)
     policy.train(X_train, y_train_cls)
 
     # Probabilistic class expectation mapped to signed-return proxy for gate-compatible R2.

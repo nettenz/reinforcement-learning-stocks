@@ -102,7 +102,16 @@ Always structure findings into these sections exactly:
 5. Minimal patch plan
 6. Advanced realism roadmap
 7. Regression risks introduced by changes
-8. Pipeline Decision
+8. Next proposed experiments or runs (if requested or justified)
+9. Pipeline Decision
+
+Run specification rule (MANDATORY):
+- For each proposed run, include:
+  - environment activation command (for example, `.venv` activation)
+  - runner command
+  - full relative script path when the runner is not in repository root (for example `scripts/runner_name.py`)
+  - key args and expected output artifact path(s)
+- Do not provide bare script names when the file lives in a subdirectory.
 
 ## Recommended Fix Patterns
 Use when appropriate, with file/function targets and patch sketches:
