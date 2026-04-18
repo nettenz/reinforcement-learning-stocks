@@ -96,20 +96,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "Step 5 gate evaluation failed"
 }
 
-$reportOutputName = "stage1-step5-quant-report.md"
-Write-Host "`nGenerating quant report..." -ForegroundColor Cyan
-& $PythonCmd "src/quant_report.py" `
-    "--stage1-gate-json" $gateJson `
-    "--output-dir" "sessions" `
-    "--output-name" $reportOutputName
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Step 5 quant report generation failed"
-}
-
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "Step 5 Complete" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Gate JSON: $gateJson" -ForegroundColor Green
 Write-Host "Gate MD:   $gateMd" -ForegroundColor Green
-Write-Host "Report:    sessions/$reportOutputName" -ForegroundColor Green

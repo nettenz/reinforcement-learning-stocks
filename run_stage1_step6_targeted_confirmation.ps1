@@ -111,7 +111,7 @@ foreach ($ticker in $TickerList) {
 }
 Write-Host ""
 
-$PhaseCount = 4
+$PhaseCount = 3
 $CurrentPhase = 0
 
 # Phase 1: Train supervised baselines for each ticker/model pair.
@@ -208,23 +208,6 @@ Invoke-CheckedPython -PythonArgs $gateArgs -FailureMessage "Step 6 gate evaluati
 Write-Progress -Id 2 -ParentId 1 -Activity $phaseName -Status "Gate report complete" -PercentComplete 100
 Write-Progress -Id 2 -Activity $phaseName -Completed
 
-# Phase 4: Quant report generation for human review.
-$CurrentPhase++
-$phaseName = "Phase 4/4 - Quant report"
-Write-Progress -Id 1 -Activity "Stage 1 Step 6" -Status $phaseName -PercentComplete (($CurrentPhase - 1) / $PhaseCount * 100)
-Write-Progress -Id 2 -ParentId 1 -Activity $phaseName -Status "Running quant_report.py" -PercentComplete 50
-
-$reportOutputName = "stage1-step6-quant-report-${Timestamp}.md"
-$reportArgs = @(
-    "src/quant_report.py",
-    "--stage1-gate-json", $gateJson,
-    "--output-dir", "sessions",
-    "--output-name", $reportOutputName
-)
-Invoke-CheckedPython -PythonArgs $reportArgs -FailureMessage "Step 6 quant report generation failed"
-
-Write-Progress -Id 2 -ParentId 1 -Activity $phaseName -Status "Quant report complete" -PercentComplete 100
-Write-Progress -Id 2 -Activity $phaseName -Completed
 Write-Progress -Id 1 -Activity "Stage 1 Step 6" -Completed
 
 Write-Host "`n========================================" -ForegroundColor Cyan
@@ -232,4 +215,3 @@ Write-Host "Step 6 Complete" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Gate JSON: $gateJson" -ForegroundColor Green
 Write-Host "Gate MD:   $gateMd" -ForegroundColor Green
-Write-Host "Report:    sessions/$reportOutputName" -ForegroundColor Green

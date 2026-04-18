@@ -111,7 +111,7 @@ def main() -> int:
         "Regression baselines",
         "Classification baselines",
         "Narrow trading sweep (+simple rules)",
-        "Main gate + quant report",
+        "Main gate",
         "3-seed finalist confirmation",
     ]
 
@@ -233,10 +233,9 @@ def main() -> int:
             trading_outputs.append(out_path)
     phase_bar.update(1)
 
-    # Phase 5: gate and quant report for main batch.
+    # Phase 5: gate for main batch.
     gate_json = logs_dir / f"stage1_gate_report_step7_{timestamp}.json"
     gate_md = logs_dir / f"stage1_gate_report_step7_{timestamp}.md"
-    report_name = f"stage1-step7-quant-report-{timestamp}.md"
 
     run_cmd(
         [
@@ -254,19 +253,6 @@ def main() -> int:
         desc="main stage1 gate",
     )
 
-    run_cmd(
-        [
-            sys.executable,
-            "src/quant_report.py",
-            "--stage1-gate-json",
-            str(gate_json),
-            "--output-dir",
-            str(sessions_dir),
-            "--output-name",
-            report_name,
-        ],
-        desc="main quant report",
-    )
     phase_bar.update(1)
 
     # Phase 6: seed confirmation for finalists.
@@ -321,7 +307,6 @@ def main() -> int:
 
     confirm_gate_json = logs_dir / f"stage1_gate_report_step7_confirm_{timestamp}.json"
     confirm_gate_md = logs_dir / f"stage1_gate_report_step7_confirm_{timestamp}.md"
-    confirm_report_name = f"stage1-step7-confirm-quant-report-{timestamp}.md"
 
     run_cmd(
         [
@@ -339,19 +324,6 @@ def main() -> int:
         desc="confirmation stage1 gate",
     )
 
-    run_cmd(
-        [
-            sys.executable,
-            "src/quant_report.py",
-            "--stage1-gate-json",
-            str(confirm_gate_json),
-            "--output-dir",
-            str(sessions_dir),
-            "--output-name",
-            confirm_report_name,
-        ],
-        desc="confirmation quant report",
-    )
     phase_bar.update(1)
     phase_bar.close()
 
@@ -361,9 +333,7 @@ def main() -> int:
     print(f"Hardware report: {accel_path}")
     print(f"Main gate JSON:  {gate_json}")
     print(f"Main gate MD:    {gate_md}")
-    print(f"Main report:     {sessions_dir / report_name}")
     print(f"Confirm gate:    {confirm_gate_json}")
-    print(f"Confirm report:  {sessions_dir / confirm_report_name}")
     print("\nHardware acceleration summary:")
     print(f"  xgboost installed:   {accel_report['xgboost_installed']}")
     print(f"  xgboost CUDA active: {accel_report['xgboost_cuda_enabled']}")

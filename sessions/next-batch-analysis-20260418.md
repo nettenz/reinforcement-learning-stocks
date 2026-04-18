@@ -96,6 +96,3 @@ Analysis of how varying hyperparameters impacted performance (averaged across se
 3. **Seed Instability:** Cross-seed variance is high (CV=1.39). Increase `ent_coef` to encourage broader exploration during training.
 4. **Alpha Deficit:** Strategy underperforms QQQ benchmark. Consider switching to `sharpe` or `sortino` reward modes to prioritize risk-adjusted growth.
 
-
----
-
