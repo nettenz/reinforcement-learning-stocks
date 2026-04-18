@@ -73,7 +73,7 @@ Snapshot Files Scanned:        564
 
 ### Dry-Run (Safe, shows what would happen)
 ```bash
-python sanity_scan.py --root-dir . --apply dry-run
+python scripts/sanity_scan.py --root-dir . --apply dry-run
 ```
 
 ### Full Report Review

@@ -12,54 +12,54 @@ Two-tool system for diagnosing and fixing RL trading experiment data quality iss
 ### Windows PowerShell
 ```powershell
 # Preview what will happen (safe)
-.\run_sanitize.ps1
+.\scripts\run_sanitize.ps1
 
 # Apply mutations
-.\run_sanitize.ps1 -Action execute
+.\scripts\run_sanitize.ps1 -Action execute
 
 # Force (expert mode, skip checks)
-.\run_sanitize.ps1 -Action force
+.\scripts\run_sanitize.ps1 -Action force
 ```
 
 ### Linux/macOS Bash
 ```bash
 # Preview what will happen (safe)
-./run_sanitize.sh
+./scripts/run_sanitize.sh
 
 # Apply mutations
-./run_sanitize.sh execute
+./scripts/run_sanitize.sh execute
 
 # Force (expert mode, skip checks)
-./run_sanitize.sh force
+./scripts/run_sanitize.sh force
 ```
 
 ### Direct Python
 ```bash
 # Preview (default - no mutations)
-python sanitize_apply.py --root-dir .
+python scripts/sanitize_apply.py --root-dir .
 
 # Apply mutations
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 
 # Force override
-python sanitize_apply.py --root-dir . --execute --force
+python scripts/sanitize_apply.py --root-dir . --execute --force
 ```
 
 ## Complete Workflow
 
 ```bash
 # 1️⃣ Diagnose issues
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 # → Creates: reports/sanity_scan_report.json
 
 # 2️⃣ Preview mutations (no changes yet)
-python sanitize_apply.py --root-dir . --dry-run
+python scripts/sanitize_apply.py --root-dir . --dry-run
 
 # 3️⃣ Apply mutations (creates backups first!)
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 
 # 4️⃣ Verify clean state
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 
 # 5️⃣ Keep rollback guide handy
 cat docs/ROLLBACK_GUIDE.md
@@ -141,25 +141,25 @@ restored.to_csv('data/experiment_leaderboard.csv', index=False)
 
 ```bash
 # Preview mutations
-python sanitize_apply.py --root-dir .
+python scripts/sanitize_apply.py --root-dir .
 
 # Preview with verbose output
-python sanitize_apply.py --root-dir . --dry-run
+python scripts/sanitize_apply.py --root-dir . --dry-run
 
 # Execute (apply mutations)
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 
 # Execute with custom paths
-python sanitize_apply.py \
+python scripts/sanitize_apply.py \
   --root-dir . \
   --data-dir data \
   --report-json reports/sanity_scan_report.json
 
 # Force re-application (dangerous!)
-python sanitize_apply.py --root-dir . --execute --force
+python scripts/sanitize_apply.py --root-dir . --execute --force
 
 # Show help
-python sanitize_apply.py --help
+python scripts/sanitize_apply.py --help
 ```
 
 ## Files Delivered
@@ -183,7 +183,7 @@ python sanitize_apply.py --help
 
 Run tests:
 ```bash
-python test_sanitize_apply.py
+python scripts/test_sanitize_apply.py
 ```
 
 ## Version Info
@@ -205,7 +205,7 @@ python test_sanitize_apply.py
 ## Command Line Reference
 
 ```
-Usage: python sanitize_apply.py [options]
+Usage: python scripts/sanitize_apply.py [options]
 
 Options:
   --root-dir PATH               Repository root (default: .)
@@ -222,9 +222,9 @@ Options:
 ## Next Steps
 
 1. Read: `docs/SANITIZE_APPLY_GUIDE.md`
-2. Test: `python sanitize_apply.py --dry-run`
-3. Execute: `python sanitize_apply.py --execute`
-4. Verify: `python sanity_scan.py --root-dir .`
+2. Test: `python scripts/sanitize_apply.py --dry-run`
+3. Execute: `python scripts/sanitize_apply.py --execute`
+4. Verify: `python scripts/sanity_scan.py --root-dir .`
 5. Archive: `cp docs/ROLLBACK_GUIDE.md docs/ROLLBACK_GUIDE_backup.md`
 
 ## Status

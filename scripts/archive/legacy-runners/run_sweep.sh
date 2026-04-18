@@ -1,14 +1,44 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Activate virtual environment
-source .venv/Scripts/activate
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$SCRIPT_DIR"
+while [[ "$ROOT_DIR" != "/" && ! -f "$ROOT_DIR/src/experiments.py" ]]; do
+  ROOT_DIR="$(dirname "$ROOT_DIR")"
+done
 
-# Detect Python executable for Windows/POSIX compatibility
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "mingw"* ]]; then
-    PYTHON=".venv\\Scripts\\python.exe"
-else
-    PYTHON="python"
+if [[ ! -f "$ROOT_DIR/src/experiments.py" ]]; then
+  echo "Could not locate repository root containing src/experiments.py." >&2
+  exit 1
 fi
+
+cd "$ROOT_DIR"
+
+resolve_python() {
+  if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    echo "$ROOT_DIR/.venv/bin/python"
+    return 0
+  fi
+  if [[ -x "$ROOT_DIR/.venv/bin/python3" ]]; then
+    echo "$ROOT_DIR/.venv/bin/python3"
+    return 0
+  fi
+  if [[ -x "$ROOT_DIR/.venv/Scripts/python.exe" ]]; then
+    echo "$ROOT_DIR/.venv/Scripts/python.exe"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    command -v python
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+  return 1
+}
+
+PYTHON_EXEC="$(resolve_python)"
 
 # Array of target seeds
 SEEDS=(2 3 4 5)
@@ -32,18 +62,12 @@ for seed in "${SEEDS[@]}"; do
         IFS=':' read -r mode window <<< "$config"
         
         # Execute the python script for Windows bash
-        CMD="$PYTHON src/experiments.py --device cuda --append --reward-mode $mode --rolling-reward-window $window --seed $seed"
+        CMD="$PYTHON_EXEC src/experiments.py --device cuda --append --reward-mode $mode --rolling-reward-window $window --seed $seed"
         
         echo -e "\033[1;33mRunning: $CMD\033[0m"
         
         # Execute the command
-        $PYTHON src/experiments.py --device cuda --append --reward-mode "$mode" --rolling-reward-window "$window" --seed "$seed"
-        
-        # Check for errors
-        if [ $? -ne 0 ]; then
-            echo "Sweep interrupted or failed."
-            exit 1
-        fi
+        "$PYTHON_EXEC" src/experiments.py --device cuda --append --reward-mode "$mode" --rolling-reward-window "$window" --seed "$seed"
     done
 done
 
@@ -60,8 +84,8 @@ echo -e "\033[1;33mCurrent AMD Test Accuracy: 0.5226 (0.18% short of 0.5300 gate
 
 # Fix 1a: Lower Action Bonus (0.01) - Reduce trading noise
 echo -e "\033[1;36m\n[1a] Running AMD Fix: Lower Action Bonus (0.01)...\033[0m"
-$PYTHON src/experiments.py --ticker amd --seeds 7,21,13 --timesteps 20000 --reward-mode sharpe --reward-action-bonus-scale 0.01 --append --run-label amd-sharpe-bonus-001
-if [ $? -eq 0 ]; then
+"$PYTHON_EXEC" src/experiments.py --ticker amd --seeds 7,21,13 --timesteps 20000 --reward-mode sharpe --reward-action-bonus-scale 0.01 --append --run-label amd-sharpe-bonus-001
+if [[ $? -eq 0 ]]; then
     echo -e "\033[1;32m✓ Fix 1a potential success! Check leaderboard for accuracy >= 0.5300\033[0m"
     echo -e "\033[1;32mIf successful, promotion ready.\033[0m"
 else
@@ -70,8 +94,8 @@ fi
 
 # Fix 1b: Higher Entropy (0.10) - More exploration, better decision boundary
 echo -e "\033[1;36m\n[1b] Running AMD Fix: Higher Entropy (0.10)...\033[0m"
-$PYTHON src/experiments.py --ticker amd --seeds 7 --timesteps 20000 --reward-mode sharpe --ent-coefs 0.10 --append --run-label amd-sharpe-entropy-010
-if [ $? -eq 0 ]; then
+"$PYTHON_EXEC" src/experiments.py --ticker amd --seeds 7 --timesteps 20000 --reward-mode sharpe --ent-coefs 0.10 --append --run-label amd-sharpe-entropy-010
+if [[ $? -eq 0 ]]; then
     echo -e "\033[1;32m✓ Fix 1b potential success! Check leaderboard for accuracy >= 0.5300\033[0m"
     echo -e "\033[1;32mIf successful, promotion ready.\033[0m"
 else
@@ -80,8 +104,8 @@ fi
 
 # Fix 1c: Longer Rolling Window (200) - More stable Sharpe in early episodes
 echo -e "\033[1;36m\n[1c] Running AMD Fix: Longer Rolling Window (200)...\033[0m"
-$PYTHON src/experiments.py --ticker amd --seeds 7 --timesteps 20000 --reward-mode sharpe --rolling-reward-window 200 --append --run-label amd-sharpe-window-200
-if [ $? -eq 0 ]; then
+"$PYTHON_EXEC" src/experiments.py --ticker amd --seeds 7 --timesteps 20000 --reward-mode sharpe --rolling-reward-window 200 --append --run-label amd-sharpe-window-200
+if [[ $? -eq 0 ]]; then
     echo -e "\033[1;32m✓ Fix 1c potential success! Check leaderboard for accuracy >= 0.5300\033[0m"
     echo -e "\033[1;32mIf successful, promotion ready.\033[0m"
 else

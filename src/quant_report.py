@@ -97,6 +97,83 @@ DEFAULT_LEADERBOARD = ROOT_DIR / "data" / "experiment_leaderboard.csv"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "sessions"
 
 
+def generate_stage1_gate_report(gate_payload: dict[str, object], source_path: Path | None = None) -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    source_text = str(source_path) if source_path is not None else "(in-memory)"
+
+    verdict = str(gate_payload.get("verdict", "unknown"))
+    baseline_pass = bool(gate_payload.get("baseline_gate_passed", False))
+    trading_pass = bool(gate_payload.get("trading_gate_passed", False))
+    baseline_checks = gate_payload.get("baseline_checks", []) or []
+    trading_checks = gate_payload.get("trading_checks", []) or []
+
+    lines: list[str] = []
+    lines.append("# Quant Professional Interpretation: Stage 1 Gate Report")
+    lines.append(f"**Generated:** {timestamp}  ")
+    lines.append(f"**Source:** {source_text}  ")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## Executive Summary")
+    lines.append(f"- **Overall Verdict:** `{verdict}`")
+    lines.append(f"- **Baseline Gate Passed:** `{baseline_pass}`")
+    lines.append(f"- **Trading Gate Passed:** `{trading_pass}`")
+    lines.append(f"- **Baseline Checks:** {len(baseline_checks)}")
+    lines.append(f"- **Trading Checks:** {len(trading_checks)}")
+    lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("## Baseline Gate Details")
+    if baseline_checks:
+        lines.append("| Ticker | Passed | Model | Horizon | Val R2 | Test R2 |")
+        lines.append("|---|---|---|---:|---:|---:|")
+        for check in baseline_checks:
+            best = check.get("best_run", {}) if isinstance(check, dict) else {}
+            lines.append(
+                f"| {check.get('ticker', 'N/A')} | {check.get('passed', False)} | "
+                f"{best.get('model_type', 'N/A')} | {best.get('horizon', 'N/A')} | "
+                f"{best.get('val_r2', float('nan')):.4f} | {best.get('test_r2', float('nan')):.4f} |"
+            )
+    else:
+        lines.append("No baseline checks found.")
+    lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("## Trading Gate Details")
+    if trading_checks:
+        lines.append("| Ticker | Passed | Policy | Supervised Return | Flat Return | Buy&Hold Return | Sharpe-like | Trades |")
+        lines.append("|---|---|---|---:|---:|---:|---:|---:|")
+        for check in trading_checks:
+            summary = check.get("summary", {}) if isinstance(check, dict) else {}
+            lines.append(
+                f"| {check.get('ticker', 'N/A')} | {check.get('passed', False)} | {summary.get('supervised_policy_name', 'N/A')} | "
+                f"{summary.get('supervised_return', float('nan')):.4f} | {summary.get('flat_return', float('nan')):.4f} | "
+                f"{summary.get('buy_hold_return', float('nan')):.4f} | {summary.get('supervised_sharpe_like', float('nan')):.4f} | "
+                f"{summary.get('trade_count', 0)} |"
+            )
+    else:
+        lines.append("No trading checks found.")
+    lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("## Interpretation")
+    if verdict == "signal_exists":
+        lines.append("Stage 1 currently clears the gate. The immediate next move is to run a tight confirmatory rerun and then proceed to Stage 2 simplification.")
+    else:
+        if trading_pass and not baseline_pass:
+            lines.append("Trading behavior now looks promising, but baseline predictive gate remains the blocker. Focus next on baseline criteria/design alignment before RL escalation.")
+        elif baseline_pass and not trading_pass:
+            lines.append("Predictive baseline gate passes while trading gate fails; focus on execution thresholding and trade mapping calibration.")
+        else:
+            lines.append("Both baseline and trading gates are failing; continue Stage 1 diagnosis and avoid moving to RL complexity.")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 def _latest_comparable_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "leaderboard_version" not in df.columns:
         return df
@@ -481,24 +558,37 @@ def generate_report(df: pd.DataFrame) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Generate a Quant Professional Interpretation report from experiment results.")
     parser.add_argument("--input", default=str(DEFAULT_LEADERBOARD), help="Path to leaderboard CSV.")
+    parser.add_argument("--stage1-gate-json", default="", help="Optional Stage 1 gate JSON path. If set, a Stage 1 report is generated from this JSON instead of leaderboard CSV.")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory to write the report.")
     parser.add_argument("--output-name", default="", help="Custom filename (default: auto-timestamped).")
     args = parser.parse_args()
 
-    input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"ERROR: Leaderboard not found at {input_path}")
-        sys.exit(1)
+    stage1_gate_json = str(args.stage1_gate_json).strip()
+    if stage1_gate_json:
+        gate_path = Path(stage1_gate_json)
+        if not gate_path.is_absolute():
+            gate_path = ROOT_DIR / gate_path
+        if not gate_path.exists():
+            print(f"ERROR: Stage 1 gate JSON not found at {gate_path}")
+            sys.exit(1)
+        gate_payload = json.loads(gate_path.read_text(encoding="utf-8"))
+        report = generate_stage1_gate_report(gate_payload=gate_payload, source_path=gate_path)
+    else:
+        input_path = Path(args.input)
+        if not input_path.is_absolute():
+            input_path = ROOT_DIR / input_path
+        if not input_path.exists():
+            print(f"ERROR: Leaderboard not found at {input_path}")
+            sys.exit(1)
 
-    df = pd.read_csv(input_path)
-    df = _latest_comparable_leaderboard(df)
-    if df.empty:
-        print("ERROR: Leaderboard is empty.")
-        sys.exit(1)
+        df = pd.read_csv(input_path)
+        df = _latest_comparable_leaderboard(df)
+        if df.empty:
+            print("ERROR: Leaderboard is empty.")
+            sys.exit(1)
 
-    df = df.sort_values("ranking_score", ascending=False).reset_index(drop=True)
-
-    report = generate_report(df)
+        df = df.sort_values("ranking_score", ascending=False).reset_index(drop=True)
+        report = generate_report(df)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,6 @@
 ---
 name: quant-experiment-strategist
-description: 'Analyze RL trading experiment results, diagnose performance patterns, and propose the next best experiments. Use for src/experiments.py, src/signal_analytics.py, src/trading_env.py, src/market_data.py, leaderboard artifacts, and experiment snapshots to drive hypothesis-led iteration.'
+description: 'Analyze trading research outputs across RL and Stage 1 signal-first pivot artifacts, diagnose performance patterns, and propose the next best experiments. Use for src/experiments.py, src/signal_analytics.py, src/trading_env.py, src/market_data.py, stage1 gate/trading outputs, leaderboard artifacts, and experiment snapshots to drive hypothesis-led iteration.'
 argument-hint: 'What experiment artifacts or date range should be analyzed?'
 user-invocable: true
 ---
@@ -10,24 +10,38 @@ user-invocable: true
 Quant research strategy workflow for reinforcement-learning experiment analysis, diagnosis, and next-step planning.
 
 ## Objective
-Analyze RL experiment outputs to infer model behavior and robustness, then recommend the highest-value next experiments that improve confidence and tradability.
+Analyze experiment outputs (RL track or Stage 1 signal-first pivot track) to infer behavior and robustness, then recommend the highest-value next experiments that improve confidence and tradability.
 
 ## Default Focus Files
 - `src/experiments.py`
 - `src/signal_analytics.py`
 - `src/trading_env.py`
 - `src/market_data.py`
+- `scripts/stage1_gate.py`
+- `scripts/evaluate_stage1_trading.py`
+- `run_stage1_step4_mixed_threshold_gate.ps1`
 - `data/experiment_leaderboard.csv`
 - `data/experiment_reward_leaderboard.csv`
 - `data/experiment_summary.json`
 - `data/experiment_snapshots/`
+- `results/stage1/`
+- `results/stage1_confirmation_3seed/`
+- `logs/stage1_gate_report*.json`
+- `logs/stage1_trading_eval*.json`
 - Related reports, dashboards, and notebooks when available
 
 ## Core Procedure
 0. Confirm delivery mode
 - Ask whether the user wants analysis-only output or implementation-inclusive output with patch proposals.
 
+0.5. Detect active research track
+- Determine whether the user is on:
+  - **Stage 1 signal-first pivot track** (gate-centric, supervised baseline + trading eval), or
+  - **RL track** (leaderboard/reward mode/policy training).
+- If both are present, explicitly separate conclusions by track.
+
 1. Read and interpret experiment outputs
+- For Stage 1 track: evaluate baseline gate and trading gate first (`signal_exists` vs `signal_weak`) before proposing RL expansion.
 - Identify top-performing runs and profile stability vs instability.
 - Compare validation vs test behavior, including seed consistency.
 - Evaluate reward-mode behavior (`legacy`, `sharpe`, `sortino`).
@@ -73,6 +87,9 @@ For each proposed experiment include:
 - Mark results as exploratory vs confirmatory.
 
 ## Decision Logic
+- If Stage 1 trading gate passes but baseline gate fails: classify as **execution promising, predictive signal gate blocked**; prioritize baseline criteria/design alignment.
+- If Stage 1 baseline and trading gates both pass: classify as **signal_exists candidate** and recommend confirmatory rerun before RL escalation.
+- If Stage 1 gates fail: prioritize feature/target/data diagnostics over RL reward sweeps.
 - If best single run is isolated and seed-unstable: classify as non-actionable lead, not robust improvement.
 - If validation gains do not transfer to test: prioritize anti-overfitting and generalization checks.
 - If reward mode improves one metric but degrades deployment-relevant metrics: classify as reward trade-off requiring calibration.
@@ -100,6 +117,7 @@ Always return sections in this exact order:
 - Treat missing baselines as a non-blocking but important gap.
 - Include leaderboard comparability impact in every recommendation set.
 - Clearly label exploratory vs confirmatory recommendations.
+- If Stage 1 pivot artifacts are the active evidence source, do not let RL leaderboard rows override gate conclusions.
 
 ## Repository-Specific Interpretation Notes
 Apply these assumptions unless evidence says otherwise:
@@ -110,6 +128,9 @@ Apply these assumptions unless evidence says otherwise:
 - The environment uses continuous target weights.
 - The dataset is a synthetic tech basket, not a directly tradable single instrument.
 - News features are optional and can add noise or timing risk.
+- Stage 1 pivot uses gate-driven decisions from `scripts/stage1_gate.py` with outputs in `logs/stage1_gate_report*.json`.
+- Stage 1 pivot trading checks compare supervised thresholded policy against flat and buy-hold via `logs/stage1_trading_eval*.json`.
+- Stage 1 `signal_weak` blocks RL escalation unless there is an explicit override.
 
 ## Constraints
 - Do not overclaim causality from leaderboard metrics alone.
@@ -117,6 +138,7 @@ Apply these assumptions unless evidence says otherwise:
 - Do not recommend major framework rewrites as first step.
 - Keep recommendations concrete and experiment-oriented.
 - Do not omit comparability impact.
+- Do not merge Stage 1 gate evidence and RL leaderboard evidence into one score without stating the comparability limitation.
 
 ## Quality Checks Before Finalizing
 - Every claim ties to explicit experiment artifacts.
@@ -128,6 +150,7 @@ Apply these assumptions unless evidence says otherwise:
 
 ## Example Task
 - Analyze `data/experiment_leaderboard.csv` and propose the next three experiments.
+- Analyze `logs/stage1_gate_report_step4_*.json` and `logs/stage1_trading_eval*_step4.json` and propose the next three experiments.
 
 ## Example Output Fragment
 - Research Summary: Sharpe-mode runs improved validation quality but test stability remains weak across seeds.

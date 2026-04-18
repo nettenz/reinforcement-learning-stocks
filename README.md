@@ -154,7 +154,7 @@ Clean contaminated leaderboard data with a two-phase safe, reversible pipeline:
 
 **Phase 1: Detection** — `sanity_scan.py`
 ```bash
-python sanity_scan.py --root-dir . --apply dry-run
+python scripts/sanity_scan.py --root-dir . --apply dry-run
 ```
 Detects:
 - Mixed experiment families in leaderboards
@@ -166,9 +166,9 @@ Detects:
 
 **Phase 2: Safe Mutation** — `sanitize_apply.py`
 ```bash
-python sanitize_apply.py --dry-run                 # Preview (safe)
-python sanitize_apply.py --execute                 # Apply mutations
-python sanitize_apply.py --execute --remove-orphans # Also clean orphaned models
+python scripts/sanitize_apply.py --dry-run                 # Preview (safe)
+python scripts/sanitize_apply.py --execute                 # Apply mutations
+python scripts/sanitize_apply.py --execute --remove-orphans # Also clean orphaned models
 ```
 
 Features:
@@ -216,7 +216,7 @@ Comprehensive data quality audit for experiment leaderboards, identifying issues
 
 **Usage:**
 ```bash
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 ```
 
 Generates:
@@ -241,13 +241,13 @@ Safe, reversible data mutation tool that reads `sanity_scan.py` output and appli
 **Usage:**
 ```bash
 # Preview mutations (default)
-python sanitize_apply.py --root-dir .
+python scripts/sanitize_apply.py --root-dir .
 
 # Apply mutations
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 
 # Re-apply with force (dangerous)
-python sanitize_apply.py --root-dir . --execute --force
+python scripts/sanitize_apply.py --root-dir . --execute --force
 ```
 
 **Output Structure:**
@@ -262,16 +262,16 @@ docs/ROLLBACK_GUIDE.md               (recovery procedures)
 **Typical Workflow:**
 ```bash
 # 1. Scan for issues
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 
 # 2. Preview mutations
-python sanitize_apply.py --root-dir . --dry-run
+python scripts/sanitize_apply.py --root-dir . --dry-run
 
 # 3. Apply mutations
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 
 # 4. Verify clean state
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 ```
 
 See `docs/SANITIZE_APPLY_GUIDE.md` for detailed documentation.

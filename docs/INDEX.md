@@ -52,7 +52,7 @@
 
 ```
 1. Scan for contamination
-   python sanity_scan.py --root-dir . --apply dry-run
+   python scripts/sanity_scan.py --root-dir . --apply dry-run
    → reports/sanity_scan_report.json
    → reports/sanity_quarantine.json
 
@@ -61,11 +61,11 @@
    Read PHASE_1_COMPLETE.md for context
 
 3. Apply mutations (if approved)
-   python sanitize_apply.py --dry-run
-   python sanitize_apply.py --execute
+   python scripts/sanitize_apply.py --dry-run
+   python scripts/sanitize_apply.py --execute
 
 4. Verify clean state
-   python sanity_scan.py --root-dir .
+   python scripts/sanity_scan.py --root-dir .
    Check backups/, archives/, quarantine/ directories
 
 5. Rollback if needed

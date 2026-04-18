@@ -1,6 +1,6 @@
 ---
 name: signal-dashboard-troubleshooter
-description: 'Troubleshoot and adapt the signal analytics dashboard when new experiment data, schema changes, ticker fields, metrics, or leaderboard columns are introduced. Use for src/analytics_dashboard.py, src/signal_analytics.py, src/experiments.py, and experiment artifacts when dashboard views break, drift, or become inconsistent with current data.'
+description: 'Troubleshoot and adapt the signal analytics dashboard when new experiment data, schema changes, ticker fields, metrics, or leaderboard columns are introduced. Use for src/analytics_dashboard.py, src/signal_analytics.py, src/experiments.py, Stage 1 pivot artifacts, and experiment outputs when dashboard views break, drift, or become inconsistent with current data.'
 argument-hint: 'What new data, schema change, or dashboard issue should be investigated?'
 user-invocable: true
 ---
@@ -20,6 +20,7 @@ Use this skill to diagnose and fix dashboard issues caused by:
 - new feature flags
 - changed model output formats
 - new signal/trade analytics fields
+- Stage 1 signal-first pivot outputs and gate reports
 
 This skill is focused on **dashboard correctness and compatibility**, not strategy interpretation.
 
@@ -37,11 +38,19 @@ This skill is focused on **dashboard correctness and compatibility**, not strate
 - `src/experiments.py`
 - `src/signal_analytics.py`
 - `src/market_data.py`
+- `scripts/stage1_gate.py`
+- `scripts/evaluate_stage1_trading.py`
+- `run_stage1_step4_mixed_threshold_gate.ps1`
 - current leaderboard and summary artifacts:
   - `data/experiment_leaderboard.csv`
   - `data/experiment_reward_leaderboard.csv`
   - `data/experiment_summary.json`
   - `data/experiment_snapshots/`
+- Stage 1 pivot artifacts when relevant:
+  - `results/stage1/`
+  - `results/stage1_confirmation_3seed/`
+  - `logs/stage1_gate_report*.json`
+  - `logs/stage1_trading_eval*.json`
 
 ## Core Procedure
 
@@ -55,6 +64,10 @@ This skill is focused on **dashboard correctness and compatibility**, not strate
 - Ask whether output should be:
   - diagnosis only
   - diagnosis + patch proposal
+
+0.5. Identify artifact family
+- Determine whether the issue is in the RL dashboard path, the Stage 1 pivot path, or both.
+- Do not assume Stage 1 outputs should appear in existing RL dashboard views unless the code explicitly routes them there.
 
 Default: include patch proposal unless review-only is requested.
 
@@ -76,6 +89,7 @@ Identify:
 - renamed fields
 - type mismatches
 - optional fields that need safe fallbacks
+- Stage 1-specific fields that need separate treatment from RL leaderboard fields, such as baseline gate verdicts and trading gate summaries.
 
 2. Trace dashboard data flow
 Map:
@@ -97,6 +111,7 @@ Inspect whether dashboard code assumes:
 - fixed experiment config fields
 - fixed model path conventions
 - fixed signal analytics output shape
+- fixed artifact family (RL leaderboard only) when Stage 1 pivot artifacts may coexist in the workspace
 
 Flag hardcoded assumptions that will break when the experiment pipeline evolves.
 
@@ -126,6 +141,7 @@ Prefer minimal, safe changes such as:
 - version-aware loaders
 - additive UI controls
 - safer command-generation functions
+- separate loaders or view tabs for Stage 1 gate/trading outputs when they should not be merged into RL leaderboard summaries
 
 6. Define regression checks
 For every fix, propose validation steps such as:
@@ -143,6 +159,7 @@ For every fix, propose validation steps such as:
 - If new CLI arguments are introduced in `src/experiments.py`: ensure dashboard command builders include them.
 - If ticker-awareness was added: ensure every dashboard page and helper respects ticker filtering.
 - If old artifacts and new artifacts coexist: prefer backward-compatible parsing over forced migration.
+- If Stage 1 pivot artifacts coexist with RL outputs: keep parsing backward-compatible, but avoid silently merging their semantics into one chart/table.
 
 ## Required Output Format
 Always return sections in this exact order:
@@ -154,6 +171,14 @@ Always return sections in this exact order:
 6. **Regression checks**
 7. **Leaderboard comparability impact (REQUIRED)**
 
+## Stage 1 Pivot Rule
+When Stage 1 pivot artifacts are involved, explicitly state whether the dashboard should:
+- ignore them
+- display them in a separate view
+- or merge them with RL leaderboard artifacts
+
+Default: separate view or explicit exclusion, never silent merge.
+
 ## Leaderboard Comparability Rule (MANDATORY)
 For every recommendation set, include:
 - impact level: Low / Medium / High
@@ -162,6 +187,7 @@ For every recommendation set, include:
   - grouping semantics changed?
   - filter semantics changed?
   - old vs new artifacts may display differently?
+- if Stage 1 pivot data is introduced, say whether RL and Stage 1 views remain comparable or must remain separate
 
 Never omit this.
 

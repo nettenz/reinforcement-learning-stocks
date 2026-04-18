@@ -86,16 +86,16 @@ Delivered a production-ready `sanitize_apply.py` mutation script with comprehens
 
 ```bash
 # Preview (default - safe)
-python sanitize_apply.py --root-dir .
+python scripts/sanitize_apply.py --root-dir .
 
 # Apply mutations
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 
 # Force override (expert mode)
-python sanitize_apply.py --root-dir . --execute --force
+python scripts/sanitize_apply.py --root-dir . --execute --force
 
 # With custom directories
-python sanitize_apply.py \
+python scripts/sanitize_apply.py \
   --root-dir . \
   --data-dir data \
   --report-json reports/sanity_scan_report.json \
@@ -107,41 +107,41 @@ python sanitize_apply.py \
 ### Windows (PowerShell)
 ```powershell
 # Preview
-.\run_sanitize.ps1
+.\scripts\run_sanitize.ps1
 
 # Execute
-.\run_sanitize.ps1 -Action execute
+.\scripts\run_sanitize.ps1 -Action execute
 
 # Force
-.\run_sanitize.ps1 -Action force
+.\scripts\run_sanitize.ps1 -Action force
 ```
 
 ### Linux/macOS (Bash)
 ```bash
 # Preview
-./run_sanitize.sh
+./scripts/run_sanitize.sh
 
 # Execute
-./run_sanitize.sh execute
+./scripts/run_sanitize.sh execute
 
 # Force
-./run_sanitize.sh force
+./scripts/run_sanitize.sh force
 ```
 
 ## Workflow Example
 
 ```bash
 # 1. Scan for issues
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 
 # 2. Preview what sanitize_apply will do
-python sanitize_apply.py --root-dir . --dry-run
+python scripts/sanitize_apply.py --root-dir . --dry-run
 
 # 3. Apply mutations (if preview looks good)
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 
 # 4. Verify clean state
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 
 # 5. Check rollback guide (if needed)
 cat docs/ROLLBACK_GUIDE.md

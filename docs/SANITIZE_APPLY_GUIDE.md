@@ -73,7 +73,7 @@ A safe, reversible mutation script that reads `sanity_scan.py` output and applie
 
 ### Preview Mutations (Dry-Run, Default)
 ```bash
-python sanitize_apply.py --root-dir .
+python scripts/sanitize_apply.py --root-dir .
 ```
 
 Shows:
@@ -85,7 +85,7 @@ Shows:
 
 ### Apply Mutations
 ```bash
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 ```
 
 Interactive workflow:
@@ -99,14 +99,14 @@ Interactive workflow:
 
 ### Re-Apply with Force
 ```bash
-python sanitize_apply.py --root-dir . --execute --force
+python scripts/sanitize_apply.py --root-dir . --execute --force
 ```
 
 Skips idempotency check (dangerous—may double-remove rows). Use only if you know what you're doing.
 
 ### Archive Orphaned Models
 ```bash
-python sanitize_apply.py --root-dir . --execute --remove-orphans
+python scripts/sanitize_apply.py --root-dir . --execute --remove-orphans
 ```
 
 Applies mutations AND archives/deletes orphaned models referenced in scan report.
@@ -302,16 +302,16 @@ sha256sum data/experiment_leaderboard.csv
 ### Typical Workflow
 ```bash
 # 1. Scan for issues
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 
 # 2. Preview mutations
-python sanitize_apply.py --root-dir . --dry-run
+python scripts/sanitize_apply.py --root-dir . --dry-run
 
 # 3. Apply mutations
-python sanitize_apply.py --root-dir . --execute
+python scripts/sanitize_apply.py --root-dir . --execute
 
 # 4. Verify clean state
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 ```
 
 ## Error Handling
@@ -341,7 +341,7 @@ All errors are logged with timestamps.
 ### Issue: "Sanitization already applied"
 **Solution:** Use `--force` flag to re-apply (if you're sure):
 ```bash
-python sanitize_apply.py --root-dir . --execute --force
+python scripts/sanitize_apply.py --root-dir . --execute --force
 ```
 
 ### Issue: Need to recover rows
@@ -366,7 +366,7 @@ Check any of these for recovery information.
 
 Run integration tests:
 ```bash
-python test_sanitize_apply.py
+python scripts/test_sanitize_apply.py
 ```
 
 Tests verify:

@@ -1,13 +1,13 @@
 ---
 name: strategy-refinement-analyst
-description: 'Analyze completed reinforcement learning trading experiment batches to determine which results are robust, generalizable, and statistically valid. Use for experiment leaderboards, summaries, and quant reports to filter out overfitting, instability, and noise, and to recommend the next research or system step.'
+description: 'Analyze completed trading research batches across RL and Stage 1 signal-first pivot workflows to determine which results are robust, generalizable, and statistically valid. Use for stage1 gate/trading artifacts, experiment leaderboards, summaries, and quant reports to filter out overfitting, instability, and noise, and to recommend the next research or system step.'
 argument-hint: 'What experiment batch results or report should be analyzed for refinement?'
 user-invocable: true
 ---
 
 # Strategy Refinement Analyst
 
-Research-decision workflow for reinforcement learning trading strategy development.
+Research-decision workflow for RL and Stage 1 signal-first trading strategy development.
 
 ## Objective
 Identify **real, robust improvements** from experiment batches and determine the correct next step in the research pipeline.
@@ -24,6 +24,7 @@ This skill is focused on **decision-making and validation of results**, not gene
 
 ## Use This Skill When
 - experiment batches have been completed
+- stage1 gate and trading-eval artifacts have been generated
 - leaderboard CSVs and summaries exist
 - quant reports have been generated
 - results are mixed, unclear, or conflicting
@@ -37,6 +38,11 @@ This skill is focused on **decision-making and validation of results**, not gene
   - `data/experiment_reward_leaderboard.csv`
   - `data/experiment_summary.json`
   - `data/experiment_snapshots/`
+- stage1 pivot artifacts:
+  - `logs/stage1_gate_report*.json`
+  - `logs/stage1_trading_eval*.json`
+  - `results/stage1/`
+  - `results/stage1_confirmation_3seed/`
 - quant analysis reports (markdown/logs)
 - cross-seed metrics
 - benchmark comparisons (e.g., vs QQQ)
@@ -71,6 +77,11 @@ Identify:
 - underfitting (both weak)
 - genuine generalization (both strong)
 
+For Stage 1 pivot outputs, also check:
+- baseline gate evidence (val/test r2 by ticker)
+- trading gate evidence (supervised vs flat, and optionally buy-hold)
+- whether verdict is `signal_exists` or `signal_weak`
+
 ---
 
 2. Evaluate cross-seed stability
@@ -103,6 +114,10 @@ Identify:
 - true alpha generation
 - hidden beta exposure
 - benchmark underperformance
+
+For Stage 1 pivot mode, use the correct benchmark context:
+- primary baseline benchmark: flat policy (required)
+- secondary context benchmark: buy-hold (informational)
 
 ---
 
@@ -151,9 +166,15 @@ Based on findings, select the correct handoff:
 
 Do NOT default to more experiments without justification.
 
+If Stage 1 gate remains `signal_weak`, default next step should stay inside Stage 1 diagnosis instead of RL expansion.
+
 ---
 
 ## Decision Logic
+
+- If Stage 1 trading gate passes but baseline gate fails: classify as baseline-predictive blocker; continue Stage 1 refinement.
+- If both Stage 1 gates pass with stable confirmation: classify as ready for controlled progression to RL simplification, not broad RL sweeps.
+- If Stage 1 verdict is `signal_weak`: do not recommend RL reward tuning as first response.
 
 - If validation >> test → overfitting → reduce complexity or increase regularization
 - If high variance across seeds → instability → prefer entropy or exploration tuning
@@ -178,6 +199,7 @@ Always return sections in this exact order:
 7. **Stability assessment**
 8. **Recommended handoff**
 9. **Next experiments (ONLY if justified)**
+10. **Leaderboard comparability impact (REQUIRED)**
 
 ---
 
@@ -221,6 +243,7 @@ Include:
 - alpha vs benchmark
 - % outperforming runs
 - interpretation
+- for Stage 1 pivot: supervised vs flat (required) and supervised vs buy-hold (secondary)
 
 ---
 
@@ -241,6 +264,14 @@ Include:
 ### Next experiments
 - ONLY include if clearly justified
 - must be targeted, not broad sweeps
+
+---
+
+### Leaderboard comparability impact (REQUIRED)
+Include:
+- whether evidence came from Stage 1 gate artifacts, RL leaderboards, or both
+- what comparisons are valid vs invalid across those artifact families
+- whether conclusions are exploratory or confirmatory
 
 ---
 
@@ -276,6 +307,7 @@ Include:
 - Do not ignore seed variance
 - Do not recommend experiments without justification
 - Do not assume alpha without benchmark comparison
+- Do not collapse Stage 1 gate outcomes and RL leaderboard rankings into one unified score without explicit caveats
 
 ---
 
@@ -286,6 +318,7 @@ Include:
 - Robust configs identified (not just top score)
 - Failure mode clearly defined
 - Handoff decision justified
+- Leaderboard comparability impact explicitly stated
 - Output follows required format exactly
 
 ---

@@ -4,17 +4,42 @@ set -euo pipefail
 ACTION="${1:-start}"
 PORT="${2:-8501}"
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Detect OS and set appropriate paths
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
-  VENV_PYTHON="$ROOT_DIR/.venv/Scripts/python.exe"
-else
-  VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
-fi
-
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$SCRIPT_DIR"
 DASHBOARD_SCRIPT="$ROOT_DIR/src/analytics_dashboard.py"
 PID_FILE="$ROOT_DIR/.streamlit_dashboard.pid"
+
+resolve_python() {
+  if [[ -x "$ROOT_DIR/.venv-wsl/bin/python" ]]; then
+    echo "$ROOT_DIR/.venv-wsl/bin/python"
+    return 0
+  fi
+  if [[ -x "$ROOT_DIR/.venv-wsl/bin/python3" ]]; then
+    echo "$ROOT_DIR/.venv-wsl/bin/python3"
+    return 0
+  fi
+  if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    echo "$ROOT_DIR/.venv/bin/python"
+    return 0
+  fi
+  if [[ -x "$ROOT_DIR/.venv/bin/python3" ]]; then
+    echo "$ROOT_DIR/.venv/bin/python3"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    command -v python
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+  if [[ -x "$ROOT_DIR/.venv/Scripts/python.exe" ]]; then
+    echo "$ROOT_DIR/.venv/Scripts/python.exe"
+    return 0
+  fi
+  return 1
+}
 
 get_dashboard_pids() {
   ps -ax -o pid= -o command= | awk -v port="$PORT" '
@@ -52,8 +77,9 @@ stop_dashboard() {
 }
 
 start_dashboard() {
-  if [[ ! -x "$VENV_PYTHON" ]]; then
-    echo "Virtual environment Python not found at '$VENV_PYTHON'. Create .venv first." >&2
+  local python_exec
+  if ! python_exec="$(resolve_python)"; then
+    echo "Python executable not found. Create .venv-wsl (preferred) or .venv, or add python/python3 to PATH." >&2
     exit 1
   fi
 
@@ -69,9 +95,9 @@ start_dashboard() {
     return 0
   fi
 
-  nohup "$VENV_PYTHON" -m streamlit run "$DASHBOARD_SCRIPT" --server.headless true --server.port "$PORT" > "$ROOT_DIR/.streamlit_dashboard.log" 2>&1 &
+  nohup "$python_exec" -m streamlit run "$DASHBOARD_SCRIPT" --server.headless true --server.port "$PORT" >"$ROOT_DIR/.streamlit_dashboard.log" 2>&1 &
   local pid=$!
-  echo "$pid" > "$PID_FILE"
+  echo "$pid" >"$PID_FILE"
   echo "Dashboard started on http://127.0.0.1:$PORT (PID $pid)."
 }
 
@@ -90,4 +116,3 @@ case "$ACTION" in
     exit 1
     ;;
 esac
-

@@ -1,6 +1,6 @@
 ---
 name: backtest-auditor
-description: 'Audit RL trading evaluation pipeline for leakage, metric validity, robustness, and cross-experiment comparability. Use for src/experiments.py, src/trading_env.py, src/market_data.py, and src/signal_analytics.py to verify realistic, leakage-free, statistically defensible results.'
+description: 'Audit trading evaluation pipelines across RL and Stage 1 signal-first pivot workflows for leakage, metric validity, robustness, and cross-experiment comparability. Use for src/experiments.py, src/trading_env.py, src/market_data.py, src/signal_analytics.py, and Stage 1 gate/trading artifacts to verify realistic, leakage-free, statistically defensible results.'
 argument-hint: 'What experiment, split, or evaluation path should be audited?'
 user-invocable: true
 ---
@@ -16,16 +16,30 @@ Ensure reported RL trading performance is:
 - Statistically valid
 - Comparable across experiments
 
+Also ensure Stage 1 pivot outputs are evaluated with the correct boundaries between supervised training, trading evaluation, and gate reporting.
+
 ## Default Focus Files
 - `src/experiments.py`
 - `src/trading_env.py`
 - `src/signal_analytics.py`
 - `src/market_data.py`
+- `scripts/stage1_gate.py`
+- `scripts/evaluate_stage1_trading.py`
+- `scripts/inspect_stage1_data_health.py`
 - Any tests, dashboards, or analytics files that consume evaluation outputs
+- Stage 1 pivot artifacts when relevant:
+	- `results/stage1/`
+	- `results/stage1_confirmation_3seed/`
+	- `logs/stage1_gate_report*.json`
+	- `logs/stage1_trading_eval*.json`
 
 ## Core Audit Procedure
 0. Confirm delivery mode
 - Ask whether the user wants review-only output or implementation-inclusive output with patch proposals.
+
+0.5. Identify evaluation family
+- Determine whether the audit target is RL backtest evaluation or Stage 1 pivot evaluation.
+- If both are present, keep integrity conclusions separate and compare only within the same artifact family.
 
 1. Validate data splits
 - Inspect train/validation/test separation logic and data slicing in `src/experiments.py`.
@@ -37,6 +51,7 @@ Ensure reported RL trading performance is:
 - Inspect label generation in `src/signal_analytics.py`.
 - Inspect feature construction and shifting in `src/market_data.py`.
 - Confirm no future information enters training/evaluation inputs incorrectly.
+- For Stage 1 pivot outputs, verify the supervised training split, thresholding logic, and trading-eval split do not leak future bars into the train-side model fit.
 
 3. Evaluate metrics
 - Audit actionable accuracy, win rate, cumulative returns, Sharpe/Sortino, and alpha vs QQQ.
@@ -48,6 +63,7 @@ Ensure reported RL trading performance is:
 - Confirm QQQ benchmark comparison is implemented correctly.
 - Confirm no-trade baseline exists.
 - Check simple strategy baselines (momentum and mean-reversion) when available.
+- For Stage 1 pivot, confirm the flat baseline is present and the supervised policy is compared against flat before using buy-and-hold as secondary context.
 
 5. Check robustness
 - Inspect multi-seed behavior and sensitivity.
@@ -58,6 +74,7 @@ Ensure reported RL trading performance is:
 - Verify model-to-config traceability.
 - Verify snapshot completeness for reruns.
 - Verify cache behavior and consistency across reruns.
+- For Stage 1 pivot, verify each gate/trading report can be regenerated from the saved JSON outputs and the referenced baseline JSON files.
 
 7. Produce fixes with comparability guard
 - Recommend minimal, testable corrections first.
@@ -72,6 +89,7 @@ Ensure reported RL trading performance is:
 - If baseline set is incomplete: classify outperformance claims as weak.
 - If momentum/mean-reversion baselines are missing: flag as non-blocking unless the experiment explicitly claims superiority to simple timing strategies.
 - If reproducibility artifacts are incomplete: classify reported champion metrics as non-verifiable.
+- If Stage 1 pivot gates disagree with trading eval or baseline JSON summaries, treat the discrepancy as an evaluation boundary issue before assuming a signal or leakage problem.
 
 ## Required Output Format
 Always structure output in this order:
@@ -85,11 +103,17 @@ Always structure output in this order:
 - Recommended fixes
 - Leaderboard comparability impact (REQUIRED)
 
+For Stage 1 pivot audits, also state whether the evidence supports:
+- `signal_exists`
+- `signal_weak`
+- or an unresolved evaluation mismatch
+
 ## Constraints
 - Do not assume leakage without proof.
 - Distinguish training-data usage from evaluation-only data usage.
 - Avoid unnecessary rewrites.
 - Call out any recommendation that changes historical leaderboard semantics.
+- Do not merge Stage 1 gate evidence with RL leaderboard evidence as if they are the same evaluation system.
 
 ## Quality Checks Before Finalizing
 - Every finding references concrete file/function evidence.
@@ -98,6 +122,7 @@ Always structure output in this order:
 - Baseline checks explicitly state present/missing status.
 - Recommended fixes are small, testable, and impact-ranked.
 - Leaderboard comparability impact is present for each recommended fix.
+- Stage 1 pivot and RL backtest conclusions are clearly separated when both appear in scope.
 
 ## Example Tasks
 - Audit `enrich_with_truth_labels()` for leakage.

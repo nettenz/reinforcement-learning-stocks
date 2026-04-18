@@ -28,7 +28,7 @@ Successfully implemented and deployed a **two-phase, production-ready data sanit
 
 **Usage:**
 ```bash
-python sanity_scan.py --root-dir . --apply dry-run
+python scripts/sanity_scan.py --root-dir . --apply dry-run
 ```
 
 ---
@@ -75,16 +75,16 @@ docs/
 **Usage:**
 ```bash
 # Preview (safe, no mutations)
-python sanitize_apply.py --dry-run
+python scripts/sanitize_apply.py --dry-run
 
 # Execute mutations
-python sanitize_apply.py --execute
+python scripts/sanitize_apply.py --execute
 
 # Also clean orphaned models
-python sanitize_apply.py --execute --remove-orphans
+python scripts/sanitize_apply.py --execute --remove-orphans
 
 # Expert re-run (if needed)
-python sanitize_apply.py --execute --force
+python scripts/sanitize_apply.py --execute --force
 ```
 
 ---
@@ -94,14 +94,14 @@ Easy-to-use wrapper scripts for both operating systems.
 
 **Windows (PowerShell):**
 ```powershell
-.\run_sanitize.ps1                    # Dry-run preview
-.\run_sanitize.ps1 -Action execute   # Apply mutations
+.\scripts\run_sanitize.ps1                    # Dry-run preview
+.\scripts\run_sanitize.ps1 -Action execute   # Apply mutations
 ```
 
 **Unix/macOS (Bash):**
 ```bash
-./run_sanitize.sh                    # Dry-run preview
-./run_sanitize.sh execute            # Apply mutations
+./scripts/run_sanitize.sh                    # Dry-run preview
+./scripts/run_sanitize.sh execute            # Apply mutations
 ```
 
 ---
@@ -213,7 +213,7 @@ docs/ROLLBACK_GUIDE.md              ← Auto-generated recovery
 
 ### 1. Scan for Issues (read-only, safe)
 ```bash
-python sanity_scan.py --root-dir . --apply dry-run
+python scripts/sanity_scan.py --root-dir . --apply dry-run
 ```
 Check output:
 - `reports/sanity_scan_report.json` — detailed findings
@@ -230,7 +230,7 @@ cat reports/sanity_scan_summary.md
 
 ### 3. Preview Mutations (dry-run, safe)
 ```bash
-python sanitize_apply.py --dry-run
+python scripts/sanitize_apply.py --dry-run
 ```
 See:
 - Which rows will be removed
@@ -239,7 +239,7 @@ See:
 
 ### 4. Execute Mutations (if approved)
 ```bash
-python sanitize_apply.py --execute
+python scripts/sanitize_apply.py --execute
 ```
 Creates:
 - `backups/sanity_backup_<timestamp>/` (originals)
@@ -250,7 +250,7 @@ Creates:
 
 ### 5. Verify Clean State
 ```bash
-python sanity_scan.py --root-dir .
+python scripts/sanity_scan.py --root-dir .
 ```
 Should report:
 - Fewer/no high-severity issues
@@ -296,6 +296,6 @@ cat docs/ROLLBACK_GUIDE.md
 
 **Next Steps:**
 1. Review `docs/INDEX.md` for navigation
-2. Run `python sanity_scan.py --root-dir . --apply dry-run` to see current status
-3. When ready: `python sanitize_apply.py --dry-run` to preview mutations
-4. Deploy mutations: `python sanitize_apply.py --execute`
+2. Run `python scripts/sanity_scan.py --root-dir . --apply dry-run` to see current status
+3. When ready: `python scripts/sanitize_apply.py --dry-run` to preview mutations
+4. Deploy mutations: `python scripts/sanitize_apply.py --execute`
