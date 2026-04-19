@@ -1,0 +1,12 @@
+universe:
+  - AAPL
+  - AMD
+  - NVDA
+  - QQQ
+  - SPY
+benchmark:
+  primary: SPY
+  tech: QQQ
+aliases:
+  GOOGLE: GOOGL
+  FACEBOOK: META

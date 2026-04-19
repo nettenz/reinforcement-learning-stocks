@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "news_normalized",
+  "type": "object",
+  "required": [
+    "news_id",
+    "source_name",
+    "published_at_utc",
+    "headline",
+    "tickers",
+    "market_session",
+    "dedupe_hash",
+    "is_duplicate"
+  ],
+  "properties": {
+    "news_id": { "type": "string" },
+    "source_name": { "type": "string" },
+    "published_at_utc": { "type": "string", "format": "date-time" },
+    "headline": { "type": "string" },
+    "summary": { "type": ["string", "null"] },
+    "body": { "type": ["string", "null"] },
+    "url": { "type": ["string", "null"] },
+    "tickers": { "type": "array", "items": { "type": "string" } },
+    "primary_ticker": { "type": ["string", "null"] },
+    "market_session": { "enum": ["pre_market", "regular", "after_hours", "closed"] },
+    "dedupe_hash": { "type": "string" },
+    "is_duplicate": { "type": "boolean" },
+    "language": { "type": ["string", "null"] }
+  }
+}

@@ -1,0 +1,7 @@
+.tmp/
+__pycache__/
+*.pyc
+data/interim/
+data/processed/
+data/audit/
+logs/

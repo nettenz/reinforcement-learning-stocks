@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "event_table",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_source",
+    "event_type",
+    "ticker",
+    "event_timestamp_utc",
+    "market_session",
+    "source_name"
+  ],
+  "properties": {
+    "event_id": { "type": "string" },
+    "news_id": { "type": ["string", "null"] },
+    "event_source": { "type": "string" },
+    "event_type": { "enum": ["earnings", "macro", "analyst", "news", "guidance", "product", "filing", "other"] },
+    "event_subtype": { "type": ["string", "null"] },
+    "ticker": { "type": "string" },
+    "event_timestamp_utc": { "type": "string", "format": "date-time" },
+    "market_session": { "enum": ["pre_market", "regular", "after_hours", "closed"] },
+    "headline": { "type": ["string", "null"] },
+    "summary": { "type": ["string", "null"] },
+    "sentiment_score": { "type": ["number", "null"] },
+    "sentiment_label": { "enum": ["positive", "neutral", "negative", null] },
+    "sentiment_confidence": { "type": ["number", "null"] },
+    "relevance_score": { "type": ["number", "null"] },
+    "provider_importance": { "type": ["number", "null"] },
+    "dedupe_group_id": { "type": ["string", "null"] },
+    "source_name": { "type": "string" },
+    "url": { "type": ["string", "null"] },
+    "metadata": { "type": "object" }
+  }
+}

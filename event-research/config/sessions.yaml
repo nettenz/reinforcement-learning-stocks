@@ -1,0 +1,6 @@
+market_timezone: America/New_York
+regular_open: "09:30"
+regular_close: "16:00"
+pre_market_start: "04:00"
+after_hours_end: "20:00"
+closed_behavior: next_regular_open

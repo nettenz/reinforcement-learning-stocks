@@ -1,0 +1,11 @@
+sources:
+  manual_news:
+    enabled: true
+    source_name: manual_fixture
+    input_path: data/raw/news/manual/sample_news.jsonl
+    format: jsonl
+  daily_prices:
+    enabled: true
+    source_name: manual_fixture_prices
+    input_path: data/raw/prices/daily/sample_prices.csv
+    format: csv
