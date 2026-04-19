@@ -1,190 +1,146 @@
 ---
 name: strategy-refinement-analyst
-description: 'Analyze completed trading research batches across RL and Stage 1 signal-first pivot workflows to determine which results are robust, generalizable, and statistically valid. Use for stage1 gate/trading artifacts, experiment leaderboards, summaries, and quant reports to filter out overfitting, instability, and noise, and to recommend the next research or system step.'
-argument-hint: 'What experiment batch results or report should be analyzed for refinement?'
+description: 'Evaluate completed Stage 1 or RL research batches to determine what is robust, what failed to generalize, and whether the project should remain in Stage 1 diagnosis or escalate to controlled RL follow-up.'
+argument-hint: 'What completed batch, leaderboard, gate report, or summary should be evaluated?'
 user-invocable: true
 ---
 
 # Strategy Refinement Analyst
 
-Research-decision workflow for RL and Stage 1 signal-first trading strategy development.
+Evaluate completed research results and decide the next step.
 
 ## Objective
-Identify **real, robust improvements** from experiment batches and determine the correct next step in the research pipeline.
+Identify which findings are real, robust, and worth acting on.
 
-This skill ensures:
-- overfitting is detected and rejected
-- unstable or luck-driven results are filtered out
-- only generalizable configurations are promoted
-- the correct next skill is selected
+This skill is the research judge for the repository. It does not redesign rewards or build experiment batches. It determines:
+- what actually improved
+- what did not generalize
+- what the dominant failure mode is
+- whether the correct next step is Stage 1 diagnosis, reward work, or controlled follow-up testing
 
-This skill is focused on **decision-making and validation of results**, not generating experiments or modifying code.
+## Primary mindset
+This repository is signal-first and RL-second.
 
----
+Default question:
+- do we have evidence of real tradable signal?
 
-## Use This Skill When
-- experiment batches have been completed
-- stage1 gate and trading-eval artifacts have been generated
-- leaderboard CSVs and summaries exist
-- quant reports have been generated
-- results are mixed, unclear, or conflicting
-- you need to determine the next step in development
+Only after that is established should RL reward tuning or broader policy work become a primary path.
 
----
+## Use this skill when
+- a Stage 1 batch has completed
+- an RL batch has completed
+- leaderboard artifacts exist
+- gate reports or trading-eval reports exist
+- results are mixed, noisy, or potentially misleading
+- a next-step decision is needed
 
 ## Default Inputs
-- experiment artifacts:
-  - `data/experiment_leaderboard.csv`
-  - `data/experiment_reward_leaderboard.csv`
-  - `data/experiment_summary.json`
-  - `data/experiment_snapshots/`
-- stage1 pivot artifacts:
-  - `logs/stage1_gate_report*.json`
-  - `logs/stage1_trading_eval*.json`
-  - `results/stage1/`
-  - `results/stage1_confirmation_3seed/`
-- quant analysis reports (markdown/logs)
-- cross-seed metrics
-- benchmark comparisons (e.g., vs QQQ)
-- prior experiment notes
-
----
+- `data/experiment_leaderboard.csv`
+- `data/experiment_reward_leaderboard.csv`
+- `data/experiment_summary.json`
+- `data/experiment_snapshots/`
+- `logs/stage1_gate_report*.json`
+- `logs/stage1_trading_eval*.json`
+- `results/stage1/`
+- `results/stage1_confirmation_3seed/`
+- benchmark comparisons
+- seed-level summaries
+- prior notes and quant reports when available
 
 ## Core Procedure
 
-0. Confirm scope
-- Ask whether the goal is:
-  - full batch evaluation
-  - comparison of specific configs
-  - validation of a suspected improvement
-  - recommendation of next step
+### 1. Identify the active evidence source
+Classify the batch as:
+- Stage 1 signal-first evidence
+- RL batch evidence
+- mixed evidence
 
-Default: full batch evaluation.
+If mixed, keep conclusions separated by track.
 
----
-
-1. Evaluate generalization
-Compare validation vs test performance.
+### 2. Evaluate generalization
+Compare validation vs test.
 
 Check:
 - return gap
 - Sharpe gap
 - drawdown differences
 - accuracy consistency
+- trade-behavior consistency
 
 Identify:
-- overfitting (validation >> test)
-- underfitting (both weak)
-- genuine generalization (both strong)
+- overfitting
+- underfitting
+- real generalization
 
-For Stage 1 pivot outputs, also check:
-- baseline gate evidence (val/test r2 by ticker)
-- trading gate evidence (supervised vs flat, and optionally buy-hold)
+For Stage 1 also check:
+- baseline gate evidence
+- trading gate evidence
 - whether verdict is `signal_exists` or `signal_weak`
 
----
-
-2. Evaluate cross-seed stability
-Analyze variance across seeds.
+### 3. Evaluate stability
+Assess consistency across seeds.
 
 Check:
 - mean vs std
-- coefficient of variation (CV)
-- consistency of top configs
-
-Identify:
-- unstable configs (high variance)
-- robust configs (consistent performance)
+- coefficient of variation
+- whether top configs stay strong across seeds
 
 Reject:
-- single-seed winners
-- high variance configurations
+- isolated one-seed winners
+- fragile promotions
+- unstable top rows
 
----
+### 4. Evaluate benchmark and baseline context
+For RL:
+- compare against benchmark context such as QQQ
+- assess alpha and risk-adjusted performance
 
-3. Evaluate benchmark performance
-Compare against benchmark such as :contentReference[oaicite:0]{index=0}
+For Stage 1:
+- compare supervised policy vs flat baseline
+- treat buy-hold as secondary context unless otherwise required
 
-Check:
-- alpha vs benchmark
-- % runs outperforming
-- risk-adjusted comparison
+### 5. Identify robust configurations
+A robust configuration should:
+- hold up on test
+- remain stable across seeds
+- avoid unacceptable drawdown
+- remain interpretable
 
-Identify:
-- true alpha generation
-- hidden beta exposure
-- benchmark underperformance
+Do not promote based on headline rank alone.
 
-For Stage 1 pivot mode, use the correct benchmark context:
-- primary baseline benchmark: flat policy (required)
-- secondary context benchmark: buy-hold (informational)
-
----
-
-4. Identify robust configurations
-Select configs that:
-- perform well on test
-- are stable across seeds
-- maintain acceptable drawdown
-
-Avoid:
-- peak ranking score only
-- validation-only improvements
-
----
-
-5. Detect dominant failure mode
-Classify primary issues:
+### 6. Classify the dominant failure mode
+Choose the main issue or two:
 
 - overfitting
-- instability (high variance)
+- instability
 - reward misalignment
-- feature noise (e.g., news degradation)
-- undertrading / inactivity
-- lack of alpha vs benchmark
+- weak signal
+- noisy features
+- benchmark underperformance
+- undertrading or inactivity
+- possible leakage or unrealistic evaluation
 
-Explain the cause clearly.
-
----
-
-6. Validate signal integrity
-Check whether improvements are driven by:
-
-- meaningful signals
-- noise or overfitting
-- degraded feature contributions (e.g., news hurting performance)
-
----
-
-7. Determine next step
-Based on findings, select the correct handoff:
+### 7. Route the next step
+Select the correct next skill:
 
 - `quant-experiment-strategist`
 - `reward-architect`
 - `signal-analytics-interpreter`
 - `backtest-auditor`
 
-Do NOT default to more experiments without justification.
-
-If Stage 1 gate remains `signal_weak`, default next step should stay inside Stage 1 diagnosis instead of RL expansion.
-
----
+If Stage 1 verdict remains `signal_weak`, keep the next step inside Stage 1 diagnosis by default.
 
 ## Decision Logic
 
-- If Stage 1 trading gate passes but baseline gate fails: classify as baseline-predictive blocker; continue Stage 1 refinement.
-- If both Stage 1 gates pass with stable confirmation: classify as ready for controlled progression to RL simplification, not broad RL sweeps.
-- If Stage 1 verdict is `signal_weak`: do not recommend RL reward tuning as first response.
-
-- If validation >> test → overfitting → reduce complexity or increase regularization
-- If high variance across seeds → instability → prefer entropy or exploration tuning
-- If performance < benchmark → no alpha → reconsider reward or signals
-- If signals degrade performance → feature noise → handoff to signal analysis
-- If trade behavior contradicts metrics → reward misalignment → handoff to reward-architect
-- If results seem unrealistic → possible leakage → handoff to backtest-auditor
-- If some improvement exists but not stable → refine via quant-experiment-strategist
-
----
+- If Stage 1 trading gate passes but baseline gate fails: classify as baseline-predictive blocker.
+- If both Stage 1 gates pass with stable confirmation: classify as eligible for controlled RL escalation, not broad RL expansion.
+- If Stage 1 verdict is `signal_weak`: do not recommend RL reward tuning as the first response.
+- If validation clearly exceeds test: classify as overfitting.
+- If seed variance is high: classify as instability.
+- If behavior and metrics disagree: classify as reward-misalignment candidate.
+- If features degrade results: route toward signal analysis.
+- If results appear unrealistic: route toward backtest audit.
+- If a partial improvement exists but remains fragile: route toward quant-experiment-strategist.
 
 ## Required Output Format
 
@@ -200,140 +156,89 @@ Always return sections in this exact order:
 8. **Recommended handoff**
 9. **Next proposed experiments or runs (ONLY if justified)**
 10. **Leaderboard comparability impact (REQUIRED)**
+11. **Pipeline Decision**
 
----
-
-## Output Section Requirements
+## Output Requirements
 
 ### Batch verdict
-- Promising / Neutral / Weak / Invalid
-
----
+Use one:
+- Promising
+- Neutral
+- Weak
+- Invalid
 
 ### What actually improved
-- Only include improvements that:
-  - held on test
-  - persisted across seeds
-
----
+Only include findings that:
+- held on test
+- persisted across seeds
+- matter to deployment or promotion
 
 ### What did not hold up
+Include:
 - validation-only wins
-- unstable configs
+- unstable winners
 - misleading improvements
-
----
+- improvements that vanished under proper comparison
 
 ### Best robust configuration
 Include:
 - config summary
 - why it is robust
 - known risks
-
----
+- whether it is exploratory or promotion-worthy
 
 ### Dominant failure mode
-- choose 1–2 primary issues
-- explain root cause
-
----
+Choose 1–2 primary issues and explain the root cause.
 
 ### Benchmark assessment
 Include:
-- alpha vs benchmark
-- % outperforming runs
+- alpha or baseline comparison
+- % outperforming runs if available
 - interpretation
-- for Stage 1 pivot: supervised vs flat (required) and supervised vs buy-hold (secondary)
-
----
+- artifact-family caveat if Stage 1 and RL evidence are both present
 
 ### Stability assessment
 Include:
 - variance level
-- reliability rating (Low / Medium / High)
-
----
+- reliability rating: Low / Medium / High
 
 ### Recommended handoff
 Include:
-- next_skill
-- rationale
-
----
+- `next_skill`
+- short rationale
 
 ### Next proposed experiments or runs
-- ONLY include if clearly justified
-- must be targeted, not broad sweeps
-- include concrete runner/script names when implementation intent is explicit
+Only include when clearly justified.
+Must be targeted, not broad sweeps.
 
-Run specification rule (MANDATORY):
-- For each proposed run, include:
-  - environment activation command (for example, `.venv` activation)
-  - runner command
-  - full relative script path when the runner is not in repository root (for example `scripts/runner_name.py`)
-  - key args and expected output artifact path(s)
-- Do not provide bare script names when the file lives in a subdirectory.
-
----
+For each proposed run include:
+- environment activation command
+- runner command
+- full relative script path when not in repo root
+- key args
+- expected output artifact paths
 
 ### Leaderboard comparability impact (REQUIRED)
 Include:
-- whether evidence came from Stage 1 gate artifacts, RL leaderboards, or both
-- what comparisons are valid vs invalid across those artifact families
-- whether conclusions are exploratory or confirmatory
-
----
-
-## Handoff Rules
-
-### → quant-experiment-strategist
-- partial improvement exists
-- needs refinement or tuning
-
----
-
-### → reward-architect
-- behavior does not match performance
-- reward incentives are misaligned
-
----
-
-### → signal-analytics-interpreter
-- signals are noisy or degrading performance
-- feature engineering is suspect
-
----
-
-### → backtest-auditor
-- results appear unrealistic
-- suspected leakage or flawed assumptions
-
----
+- whether evidence came from Stage 1 artifacts, RL artifacts, or both
+- what comparisons are valid
+- what comparisons are invalid
+- whether the conclusion is exploratory or confirmatory
 
 ## Constraints
 - Do not trust single best runs
 - Do not prioritize validation over test
 - Do not ignore seed variance
 - Do not recommend experiments without justification
-- Do not assume alpha without benchmark comparison
-- Do not collapse Stage 1 gate outcomes and RL leaderboard rankings into one unified score without explicit caveats
-
----
+- Do not assume alpha without benchmark or baseline context
+- Do not collapse Stage 1 and RL evidence into one score without explicit caveats
 
 ## Quality Checks Before Finalizing
-- Generalization (val vs test) evaluated
-- Cross-seed stability assessed
-- Benchmark comparison included
-- Robust configs identified (not just top score)
-- Failure mode clearly defined
-- Handoff decision justified
-- Leaderboard comparability impact explicitly stated
-- Output follows required format exactly
-
----
-
-## Example Invocations
-- `/strategy-refinement-analyst Analyze latest experiment leaderboard and identify robust configs.`
-- `/strategy-refinement-analyst Compare entropy sweep results and determine if overfitting improved.`
-- `/strategy-refinement-analyst Evaluate whether news features improve or degrade performance.`
-- `/strategy-refinement-analyst Determine next step after current experiment batch.`
+- generalization evaluated
+- stability evaluated
+- benchmark or baseline comparison included
+- robust configs identified
+- failure mode defined
+- handoff justified
+- comparability impact explicit
+- output order followed exactly

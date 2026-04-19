@@ -1,272 +1,190 @@
-# RL Trading Research Pipeline
+# Trading Research Pipeline
 
-## Scope
-This pipeline defines the primary research loop for:
-- strategy-refinement-analyst
-- reward-architect
-- quant-experiment-strategist
+## Core Principle
 
-The goal is to:
-- enforce clean separation of responsibilities
-- prevent duplicated work across skills
-- ensure hypothesis-driven iteration
-- maintain statistical discipline
+This repository follows a **signal-first, RL-second** workflow.
+
+The default research order is:
+
+1. prove predictive signal exists
+2. prove the signal survives simple trading evaluation
+3. confirm the evidence is stable on test data and across seeds
+4. only then consider RL reward or policy refinement
+
+RL is not the default path.  
+RL is an escalation path.
+
+If Stage 1 evidence is weak, the correct next step is usually better diagnosis of signal quality, feature quality, or evaluation design — not more RL tuning.
 
 ---
 
-## Skill Roles
+## Core Skills
 
 ### strategy-refinement-analyst
-**Role:** Research judge and router
+**Role:** Judge completed research batches and route the next step.
 
-Responsibilities:
-- evaluate completed experiment batches
-- detect overfitting and instability
-- identify robust improvements
-- classify dominant failure mode
-- select next skill
+Owns:
+- result interpretation
+- robustness checks
+- benchmark and baseline comparison
+- failure-mode classification
+- next-skill selection
 
-Does NOT:
-- build experiment grids
-- redesign reward systems
+Does not own:
+- reward redesign
+- experiment batch design
 
 ---
 
 ### reward-architect
-**Role:** Objective designer
+**Role:** Diagnose RL reward misalignment and design reward variants.
 
-Responsibilities:
-- diagnose reward misalignment
-- detect reward hacking
-- design reward variants (A/B/C)
-- define reward experiment intent
+Owns:
+- reward decomposition
+- reward-hacking detection
+- economic objective alignment
+- conservative / balanced / aggressive reward proposals
 
-Does NOT:
-- execute experiments
-- validate robustness across seeds
-
----
-
-### quant-experiment-strategist
-**Role:** Experiment planner
-
-Responsibilities:
-- convert hypotheses into controlled experiment batches
-- define:
-  - variables to change
-  - variables to hold constant
-  - seeds and configs
-  - success criteria
-  - failure interpretation
-
-Does NOT:
-- redesign reward theory
-- evaluate robustness
-
----
-
-## Primary Pipeline
-
-completed experiment batch  
-↓  
-strategy-refinement-analyst  
-↓  
-[branch decision]
-
-- reward misalignment (no variants defined)  
-  → reward-architect → quant-experiment-strategist  
-
-- reward misalignment (variants already defined)  
-  → quant-experiment-strategist  
-
-- general tuning needed  
-  → quant-experiment-strategist  
-
----
-
-After execution:
-
-new experiment artifacts  
-↓  
-strategy-refinement-analyst  
-
----
-
-## Artifact Triggers
-
-### strategy-refinement-analyst
-Run when:
-- experiment batch completed
-
-Requires:
-- data/experiment_leaderboard.csv
-- data/experiment_summary.json
-
----
-
-### reward-architect
-Run when:
-- reward misalignment detected
-- reward variants NOT defined
+Does not own:
+- batch execution
+- final robustness judgment
 
 ---
 
 ### quant-experiment-strategist
-Run when:
-- next experiment batch needs to be designed
-- reward variants already exist
-- refinement suggests controlled test
+**Role:** Turn a validated research question into a controlled experiment batch.
+
+Owns:
+- experiment design
+- variable isolation
+- controls
+- success criteria
+- failure interpretation
+- run structure
+
+Does not own:
+- final batch judgment
+- reward theory redesign
+
+---
+
+## Research Tracks
+
+### Stage 1: Signal-first track
+Use when:
+- predictive signal is still unproven
+- baseline gate fails
+- trading gate fails
+- Stage 1 confirmation is incomplete
+- Stage 1 verdict is `signal_weak`
+
+Primary goal:
+- determine whether there is real tradable signal before RL escalation
+
+### RL track
+Use only when:
+- Stage 1 baseline gate passes
+- Stage 1 trading gate passes
+- confirmation is strong enough to justify escalation
+- or the user explicitly requests exploratory RL work
+
+Primary goal:
+- determine whether RL improves behavior beyond simpler baselines
+
+---
+
+## Main Loop
+
+completed batch  
+↓  
+strategy-refinement-analyst  
+↓  
+
+if Stage 1 evidence is weak:
+→ remain in Stage 1 diagnosis
+
+if RL is justified and reward misalignment is the dominant issue:
+→ reward-architect
+→ quant-experiment-strategist
+
+if reward variants already exist:
+→ quant-experiment-strategist
+
+if controlled follow-up testing is needed:
+→ quant-experiment-strategist
+
+↓  
+run experiments  
+↓  
+strategy-refinement-analyst  
+↓  
+repeat
 
 ---
 
 ## Routing Rules
 
-### → strategy-refinement-analyst
-Always after a batch finishes
+### Always route to strategy-refinement-analyst after a batch
+Every completed batch returns here first.
+
+### Route to reward-architect only when
+- RL track is active or explicitly overridden
+- reward misalignment is the dominant issue
+- reward variants have not already been clearly defined
+
+### Route to quant-experiment-strategist when
+- the next step is a controlled follow-up batch
+- reward variants already exist and need testing
+- refinement has already identified the question to test
 
 ---
 
-### → reward-architect
-If:
-- reward misalignment exists
-- reward variants NOT defined
+## Blocking Rules
 
----
+RL reward work is blocked by default when:
+- Stage 1 verdict is `signal_weak`
+- baseline gate fails
+- predictive evidence is not yet convincing
 
-### → quant-experiment-strategist
-If:
-- reward variants already exist
-- refinement suggests next step
-- tuning is needed
-
----
-
-## Routing Overrides
-
-### Skip reward-architect
-If input already contains:
-- explicit reward variants
-- parameter values
-- success criteria
-
-→ go directly to quant-experiment-strategist
-
----
-
-### Prevent role overlap
-
-- refinement = diagnosis ONLY  
-- architect = reward design ONLY  
-- strategist = experiment planning ONLY  
-
----
-
-### Enforce loop discipline
-
-After EVERY run:
-
-→ must return to strategy-refinement-analyst
-
----
-
-## Exit Criteria
-
-### strategy-refinement-analyst
-Must:
-- evaluate val vs test
-- assess seed stability
-- compare vs benchmark
-- identify failure mode
-- choose next skill
-
----
-
-### reward-architect
-Must:
-- define reward system
-- identify risks
-- propose A/B/C variants
-- define experiment intent
-
----
-
-### quant-experiment-strategist
-Must:
-- define batch
-- isolate variables
-- define controls
-- define success criteria
-
----
-
-## Pipeline Decision Block
-
-Each skill must end with:
-
-## Pipeline Decision
-
-- status: complete / ready_for_execution / revise / pivot  
-- next_skill: strategy-refinement-analyst / reward-architect / quant-experiment-strategist / none  
-- handoff_reason: short explanation  
-- required_artifacts:
-  - artifact 1
-  - artifact 2
-- comparability_note: Low / Medium / High + reason  
+When blocked:
+- do not recommend broad RL tuning as the primary path
+- return to Stage 1 diagnosis or signal analysis instead
 
 ---
 
 ## Research Rules
 
-1. Do not trust single runs  
-2. Prefer multi-seed stability  
-3. Prefer test over validation  
-4. Separate diagnosis / design / execution  
-5. Keep experiments small and controlled  
-6. Always consider benchmark (QQQ)  
-7. Always return to refinement after runs  
+1. Do not trust single runs
+2. Prefer test evidence over validation-only wins
+3. Prefer multi-seed stability over peak metrics
+4. Keep diagnosis, design, and planning separate
+5. Prefer small controlled batches over broad sweeps
+6. Always compare against simple baselines and benchmark context
+7. After every batch, return to strategy-refinement-analyst
 
 ---
 
-## Default Loop
+## Required Handoff Block
 
-run experiment  
-↓  
-strategy-refinement-analyst  
+Every skill should end with:
 
-if reward issue:
-  if no variants:
-    → reward-architect → quant-experiment-strategist
-  else:
-    → quant-experiment-strategist
+## Pipeline Decision
 
-else:
-  → quant-experiment-strategist  
-
-↓  
-run experiment  
-↓  
-repeat  
-
----
-
-## Success Criteria
-
-Pipeline is working if:
-- skills do not overlap roles
-- handoffs are consistent
-- no duplicate reward design
-- experiments are controlled
-- improvements are based on:
-  - test performance
-  - multi-seed stability
-  - benchmark alpha  
+- status: complete / ready_for_execution / revise / pivot / blocked
+- next_skill: strategy-refinement-analyst / reward-architect / quant-experiment-strategist / none
+- handoff_reason: short explanation
+- required_artifacts:
+  - artifact 1
+  - artifact 2
+- comparability_note: Low / Medium / High + reason
 
 ---
 
 ## Mental Model
 
-strategy-refinement-analyst = judge  
-reward-architect = designer  
-quant-experiment-strategist = planner  
+- strategy-refinement-analyst = judge
+- reward-architect = reward designer
+- quant-experiment-strategist = experiment planner
 
-diagnose → design → test → repeat
+Stage 1 proves signal.  
+RL is allowed only after that evidence is strong enough.
