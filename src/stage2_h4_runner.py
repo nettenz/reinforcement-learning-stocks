@@ -143,19 +143,42 @@ def _cross_sectional_zscore(panel: pd.DataFrame) -> pd.DataFrame:
 
 def _create_windows(rebalance_dates: list[pd.Timestamp]) -> list[dict[str, object]]:
     n = len(rebalance_dates)
-    window_size = int(n * (WINDOW_CONFIG["train_size"] + WINDOW_CONFIG["val_size"] + WINDOW_CONFIG["test_size"]))
+    ratio_total = float(WINDOW_CONFIG["train_size"] + WINDOW_CONFIG["val_size"] + WINDOW_CONFIG["test_size"])
+    if ratio_total <= 0:
+        raise ValueError("Invalid window config: split ratios must sum to > 0")
+
+    window_size = int(n * ratio_total)
     window_size = max(window_size, 18)
+    window_size = min(window_size, n)
+    if window_size < 3:
+        raise ValueError("Insufficient dates to form non-empty train/val/test splits")
+
+    train_count = max(int(round(window_size * (WINDOW_CONFIG["train_size"] / ratio_total))), 1)
+    val_count = max(int(round(window_size * (WINDOW_CONFIG["val_size"] / ratio_total))), 1)
+    test_count = window_size - train_count - val_count
+    if test_count < 1:
+        overflow = 1 - test_count
+        if train_count >= val_count and train_count - overflow >= 1:
+            train_count -= overflow
+        elif val_count - overflow >= 1:
+            val_count -= overflow
+        else:
+            raise ValueError("Unable to form non-empty test split")
+        test_count = window_size - train_count - val_count
+
     slide_size = max(int(window_size * WINDOW_CONFIG["slide_pct"]), 1)
     windows: list[dict[str, object]] = []
     start_idx = 0
     window_num = 0
     while start_idx + window_size <= n:
         end_idx = start_idx + window_size
-        train_end = start_idx + int(window_size * WINDOW_CONFIG["train_size"])
-        val_end = train_end + int(window_size * WINDOW_CONFIG["val_size"])
+        train_end = start_idx + train_count
+        val_end = train_end + val_count
         train_dates = rebalance_dates[start_idx:train_end]
         val_dates = rebalance_dates[train_end:val_end]
         test_dates = rebalance_dates[val_end:end_idx]
+        if not train_dates or not val_dates or not test_dates:
+            raise ValueError(f"Malformed split in window {window_num}: train={len(train_dates)} val={len(val_dates)} test={len(test_dates)}")
         windows.append(
             {
                 "window_num": window_num,
@@ -163,18 +186,35 @@ def _create_windows(rebalance_dates: list[pd.Timestamp]) -> list[dict[str, objec
                 "val_dates": val_dates,
                 "test_dates": test_dates,
                 "period": f"{test_dates[0].date()} to {test_dates[-1].date()}" if test_dates else "n/a",
+                "split_counts": {"train": len(train_dates), "val": len(val_dates), "test": len(test_dates)},
             }
         )
         start_idx += slide_size
         window_num += 1
     return windows
 
-def _fit_model(model_family: str, seed: int):
+def _fit_model(model_family: str, seed: int, params: dict[str, object] | None = None):
+    params = params or {}
     if model_family == "linear_rank":
-        return Ridge(alpha=1.0)
+        alpha = float(params.get("alpha", 1.0))
+        return Ridge(alpha=alpha)
     if model_family == "tree_rank":
-        return RandomForestRegressor(n_estimators=250, max_depth=8, random_state=seed, n_jobs=-1)
+        n_estimators = int(params.get("n_estimators", 250))
+        max_depth = int(params.get("max_depth", 8))
+        return RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth, random_state=seed, n_jobs=1)
     raise ValueError(f"Unsupported model family: {model_family}")
+
+
+def _model_candidates(model_family: str) -> list[dict[str, object]]:
+    if model_family == "linear_rank":
+        return [{"alpha": 0.1}, {"alpha": 1.0}, {"alpha": 10.0}]
+    if model_family == "tree_rank":
+        return [
+            {"n_estimators": 200, "max_depth": 4},
+            {"n_estimators": 250, "max_depth": 8},
+            {"n_estimators": 400, "max_depth": 12},
+        ]
+    return [{}]
 
 # Concentration-capped top-k weights
 def _top_k_weights_capped(score_frame: pd.DataFrame, top_k: int = TOP_K, cap: float = CONCENTRATION_CAP) -> dict[pd.Timestamp, dict[str, float]]:
@@ -592,22 +632,55 @@ def run_h4_sweep() -> dict[str, object]:
     for variant_name, model_family in variant_specs:
         variant_windows: list[dict[str, object]] = []
         for window in windows:
+            train_dates = window["train_dates"]
+            val_dates = window["val_dates"]
             test_dates = window["test_dates"]
+
+            train_panel = panel[panel["Date"].isin(train_dates)].copy().reset_index(drop=True)
+            val_panel = panel[panel["Date"].isin(val_dates)].copy().reset_index(drop=True)
             test_panel = panel[panel["Date"].isin(test_dates)].copy().reset_index(drop=True)
+            if train_panel.empty or val_panel.empty or test_panel.empty:
+                raise ValueError(
+                    f"Empty split encountered in window {window['window_num']}: "
+                    f"train={len(train_panel)} val={len(val_panel)} test={len(test_panel)}"
+                )
+
             period_returns: dict[pd.Timestamp, dict[str, float]] = {}
             for date in test_dates:
                 sub = test_panel[test_panel["Date"] == date]
                 period_returns[pd.Timestamp(date)] = {row.Ticker: row.forward_simple_return for row in sub.itertuples(index=False)}
 
+            selected_val_rank_ic = 0.0
+            selected_params: dict[str, object] | None = None
             if model_family == "momentum_rank":
                 test_panel["score"] = test_panel["trailing_momentum"]
+                val_scored = val_panel.copy()
+                val_scored["score"] = val_scored["trailing_momentum"]
+                selected_val_rank_ic = _rank_ic(val_scored)
+                selected_params = {}
             else:
-                X = test_panel[FEATURE_COLUMNS].to_numpy()
-                y = test_panel["forward_simple_return"].to_numpy()
-                model = _fit_model(model_family, seed=42)
-                if len(X) > 0 and len(np.unique(y)) > 1:
-                    model.fit(X, y)
-                    test_panel["score"] = model.predict(X)
+                train_X = train_panel[FEATURE_COLUMNS].to_numpy()
+                train_y = train_panel["forward_simple_return"].to_numpy()
+                val_X = val_panel[FEATURE_COLUMNS].to_numpy()
+
+                if len(train_X) > 0 and len(np.unique(train_y)) > 1 and len(val_X) > 0:
+                    best_rank_ic = -np.inf
+                    best_model = None
+                    for params in _model_candidates(model_family):
+                        candidate = _fit_model(model_family, seed=42, params=params)
+                        candidate.fit(train_X, train_y)
+                        val_scored = val_panel.copy()
+                        val_scored["score"] = candidate.predict(val_X)
+                        val_rank_ic = _rank_ic(val_scored)
+                        if val_rank_ic > best_rank_ic:
+                            best_rank_ic = val_rank_ic
+                            best_model = candidate
+                            selected_params = dict(params)
+                    if best_model is None:
+                        test_panel["score"] = 0.0
+                    else:
+                        selected_val_rank_ic = float(best_rank_ic)
+                        test_panel["score"] = best_model.predict(test_panel[FEATURE_COLUMNS].to_numpy())
                 else:
                     test_panel["score"] = 0.0
 
@@ -626,6 +699,14 @@ def run_h4_sweep() -> dict[str, object]:
                 tickers=UNIVERSE,
                 rebalance_dates=test_dates,
             )
+            summary["train_dates_count"] = len(train_dates)
+            summary["val_dates_count"] = len(val_dates)
+            summary["test_dates_count"] = len(test_dates)
+            summary["train_rows"] = int(len(train_panel))
+            summary["val_rows"] = int(len(val_panel))
+            summary["test_rows"] = int(len(test_panel))
+            summary["selected_val_rank_ic"] = float(selected_val_rank_ic)
+            summary["selected_params"] = selected_params or {}
             variant_windows.append(summary)
 
         variant_summary = _aggregate_variant(variant_name, model_family, variant_windows)

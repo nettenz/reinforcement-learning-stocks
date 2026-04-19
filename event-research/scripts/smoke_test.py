@@ -55,6 +55,15 @@ def main() -> int:
         raise AssertionError(f"Expected 4 fixture rows, got {len(panel)}")
     if result["quality_report"]["missing_ticker_rate"] != 0.0:
         raise AssertionError("Fixture should have zero missing ticker rate.")
+    required_excess_cols = {"has_label_1d", "has_label_3d", "has_label_5d", "excess_return_1d", "excess_return_3d", "excess_return_5d"}
+    if not required_excess_cols.issubset(set(panel.columns)):
+        raise AssertionError(f"Event panel missing excess-label semantics columns: {sorted(required_excess_cols - set(panel.columns))}")
+    for horizon in (1, 3, 5):
+        label_col = f"has_label_{horizon}d"
+        excess_col = f"excess_return_{horizon}d"
+        bad = panel[(panel[label_col] == True) & (panel[excess_col].isna())]  # noqa: E712
+        if not bad.empty:
+            raise AssertionError(f"{label_col} is true while {excess_col} is null for {len(bad)} row(s)")
 
     print(f"Event research smoke test passed: {output_path}")
     return 0

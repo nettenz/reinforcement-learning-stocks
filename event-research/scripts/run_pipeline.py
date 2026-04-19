@@ -46,6 +46,96 @@ NEGATIVE_TERMS = {
 }
 
 
+def _python_type_for_schema(schema_type: str):
+    if schema_type == "string":
+        return str
+    if schema_type == "number":
+        return (int, float)
+    if schema_type == "integer":
+        return int
+    if schema_type == "boolean":
+        return bool
+    if schema_type == "array":
+        return list
+    if schema_type == "object":
+        return dict
+    return object
+
+
+def _validate_with_simple_schema(record: object, schema: dict[str, object], label: str, idx: int) -> None:
+    if not isinstance(record, dict):
+        raise ValueError(f"Schema validation failed for {label}[{idx}]: record is not an object")
+
+    required = schema.get("required", [])
+    if isinstance(required, list):
+        for key in required:
+            if key not in record:
+                raise ValueError(f"Schema validation failed for {label}[{idx}]: missing required key '{key}'")
+
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        return
+
+    for key, rule in properties.items():
+        if key not in record:
+            continue
+        if not isinstance(rule, dict):
+            continue
+        value = record[key]
+        schema_type = rule.get("type")
+        if isinstance(schema_type, list):
+            allowed = []
+            for item in schema_type:
+                if item == "null":
+                    allowed.append(type(None))
+                elif isinstance(item, str):
+                    allowed.append(_python_type_for_schema(item))
+            if allowed and not isinstance(value, tuple(allowed)):
+                raise ValueError(f"Schema validation failed for {label}[{idx}].{key}: unexpected type")
+        elif isinstance(schema_type, str):
+            if schema_type == "null":
+                if value is not None:
+                    raise ValueError(f"Schema validation failed for {label}[{idx}].{key}: expected null")
+            else:
+                py_type = _python_type_for_schema(schema_type)
+                if py_type is not object and not isinstance(value, py_type):
+                    raise ValueError(f"Schema validation failed for {label}[{idx}].{key}: unexpected type")
+
+        enum_values = rule.get("enum")
+        if isinstance(enum_values, list) and value not in enum_values:
+            raise ValueError(f"Schema validation failed for {label}[{idx}].{key}: value not in enum")
+
+        if rule.get("type") == "array":
+            item_rule = rule.get("items")
+            if isinstance(item_rule, dict) and isinstance(value, list):
+                item_type = item_rule.get("type")
+                if isinstance(item_type, str):
+                    item_py_type = _python_type_for_schema(item_type)
+                    for item_idx, item in enumerate(value):
+                        if item_py_type is not object and not isinstance(item, item_py_type):
+                            raise ValueError(
+                                f"Schema validation failed for {label}[{idx}].{key}[{item_idx}]: unexpected type"
+                            )
+
+
+def validate_records(root: Path, schema_name: str, records: list[dict[str, object]], label: str) -> None:
+    schema_path = root / "schemas" / schema_name
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    try:
+        import jsonschema  # type: ignore
+
+        validator = jsonschema.Draft202012Validator(schema)
+        for idx, record in enumerate(records):
+            errors = sorted(validator.iter_errors(record), key=lambda err: list(err.path))
+            if errors:
+                first = errors[0]
+                path = ".".join(str(part) for part in first.path) if first.path else "<root>"
+                raise ValueError(f"Schema validation failed for {label}[{idx}] at {path}: {first.message}")
+    except ModuleNotFoundError:
+        for idx, record in enumerate(records):
+            _validate_with_simple_schema(record, schema, label=label, idx=idx)
+
+
 def load_simple_yaml(path: Path) -> dict[str, object]:
     """Small YAML reader for the starter configs used here."""
     try:
@@ -141,13 +231,20 @@ def assign_market_session(published_at_utc: pd.Timestamp, sessions: dict[str, ob
     return "closed"
 
 
-def load_aliases(root: Path) -> dict[str, str]:
-    aliases = {"GOOGLE": "GOOGL", "FACEBOOK": "META"}
+def load_aliases(root: Path, ticker_config: dict[str, object]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    configured_aliases = ticker_config.get("aliases")
+    if isinstance(configured_aliases, dict):
+        for key, value in configured_aliases.items():
+            aliases[str(key).upper()] = str(value).upper()
+
     ticker_map = root / "data" / "raw" / "reference" / "ticker_map.csv"
     if ticker_map.exists():
         with ticker_map.open("r", encoding="utf-8", newline="") as handle:
             for row in csv.DictReader(handle):
-                aliases[str(row["raw_ticker"]).upper()] = str(row["ticker"]).upper()
+                raw = str(row["raw_ticker"]).upper()
+                mapped = str(row["ticker"]).upper()
+                aliases.setdefault(raw, mapped)
     return aliases
 
 
@@ -166,7 +263,7 @@ def normalize_news(root: Path, raw_rows: list[dict[str, object]]) -> pd.DataFram
     sessions = load_simple_yaml(root / "config" / "sessions.yaml")
     ticker_config = load_simple_yaml(root / "config" / "tickers.yaml")
     universe = set(ticker_config.get("universe", ["AAPL", "AMD", "NVDA", "QQQ", "SPY"]))
-    aliases = load_aliases(root)
+    aliases = load_aliases(root, ticker_config=ticker_config)
 
     rows: list[dict[str, object]] = []
     for raw in raw_rows:
@@ -286,6 +383,7 @@ def daily_close_timestamp_utc(date_value: object) -> str:
 def build_event_panel(root: Path, events: pd.DataFrame, prices: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     label_config = load_simple_yaml(root / "config" / "labels.yaml")
     ticker_config = load_simple_yaml(root / "config" / "tickers.yaml")
+    benchmark_mode = str(label_config.get("benchmark_mode", "excess_vs_spy")).strip().lower()
     horizons = label_config.get("forward_horizons_days", [1, 3, 5])
     if isinstance(horizons, str):
         horizons = [1, 3, 5]
@@ -363,7 +461,10 @@ def build_event_panel(root: Path, events: pd.DataFrame, prices: pd.DataFrame) ->
             panel[f"excess_return_{horizon}d"] = (
                 forward_return - benchmark_return if forward_return is not None and benchmark_return is not None else None
             )
-            panel[f"has_label_{horizon}d"] = forward_return is not None
+            if benchmark_mode == "excess_vs_spy":
+                panel[f"has_label_{horizon}d"] = forward_return is not None and benchmark_return is not None
+            else:
+                panel[f"has_label_{horizon}d"] = forward_return is not None
 
         panel_rows.append(panel)
 
@@ -413,16 +514,26 @@ def run(root: Path) -> dict[str, object]:
         source_config = sources["sources"]
         manual_config = source_config.get("manual_news", {})
         price_config = source_config.get("daily_prices", {})
-        if isinstance(manual_config, dict) and manual_config.get("input_path"):
-            manual_path = root / str(manual_config["input_path"])
-        if isinstance(price_config, dict) and price_config.get("input_path"):
-            price_path = root / str(price_config["input_path"])
+        if isinstance(manual_config, dict):
+            if not bool(manual_config.get("enabled", True)):
+                raise ValueError("manual_news source is disabled in sources.yaml")
+            if manual_config.get("input_path"):
+                manual_path = root / str(manual_config["input_path"])
+        if isinstance(price_config, dict):
+            if not bool(price_config.get("enabled", True)):
+                raise ValueError("daily_prices source is disabled in sources.yaml")
+            if price_config.get("input_path"):
+                price_path = root / str(price_config["input_path"])
 
     raw_rows = parse_jsonl(manual_path)
+    validate_records(root, "news_raw.schema.json", raw_rows, label="news_raw")
     normalized = normalize_news(root, raw_rows)
+    validate_records(root, "news_normalized.schema.json", normalized.to_dict(orient="records"), label="news_normalized")
     events = build_event_table(normalized)
+    validate_records(root, "event_table.schema.json", events.to_dict(orient="records"), label="event_table")
     prices = load_prices(price_path)
     aligned, panel = build_event_panel(root, events, prices)
+    validate_records(root, "event_panel.schema.json", panel.to_dict(orient="records"), label="event_panel")
 
     write_frame(normalized, root / "data" / "interim" / "normalized_news" / "normalized_news_v1.csv")
     deduped = normalized.loc[~normalized["is_duplicate"]].copy() if not normalized.empty else normalized
