@@ -274,7 +274,7 @@ def train_supervised_baseline(
     with open(results_file, 'w') as f:
         json.dump(results, f, indent=2)
     
-    print(f"\n✓ Results saved to {results_file}")
+    print(f"\nResults saved to {results_file}")
     print(f"{'='*70}\n")
     
     return results

@@ -1,0 +1,93 @@
+{
+  "generated_at": "2026-04-20T01:02:06.866923+00:00",
+  "verdict": "signal_weak",
+  "baseline_gate_passed": false,
+  "trading_gate_passed": false,
+  "baseline_count": 15,
+  "trading_count": 2,
+  "baseline_checks": [
+    {
+      "ticker": "AAPL",
+      "passed": false,
+      "best_run": {
+        "ticker": "AAPL",
+        "horizon": 2,
+        "model_type": "linear",
+        "val_r2": -0.006801720822517732,
+        "test_r2": -0.008947028029087534,
+        "val_mae": 0.014673794020697028,
+        "test_mae": 0.019169554440258668,
+        "path": "results\\stage1_step10_proxy_confirm\\stage1_baseline_AAPL_linear_raw_2h_tr0p7000_vr0p1500_seed123.json"
+      },
+      "reason": "val_r2=-0.006802, test_r2=-0.008947, thresholds=(0.010000, 0.010000)"
+    },
+    {
+      "ticker": "AMD",
+      "passed": false,
+      "best_run": {
+        "ticker": "AMD",
+        "horizon": 1,
+        "model_type": "linear",
+        "val_r2": -0.0038104946869179646,
+        "test_r2": 0.007005046854603347,
+        "val_mae": 0.021561952405334744,
+        "test_mae": 0.025994451006230566,
+        "path": "results\\stage1_step10_proxy_confirm\\stage1_baseline_AMD_linear_raw_1h_tr0p7000_vr0p1500_seed123.json"
+      },
+      "reason": "val_r2=-0.003810, test_r2=0.007005, thresholds=(0.010000, 0.010000)"
+    },
+    {
+      "ticker": "NVDA",
+      "passed": false,
+      "best_run": {
+        "ticker": "NVDA",
+        "horizon": 1,
+        "model_type": "linear",
+        "val_r2": -0.011594384794078705,
+        "test_r2": 0.0019035799577645784,
+        "val_mae": 0.02343100961056471,
+        "test_mae": 0.02070537049884216,
+        "path": "results\\stage1_step10_proxy_confirm\\stage1_baseline_NVDA_linear_raw_1h_tr0p7000_vr0p1500_seed123.json"
+      },
+      "reason": "val_r2=-0.011594, test_r2=0.001904, thresholds=(0.010000, 0.010000)"
+    }
+  ],
+  "trading_checks": [
+    {
+      "ticker": "AAPL",
+      "passed": false,
+      "summary": {
+        "ticker": "AAPL",
+        "split": "test",
+        "supervised_policy_name": "supervised-linear-thresholded",
+        "supervised_return": -0.14592071069335932,
+        "flat_return": 0.0,
+        "buy_hold_return": -0.0339303312072754,
+        "supervised_sharpe_like": -0.022575191099547316,
+        "flat_sharpe_like": 0.0,
+        "buy_hold_sharpe_like": 0.0023348998156103255,
+        "supervised_win_rate": 0.3841059602649007,
+        "trade_count": 151
+      },
+      "reason": "supervised_return=-0.145921 vs flat_return=0.000000, supervised_sharpe_like=-0.022575 vs flat_sharpe_like=0.000000"
+    },
+    {
+      "ticker": "NVDA",
+      "passed": false,
+      "summary": {
+        "ticker": "NVDA",
+        "split": "test",
+        "supervised_policy_name": "supervised-linear-thresholded",
+        "supervised_return": -0.027574097427368494,
+        "flat_return": 0.0,
+        "buy_hold_return": 0.23427883403015137,
+        "supervised_sharpe_like": 0.009882913344621888,
+        "flat_sharpe_like": 0.0,
+        "buy_hold_sharpe_like": 0.03824240150426691,
+        "supervised_win_rate": 0.4206896551724138,
+        "trade_count": 145
+      },
+      "reason": "supervised_return=-0.027574 vs flat_return=0.000000, supervised_sharpe_like=0.009883 vs flat_sharpe_like=0.000000"
+    }
+  ]
+}
