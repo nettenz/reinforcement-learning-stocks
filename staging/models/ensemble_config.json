@@ -1,29 +1,15 @@
 {
   "nvda": {
-    "active_seeds": [4, 6, 8],
+    "active_seeds": [
+      13,
+      21,
+      42,
+      7
+    ],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.722,
-    "top_3_mean_val_test_gap": 0.177,
+    "top_3_mean_sharpe": 1.635,
+    "top_3_mean_val_test_gap": 0.0073,
     "production_ready": true,
-    "leaderboard_csv": "staging/metrics/nvda_leaderboard.csv",
-    "notes": "9/10 active seeds. Exp 9 gate passed 2026-04-30."
-  },
-  "aapl": {
-    "active_seeds": [6, 8, 1],
-    "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.178,
-    "top_3_mean_val_test_gap": 0.015,
-    "production_ready": "monitor",
-    "leaderboard_csv": "staging/metrics/aapl_leaderboard.csv",
-    "notes": "6/10 active. Borderline alpha — monitor only, not in primary deployment."
-  },
-  "amd": {
-    "active_seeds": [5, 2, 10],
-    "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.960,
-    "top_3_mean_val_test_gap": 0.025,
-    "production_ready": true,
-    "leaderboard_csv": "staging/metrics/amd_leaderboard.csv",
-    "notes": "6/10 active. Exp 9 gate passed 2026-04-30."
+    "notes": "4/5 seeds pass all 6 gates. max_weight_delta=0.10. sweep_overtrade_fix_nvda_maxdelta_v2."
   }
 }

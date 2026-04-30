@@ -605,7 +605,9 @@ def _make_command_from_config(
         f"--reward-direction-scale {_format_float(float(config['reward_direction_scale']))} "
         f"--reward-hold-penalty-scale {_format_float(float(config['reward_hold_penalty_scale']))} "
         f"--reward-drawdown-penalty-scale {_format_float(float(config['reward_drawdown_penalty_scale']))} "
+        f"--reward-pnl-scale {_format_float(float(config.get('reward_pnl_scale', 0.0)))} "
         f"--reward-action-bonus-scale {_format_float(float(config['reward_action_bonus_scale']))} "
+        f"--reward-turnover-penalty-scale {_format_float(float(config.get('reward_turnover_penalty_scale', 0.05)))} "
         f"--reward-clip {_format_float(float(config['reward_clip']))} "
         f"{ignore_cost_flag} "
         f"--append "
@@ -882,7 +884,9 @@ def _config_from_row(row: pd.Series) -> dict[str, float | int | bool | str]:
         "reward_direction_scale": float(_safe_get(row, "reward_direction_scale", 0.35)),
         "reward_hold_penalty_scale": float(_safe_get(row, "reward_hold_penalty_scale", 0.05)),
         "reward_drawdown_penalty_scale": float(_safe_get(row, "reward_drawdown_penalty_scale", 0.10)),
+        "reward_pnl_scale": float(_safe_get(row, "reward_pnl_scale", 0.0)),
         "reward_action_bonus_scale": float(_safe_get(row, "reward_action_bonus_scale", 0.02)),
+        "reward_turnover_penalty_scale": float(_safe_get(row, "reward_turnover_penalty_scale", 0.05)),
         "reward_clip": float(_safe_get(row, "reward_clip", 1.0)),
         "reward_ignore_transaction_cost": bool(int(_safe_get(row, "reward_ignore_transaction_cost", 1))),
     }
@@ -1646,8 +1650,17 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") 
         )
         reward_hold_penalty_scale = st.number_input("Reward: hold penalty scale", min_value=0.0, max_value=5.0, value=0.05, step=0.01)
         reward_drawdown_penalty_scale = st.number_input("Reward: drawdown penalty scale", min_value=0.0, max_value=5.0, value=0.10, step=0.01)
+        reward_pnl_scale = st.number_input("Reward: PnL scale", min_value=0.0, max_value=5.0, value=0.0, step=0.01, help="Additional weight for realized P&L reward term.")
         reward_action_bonus_scale = st.number_input("Reward: action bonus (anti-collapse)", min_value=0.0, max_value=1.0, value=0.02, step=0.01)
-        reward_mode = st.selectbox("Reward mode", options=["legacy", "sharpe", "sortino"], index=1)
+        reward_turnover_penalty_scale = st.number_input(
+            "Reward: turnover penalty scale",
+            min_value=0.0,
+            max_value=2.0,
+            value=0.05,
+            step=0.01,
+            help="Penalizes large weight changes per step. Raise to reduce overtrading (target: 60–75% trade rate).",
+        )
+        reward_mode = st.selectbox("Reward mode", options=["legacy", "sharpe", "sortino", "sparse"], index=1)
         rolling_reward_window = st.number_input("Rolling reward window", min_value=5, max_value=1000, value=100, step=5)
         reward_epsilon = st.number_input("Reward epsilon", min_value=1e-9, max_value=1e-3, value=1e-6, format="%.9f")
         reward_clip = st.number_input("Reward clip (+/-)", min_value=0.01, max_value=10.0, value=1.0, step=0.05)
@@ -1688,18 +1701,25 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") 
             execution_mode=str(execution_mode),
             spread_bps=float(spread_bps),
             slippage_bps=float(slippage_bps),
-            max_weight_delta_per_step=float(max_weight_delta_per_step),
-            reward_return_scale=float(reward_return_scale),
-            reward_direction_scale=float(reward_direction_scale),
-            reward_hold_penalty_scale=float(reward_hold_penalty_scale),
-            reward_drawdown_penalty_scale=float(reward_drawdown_penalty_scale),
-            reward_action_bonus_scale=float(reward_action_bonus_scale),
+            max_weight_delta_per_step=str(max_weight_delta_per_step),
+            reward_pnl_scale=str(reward_pnl_scale),
+            reward_return_scale=str(reward_return_scale),
+            reward_direction_scale=str(reward_direction_scale),
+            reward_hold_penalty_scale=str(reward_hold_penalty_scale),
+            reward_drawdown_penalty_scale=str(reward_drawdown_penalty_scale),
+            reward_action_bonus_scale=str(reward_action_bonus_scale),
+            reward_turnover_penalty_scale=str(reward_turnover_penalty_scale),
             reward_mode=reward_mode,
-            rolling_reward_window=int(rolling_reward_window),
+            rolling_reward_window=str(rolling_reward_window),
             reward_epsilon=float(reward_epsilon),
             reward_clip=float(reward_clip),
             reward_ignore_transaction_cost=bool(reward_ignore_transaction_cost),
             use_stationary_features=bool(use_stationary_features),
+            long_only=False,
+            binary_actions=False,
+            max_episode_steps=0,
+            random_start=False,
+            batch_size=1024,
             max_runs=int(max_runs),
             leaderboard_path=str(leaderboard_path),
             reward_leaderboard_path=str(reward_leaderboard_path),
@@ -1896,10 +1916,15 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") 
         if len(reward_leaderboard):
             st.subheader("6) Best Reward Snapshot")
             best_reward = reward_leaderboard.iloc[0]
-            r1, r2, r3 = st.columns(3)
+            r1, r2, r3, r4 = st.columns(4)
             r1.metric("Best val reward mean", f"{best_reward['val_reward_total_mean']:.5f}")
             r2.metric("Best val direction reward", f"{best_reward['val_reward_direction_mean']:.5f}")
             r3.metric("Best val drawdown", f"{best_reward['val_reward_drawdown_mean']:.5f}")
+            r4.metric(
+                "Val turnover penalty",
+                f"{float(best_reward.get('val_reward_turnover_penalty_mean', 0.0)):.5f}",
+                help="Mean per-step turnover penalty. More negative = agent over-traded.",
+            )
 
     if summary_path.exists():
         st.subheader("7) Summary JSON")
@@ -2033,8 +2058,12 @@ def render_experiment_insights_page(ticker: str = DEFAULT_TICKER, interval: str 
         "reward_direction_scale",
         "reward_hold_penalty_scale",
         "reward_drawdown_penalty_scale",
+        "reward_action_bonus_scale",
+        "reward_turnover_penalty_scale",
         "val_actionable_accuracy",
         "test_actionable_accuracy",
+        "val_trade_rate",
+        "test_trade_rate",
         "ranking_score",
     ]
     visible_cols = [c for c in display_cols if c in bests.columns]

@@ -1,0 +1,370 @@
+"""
+scripts/evaluate_sweep.py
+
+Post-sweep evaluation script. Loads a leaderboard CSV, applies all 5 promotion
+gates, surfaces the overtrade diagnostic, ranks survivors by Sharpe, and prints
+a champion summary with copy-paste ensemble config command.
+
+Usage:
+    python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv
+    python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv --label sweep_overtrade_fix_nvda
+    python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv --label sweep_overtrade_fix_nvda --promote
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Gate definitions — must match AGENT_INSTRUCTIONS.md / context_map.md
+# ---------------------------------------------------------------------------
+GATES = [
+    {
+        "id": 1,
+        "name": "Actionable Accuracy",
+        "col": "test_actionable_accuracy",
+        "op": ">=",
+        "threshold": 0.53,
+    },
+    {
+        "id": 2,
+        "name": "Trade Win Rate",
+        "col": "test_trade_win_rate",
+        "op": ">=",
+        "threshold": 0.52,
+    },
+    {
+        "id": 3,
+        "name": "Alpha vs QQQ",
+        "col": "test_alpha_vs_qqq",
+        "op": ">=",
+        "threshold": 0.00,
+    },
+    {
+        "id": 4,
+        "name": "Val/Test Drift",
+        "col": None,          # computed: |val_acc - test_acc|
+        "op": "<=",
+        "threshold": 0.05,
+    },
+    {
+        "id": 5,
+        "name": "CV Stability",
+        "col": "test_return_cv_by_config",
+        "op": "<",
+        "threshold": 1.0,
+    },
+    {
+        "id": 6,
+        "name": "Trade Rate",
+        "col": "test_trade_rate",
+        "op": "between",
+        "threshold": (0.40, 0.80),
+    },
+]
+
+# Overtrade diagnostic — the fix target
+TRADE_RATE_TARGET_LOW  = 0.60
+TRADE_RATE_TARGET_HIGH = 0.75
+TRADE_RATE_COL         = "test_trade_rate"   # adjust if your CSV uses a different name
+
+# Column used for final ranking among 5/5 gate passers
+RANK_COL = "test_sharpe"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _gate_pass(row: pd.Series, gate: dict) -> bool:
+    """Return True if this row passes the given gate."""
+    if gate["id"] == 4:
+        # Derived: |val_acc - test_acc|
+        val_col  = _find_col(row.index, ["val_actionable_accuracy",  "val_accuracy"])
+        test_col = _find_col(row.index, ["test_actionable_accuracy", "test_accuracy"])
+        if val_col is None or test_col is None:
+            return False
+        drift = abs(row[val_col] - row[test_col])
+        return drift <= gate["threshold"]
+
+    col = gate["col"]
+    if col not in row.index or pd.isna(row[col]):
+        return False
+    v = row[col]
+    if gate["op"] == ">=":
+        return v >= gate["threshold"]
+    if gate["op"] == "<=":
+        return v <= gate["threshold"]
+    if gate["op"] == "<":
+        return v < gate["threshold"]
+    if gate["op"] == ">":
+        return v > gate["threshold"]
+    if gate["op"] == "between":
+        return gate["threshold"][0] <= v <= gate["threshold"][1]
+    return False
+
+
+def _find_col(columns, candidates):
+    for c in candidates:
+        if c in columns:
+            return c
+    return None
+
+
+def _gate_symbol(passed: bool) -> str:
+    return "✅" if passed else "❌"
+
+
+def _trade_rate_symbol(rate: float) -> str:
+    if pd.isna(rate):
+        return "N/A  "
+    if TRADE_RATE_TARGET_LOW <= rate <= TRADE_RATE_TARGET_HIGH:
+        return f"✅ {rate:.1%}"
+    if rate < TRADE_RATE_TARGET_LOW:
+        return f"⚠️  {rate:.1%}  (under-trade)"
+    return f"❌ {rate:.1%}  (overtrade)"
+
+
+def _bar(passed: int, total: int) -> str:
+    filled = "█" * passed
+    empty  = "░" * (total - passed)
+    return f"[{filled}{empty}] {passed}/{total}"
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate sweep leaderboard against promotion gates.")
+    parser.add_argument("--leaderboard", required=True, help="Path to leaderboard CSV")
+    parser.add_argument("--label",   default=None, help="Filter by run_label substring (e.g. sweep_overtrade_fix_nvda)")
+    parser.add_argument("--ticker",  default=None, help="Filter by ticker (e.g. NVDA)")
+    parser.add_argument("--top",     type=int, default=10, help="How many rows to show in ranked table (default 10)")
+    parser.add_argument("--promote", action="store_true", help="Run generate_ensemble_config.py for the champion after evaluation")
+    args = parser.parse_args()
+
+    # ---- Load ---------------------------------------------------------------
+    lb_path = Path(args.leaderboard)
+    if not lb_path.exists():
+        print(f"ERROR: leaderboard not found: {lb_path}")
+        sys.exit(1)
+
+    df = pd.read_csv(lb_path)
+    print(f"\n{'='*70}")
+    print(f"  SWEEP EVALUATION  —  {lb_path.name}")
+    print(f"{'='*70}")
+    print(f"  Total rows loaded : {len(df)}")
+
+    # ---- Filter -------------------------------------------------------------
+    if args.label:
+        label_col = _find_col(df.columns, ["run_label", "label", "experiment_label"])
+        if label_col:
+            df = df[df[label_col].str.contains(args.label, na=False)]
+            print(f"  Filtered by label : '{args.label}'  ->  {len(df)} rows")
+        else:
+            print("  ⚠️  No run_label column found — skipping label filter")
+
+    if args.ticker:
+        tick_col = _find_col(df.columns, ["ticker", "symbol"])
+        if tick_col:
+            df = df[df[tick_col].str.upper() == args.ticker.upper()]
+            print(f"  Filtered by ticker: {args.ticker.upper()}  ->  {len(df)} rows")
+
+    if df.empty:
+        print("\n  No rows match the filter criteria. Exiting.")
+        sys.exit(0)
+
+    # ---- Per-row gate evaluation --------------------------------------------
+    gate_cols = []
+    for gate in GATES:
+        col_name = f"gate_{gate['id']}_pass"
+        df[col_name] = df.apply(lambda row, g=gate: _gate_pass(row, g), axis=1)
+        gate_cols.append(col_name)
+
+    df["gates_passed"] = df[gate_cols].sum(axis=1).astype(int)
+    df["all_gates"]    = df["gates_passed"] == len(GATES)
+
+    # ---- Overtrade diagnostic -----------------------------------------------
+    tr_col = _find_col(df.columns, [TRADE_RATE_COL, "trade_rate", "trade_frequency"])
+
+    # ---- Summary stats -------------------------------------------------------
+    n_total    = len(df)
+    n_promoted = df["all_gates"].sum()
+    gate_pass_rates = {
+        f"Gate {g['id']} ({g['name']})": df[f"gate_{g['id']}_pass"].mean()
+        for g in GATES
+    }
+
+    print(f"\n{'─'*70}")
+    print(f"  GATE PASS RATES")
+    print(f"{'─'*70}")
+    for name, rate in gate_pass_rates.items():
+        bar   = "█" * int(rate * 20)
+        empty = "░" * (20 - int(rate * 20))
+        print(f"  {name:<35}  [{bar}{empty}]  {rate:.0%}")
+
+    print(f"\n  Configs with 5/5 gates : {n_promoted} / {n_total}")
+
+    # ---- Overtrade summary --------------------------------------------------
+    if tr_col:
+        print(f"\n{'─'*70}")
+        print(f"  TRADE RATE DISTRIBUTION  (target: {TRADE_RATE_TARGET_LOW:.0%}–{TRADE_RATE_TARGET_HIGH:.0%})")
+        print(f"{'─'*70}")
+        bands = {
+            f"Overtrade   (> {TRADE_RATE_TARGET_HIGH:.0%})": df[tr_col] > TRADE_RATE_TARGET_HIGH,
+            f"Target zone ({TRADE_RATE_TARGET_LOW:.0%}–{TRADE_RATE_TARGET_HIGH:.0%})": (df[tr_col] >= TRADE_RATE_TARGET_LOW) & (df[tr_col] <= TRADE_RATE_TARGET_HIGH),
+            f"Under-trade (< {TRADE_RATE_TARGET_LOW:.0%})": df[tr_col] < TRADE_RATE_TARGET_LOW,
+        }
+        for label, mask in bands.items():
+            count = mask.sum()
+            pct   = count / n_total if n_total else 0
+            bar   = "█" * int(pct * 20)
+            empty = "░" * (20 - int(pct * 20))
+            print(f"  {label:<40}  [{bar}{empty}]  {count:3d} rows  ({pct:.0%})")
+        print(f"\n  Baseline trade rate was 99.5% — median this sweep: {df[tr_col].median():.1%}")
+
+    # ---- Ranked table of top configs ----------------------------------------
+    rank_col = _find_col(df.columns, [RANK_COL, "sharpe", "test_sharpe_ratio"])
+    sort_cols = ["all_gates", rank_col] if rank_col else ["gates_passed"]
+    sort_asc  = [False, False] if rank_col else [False]
+
+    ranked = df.sort_values(sort_cols, ascending=sort_asc).head(args.top)
+
+    print(f"\n{'─'*70}")
+    print(f"  TOP {args.top} CONFIGS  (sorted: 5/5 gates first, then Sharpe)")
+    print(f"{'─'*70}")
+
+    # Build display columns dynamically from what exists
+    display_always = ["run_label", "ticker", "seed"]
+    display_metrics = [
+        "test_actionable_accuracy", "test_trade_win_rate",
+        "test_alpha_vs_qqq", "test_return_cv_by_config",
+        rank_col, tr_col,
+    ]
+    display_gate = ["gates_passed"]
+
+    show_cols = [c for c in display_always if c in df.columns]
+    show_cols += [c for c in display_metrics if c and c in df.columns]
+    show_cols += display_gate
+
+    pd.set_option("display.max_columns", None)
+    pd.set_option("display.width", 160)
+    pd.set_option("display.float_format", "{:.4f}".format)
+    print(ranked[show_cols].to_string(index=False))
+
+    # ---- Gate detail for top 3 ----------------------------------------------
+    print(f"\n{'─'*70}")
+    print(f"  GATE BREAKDOWN — TOP 3")
+    print(f"{'─'*70}")
+    for _, row in ranked.head(3).iterrows():
+        label_col = _find_col(ranked.columns, ["run_label", "label"])
+        row_label = row[label_col] if label_col else "?"
+        seed_col  = _find_col(ranked.columns, ["seed"])
+        seed_val  = f"  seed={int(row[seed_col])}" if seed_col and not pd.isna(row[seed_col]) else ""
+
+        gates_passed = int(row["gates_passed"])
+        print(f"\n  [{row_label}{seed_val}]  {_bar(gates_passed, len(GATES))}")
+        for gate in GATES:
+            passed = bool(row[f"gate_{gate['id']}_pass"])
+            sym    = _gate_symbol(passed)
+
+            if gate["id"] == 4:
+                val_col  = _find_col(row.index, ["val_actionable_accuracy", "val_accuracy"])
+                test_col = _find_col(row.index, ["test_actionable_accuracy", "test_accuracy"])
+                drift    = abs(row[val_col] - row[test_col]) if (val_col and test_col) else float("nan")
+                detail   = f"drift={drift:.4f}"
+            else:
+                col    = gate["col"]
+                val    = row[col] if col and col in row.index else float("nan")
+                detail = f"value={val:.4f}" if not pd.isna(val) else "N/A"
+
+            print(f"    {sym}  Gate {gate['id']}: {gate['name']:<22}  {detail}  (thresh {gate['op']} {gate['threshold']})")
+
+        if tr_col and tr_col in row.index:
+            print(f"    🔁  Trade rate: {_trade_rate_symbol(row[tr_col])}")
+
+    # ---- Champion -----------------------------------------------------------
+    champion_df = ranked[ranked["all_gates"] == True]  # noqa: E712
+
+    print(f"\n{'='*70}")
+    if champion_df.empty:
+        print("  ⚠️  NO CHAMPION — no config passed all 5 gates.")
+        print("  Recommendation: check overtrade band rows — if trade rate is")
+        print("  now in range but alpha still fails, the hold penalty may be")
+        print("  suppressing return variance. Try nudging reward_turnover_penalty_scale")
+        print("  down one step from the best near-miss config.")
+        print(f"{'='*70}\n")
+        sys.exit(0)
+
+    champion = champion_df.iloc[0]
+    print("  ✅  CHAMPION IDENTIFIED")
+    print(f"{'='*70}")
+
+    label_col = _find_col(champion.index, ["run_label", "label"])
+    seed_col  = _find_col(champion.index, ["seed"])
+    tick_col2 = _find_col(champion.index, ["ticker", "symbol"])
+
+    champ_label  = champion[label_col]  if label_col  else "unknown"
+    champ_seed   = int(champion[seed_col])   if seed_col   else "unknown"
+    champ_ticker = champion[tick_col2].upper() if tick_col2  else "NVDA"
+
+    sharpe_val = champion[rank_col] if rank_col and rank_col in champion.index else "N/A"
+    alpha_val  = champion["test_alpha_vs_qqq"] if "test_alpha_vs_qqq" in champion.index else "N/A"
+    acc_val    = champion["test_actionable_accuracy"] if "test_actionable_accuracy" in champion.index else "N/A"
+    wr_val     = champion["test_trade_win_rate"] if "test_trade_win_rate" in champion.index else "N/A"
+    tr_val     = champion[tr_col] if tr_col and tr_col in champion.index else None
+
+    print(f"  Label  : {champ_label}")
+    print(f"  Ticker : {champ_ticker}   Seed : {champ_seed}")
+    print(f"  Sharpe : {sharpe_val}")
+    print(f"  Alpha  : {alpha_val}")
+    print(f"  Acc    : {acc_val}    WinRate : {wr_val}")
+    if tr_val is not None:
+        print(f"  Trade rate: {_trade_rate_symbol(tr_val)}")
+
+    # ---- Next steps ---------------------------------------------------------
+    print(f"\n{'─'*70}")
+    print("  NEXT STEPS")
+    print(f"{'─'*70}")
+    print(f"\n  1. Lock baseline snapshot before any further changes:")
+    print(f"       python scripts/sanity_scan.py --leaderboard {lb_path}")
+    print(f"\n  2. Regenerate ensemble config with champion:")
+    print(f"       python scripts/generate_ensemble_config.py \\")
+    print(f"           --leaderboard {lb_path} \\")
+    print(f"           --ticker {champ_ticker} \\")
+    print(f"           --label {champ_label}")
+    print(f"\n  3. Validate ensemble config was written correctly:")
+    print(f"       cat staging/models/ensemble_config.json")
+    print(f"\n  4. Run walk-forward validation on champion ensemble:")
+    print(f"       python scripts/run_exp9_walkforward.py \\")
+    print(f"           --ticker {champ_ticker} \\")
+    print(f"           --config staging/models/ensemble_config.json")
+    print()
+
+    # ---- Auto-promote -------------------------------------------------------
+    if args.promote:
+        print(f"{'─'*70}")
+        print("  --promote flag set. Running generate_ensemble_config.py ...")
+        print(f"{'─'*70}")
+        cmd = [
+            sys.executable, "scripts/generate_ensemble_config.py",
+            "--leaderboard", str(lb_path),
+            "--ticker", champ_ticker,
+            "--label", champ_label,
+        ]
+        print(f"  CMD: {' '.join(cmd)}\n")
+        result = subprocess.run(cmd, capture_output=False)
+        if result.returncode == 0:
+            print("\n  ✅  generate_ensemble_config.py completed successfully.")
+        else:
+            print(f"\n  ❌  generate_ensemble_config.py exited with code {result.returncode}.")
+
+
+if __name__ == "__main__":
+    main()

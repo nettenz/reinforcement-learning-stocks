@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback
-from tqdm import tqdm
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, BarColumn, TextColumn
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -455,22 +455,30 @@ class ProgressCallback(BaseCallback):
     """Custom callback for displaying a progress bar with a spinner effect during training."""
     def __init__(self, total_timesteps: int, verbose=0):
         super().__init__(verbose)
-        self.pbar = None
+        self.progress = None
+        self.task_id = None
         self.total_timesteps = total_timesteps
 
     def _on_training_start(self) -> None:
-        self.pbar = tqdm(total=self.total_timesteps, desc="Training", unit="step", leave=False)
+        self.progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            transient=True
+        )
+        self.progress.start()
+        self.task_id = self.progress.add_task("[cyan]Training...", total=self.total_timesteps)
 
     def _on_step(self) -> bool:
-        if self.pbar:
-            # Sync directly with SB3's true internal timestep counter
-            self.pbar.n = self.num_timesteps
-            self.pbar.refresh()
+        if self.progress and self.task_id is not None:
+            self.progress.update(self.task_id, completed=self.num_timesteps)
         return True
 
     def _on_training_end(self) -> None:
-        if self.pbar:
-            self.pbar.close()
+        if self.progress:
+            self.progress.stop()
 
 
 def write_experiment_outputs(
@@ -622,7 +630,6 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         "execution_mode": args.execution_mode,
         "spread_bps": args.spread_bps,
         "slippage_bps": args.slippage_bps,
-        "max_weight_delta_per_step": args.max_weight_delta_per_step,
         "reward_clip": args.reward_clip,
         "reward_ignore_transaction_cost": args.reward_ignore_transaction_cost,
         "reward_mode": args.reward_mode,
@@ -643,12 +650,13 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     reward_action_bonus_scales = _parse_float_list(args.reward_action_bonus_scale)
     reward_turnover_penalty_scales = _parse_float_list(args.reward_turnover_penalty_scale)
     rolling_reward_windows = _parse_int_list(args.rolling_reward_window)
+    max_weight_delta_per_steps = _parse_float_list(args.max_weight_delta_per_step)
 
     configs = list(itertools.product(
         seeds, timesteps_list, learning_rates, gammas, ent_coefs,
         reward_return_scales, reward_pnl_scales, reward_direction_scales, reward_hold_penalty_scales,
         reward_drawdown_penalty_scales, reward_action_bonus_scales, reward_turnover_penalty_scales,
-        rolling_reward_windows
+        rolling_reward_windows, max_weight_delta_per_steps
     ))
     if args.max_runs > 0:
         configs = configs[: args.max_runs]
@@ -658,7 +666,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     print(f"Running {len(configs)} experiment runs on interval={interval} (preset={args.experiment_preset})...")
 
     for idx, (seed, timesteps, learning_rate, gamma, ent_coef,
-              ret_scale, pnl_scale, dir_scale, hold_scale, dd_scale, bonus_scale, turnover_scale, rolling_window) in enumerate(configs, start=1):
+              ret_scale, pnl_scale, dir_scale, hold_scale, dd_scale, bonus_scale, turnover_scale, rolling_window, max_weight_delta) in enumerate(configs, start=1):
         print(
             f"[{idx}/{len(configs)}] seed={seed} timesteps={timesteps} lr={learning_rate} "
             f"gamma={gamma} ent_coef={ent_coef} dir_scale={dir_scale} mode={args.reward_mode}"
@@ -668,6 +676,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         
         env_kwargs_run = env_kwargs.copy()
         env_kwargs_run.update({
+            "max_weight_delta_per_step": max_weight_delta,
             "reward_return_scale": ret_scale,
             "reward_pnl_scale": pnl_scale,
             "reward_direction_scale": dir_scale,
@@ -747,7 +756,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "execution_mode": args.execution_mode,
             "spread_bps": args.spread_bps,
             "slippage_bps": args.slippage_bps,
-            "max_weight_delta_per_step": args.max_weight_delta_per_step,
+            "max_weight_delta_per_step": max_weight_delta,
             "reward_mode": args.reward_mode,
             "rolling_reward_window": args.rolling_reward_window,
             "reward_epsilon": args.reward_epsilon,
@@ -842,7 +851,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--execution-mode", default="same_bar", choices=["same_bar", "next_bar"], help="Execution timing model.")
     parser.add_argument("--spread-bps", type=float, default=0.0, help="Half-spread is applied around mid for buys/sells (in bps).")
     parser.add_argument("--slippage-bps", type=float, default=0.0, help="Additional one-way slippage added to execution price (in bps).")
-    parser.add_argument("--max-weight-delta-per-step", type=float, default=0.0, help="Maximum absolute change in target weight allowed per step.")
+    parser.add_argument("--max-weight-delta-per-step", default="0.0", help="Maximum absolute change in target weight allowed per step (list).")
     parser.add_argument("--reward-return-scale", default="1.0", help="Weight for portfolio-return reward term (list).")
     parser.add_argument("--reward-pnl-scale", default="0.0", help="Additional weight for realized portfolio P&L (list).")
     parser.add_argument("--reward-direction-scale", default="0.35", help="Weight for directional-alignment reward term (list).")
