@@ -37,9 +37,9 @@ from src.trading_agent import EnsembleAgent
 
 TICKER_CONFIG = {
     "nvda": {
-        "leaderboard": ROOT / "data" / "exp_1_nvda_10seed_foundation_leaderboard.csv",
-        "parquet":     ROOT / "data" / "tech_training_data_nvda_stationary.parquet",
-        "top_seeds":   [4, 6, 8],
+        "leaderboard": ROOT / "data" / "experiment_leaderboard.csv",
+        "parquet":     ROOT / "data" / "tech_training_data_nvda.parquet",
+        "top_seeds":   [13, 21, 42, 7],
     },
     "aapl": {
         "leaderboard": ROOT / "data" / "exp_2_aapl_10seed_foundation_leaderboard.csv",
@@ -187,7 +187,7 @@ def run_ticker(ticker: str) -> dict:
     lb = pd.read_csv(cfg["leaderboard"])
     ensemble = SparseEnsemble(str(cfg["leaderboard"]))
     ensemble.filter_active_seeds(min_test_trades=20)
-    ensemble.load_top_n_models(n=3)
+    ensemble.load_top_n_models(n=len(cfg["top_seeds"]))
 
     with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")

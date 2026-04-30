@@ -1,305 +1,163 @@
-# 🎯 Quick Reference Card
+# Quick Reference Card — RL Trading System
 
-## Experiment Execution Checklist
-
-### Pre-Experiment (5 min)
-- [ ] Activate `.venv`: `.\.venv\Scripts\Activate.ps1`
-- [ ] Read today's experiment section from `EXPERIMENT_EXECUTION_README.md`
-- [ ] Check script params match previous experiment results
-- [ ] Have `EXPERIMENT_STRATEGY_HANDOFF.md` nearby for questions
+**Last updated:** 2026-04-30  
+**Current phase:** Stationary feature validation (NVDA) → Exp 10 → Cross-ticker expansion
 
 ---
 
-## Experiment 0: Regime Diagnostics ⏱️ 30 min
+## Standard Sweep Command (NVDA Template)
 
-```bash
-python run_validation_regime_diagnostics.py
-```
-
-**Output**: `data/regime_analysis.json`
-
-**Decision Point**:
-- Volatility diff > -20%? → Validation is easier (regime shift likely)
-- Sharpe diff > 0.5pp? → Market conditions differ
-- If no shifts: Val-test gap is reward function issue (not data)
-
-**Next**: Proceed to Exp 1
-
----
-
-## Experiment 1: Entropy Schedule Ablation ⏱️ 2.5-3.5 hrs
-
-```bash
-.\run_entropy_schedule_ablation.ps1
-```
-
-**After Run**:
-1. Filter leaderboard to `run_label` containing "entropy"
-2. For each treatment, find lowest `test_return_cv_by_config`
-3. Record winner's `ent_coef` value
-4. Record winner's entropy schedule ("fixed" or "decay")
-
-**Success**: Best treatment achieves `cv < 3.0` (was 9.43)
-
-**Next**: Edit `run_reward_calibration_sweep.ps1`, set `$EntCoef`, `$EntropySchedule`
-
----
-
-## Experiment 3: Reward Calibration ⏱️ 2.5-3.5 hrs
-
-**Before Running**:
 ```powershell
-# Edit run_reward_calibration_sweep.ps1
-[double]$EntCoef = X.XX               # From Exp 1 best
-[string]$EntropySchedule = "fixed"    # From Exp 1 best
+.\.venv\Scripts\python.exe src\experiments.py `
+    --ticker nvda `
+    --reward-mode sharpe `
+    --ent-coefs 0.02,0.05 `
+    --timesteps 40000 `
+    --seeds 3,7,13,21,42 `
+    --execution-mode next_bar `
+    --reward-hold-penalty-scale 0.01 `
+    --reward-turnover-penalty-scale 0.10 `
+    --max-weight-delta-per-step 0.10 `
+    --use-stationary-features `
+    --run-label "your_label_here" `
+    --append
 ```
 
-```bash
-.\run_reward_calibration_sweep.ps1
-```
-
-**After Run**:
-1. Filter leaderboard to `run_label` containing "reward-calib"
-2. For each treatment, calculate:
-   - Lowest `test_return_cv_by_config` ← Primary goal
-   - Highest `test_alpha_vs_qqq` ← Secondary goal
-   - Maintained `test_actionable_accuracy >= 50%` ← Must check
-3. Record winner's reward params
-
-**Success**: Best treatment achieves:
-- `cv < 2.5` (was 9.43)
-- `test_alpha >= -100bp` (was -150bp)
-- `test_acc >= 50%` (maintained)
-
-**Checkpoint**:
-```
-[ ] Config CV < 2.5?        YES  NO
-[ ] Test alpha >= -100bp?   YES  NO
-[ ] Test acc >= 50%?        YES  NO
-```
-If NO: Diagnose before Exp 4. If YES: Continue.
-
-**Next**: Edit `run_timesteps_optimization.ps1`, set all params from Exp 1 & 3
+**Critical flags:**
+- `--max-weight-delta-per-step 0.10` — always include. Without this, agent overtraded at 99.5% rate.
+- `--use-stationary-features` — always include. Raw 10-feature space is deprecated.
+- `--append` — always include. Omitting this overwrites the leaderboard.
+- Minimum 5 seeds — CV gate requires enough seeds to produce a stable estimate.
 
 ---
 
-## Experiment 4: Timesteps Optimization ⏱️ 3-4 hrs
+## Post-Sweep Evaluation
 
-**Before Running**:
 ```powershell
-# Edit run_timesteps_optimization.ps1
-[int]$Timesteps = @(10000, 15000, 20000, 25000, 30000)
-[double]$EntCoef = X.XX               # From Exp 1 best
-[string]$EntropySchedule = "fixed"    # From Exp 1 best
-[double]$RewardClip = X.X             # From Exp 3 best
-[double]$DrawdownPenalty = X.XX       # From Exp 3 best
-[double]$TurnoverPenalty = X.XX       # From Exp 3 best
+# Evaluate a specific sweep
+python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv --label your_label_here
+
+# With auto-promote on champion found
+python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv --label your_label_here --promote
 ```
 
-```bash
-.\run_timesteps_optimization.ps1
-```
-
-**After Run**:
-1. Filter leaderboard to `run_label` containing "timesteps-opt"
-2. Group by `timesteps`, calculate mean `test_actionable_accuracy` per group
-3. Find peak; check if it's 20k or different value
-4. Record best `timesteps` value
-
-**Success**: Peak accuracy >= 50% AND cv < 2.0
-
-**Next**: Edit `run_mode_comparison.ps1`, set all params from Exp 1, 3, 4
+**What to look for:**
+- Trade rate distribution — target zone (60–75%) should have most configs
+- CV gate — needs ≥ 5 seeds to stabilize below 1.0
+- Champion identified with all 6 gates green before proceeding to promotion steps
 
 ---
 
-## Experiment 5: Mode Comparison ⏱️ 2.5-3.5 hrs
+## Promotion Pipeline (run in order, only after champion found)
 
-**Before Running**:
 ```powershell
-# Edit run_mode_comparison.ps1
-[int]$Timesteps = XXXXX               # From Exp 4 best
-[double]$EntCoef = X.XX               # From Exp 1 best
-[string]$EntropySchedule = "fixed"    # From Exp 1 best
-[double]$RewardClip = X.X             # From Exp 3 best
-[double]$DrawdownPenalty = X.XX       # From Exp 3 best
-[double]$TurnoverPenalty = X.XX       # From Exp 3 best
+# 1. Sanity scan (cleanup — does not accept --leaderboard flag)
+python scripts/sanity_scan.py
+
+# 2. Regenerate ensemble config (verify output seeds match champions)
+python scripts/generate_ensemble_config.py --leaderboard data/experiment_leaderboard.csv --ticker NVDA --label your_label_here
+
+# 3. Verify config was written correctly
+cat staging/models/ensemble_config.json
+
+# 4. Walk-forward validation (update TICKER_CONFIG seeds in script first)
+python scripts/run_exp9_walkforward.py --ticker nvda
 ```
 
-```bash
-.\run_mode_comparison.ps1
-```
-
-**After Run**:
-1. Filter leaderboard to `run_label` containing "mode-compare"
-2. Group by `reward_mode` ("sharpe" vs "sortino")
-3. Calculate mean `test_actionable_accuracy` for each mode
-
-**Decision**:
-- Sharpe >= 50% AND Sortino < 45%? → Use Sharpe
-- Both >= 48%? → Use Sharpe (simpler, default)
-- Sortino wins? → Investigate (note: unexpected result)
-
-**Success**: Winner achieves >= 50% test accuracy
+**Warning:** `generate_ensemble_config.py` label filtering may not work reliably. Always verify that the seeds in the JSON match your champion seeds before proceeding to Exp 9.
 
 ---
 
-## Post-Experiment: Promotion Re-Evaluation
+## Promotion Gates (6/6 required)
 
-**Assemble Best Config**:
-```
-reward_mode:          [FROM EXP 5]
-ent_coef:             [FROM EXP 1]
-entropy_schedule:     [FROM EXP 1]
-timesteps:            [FROM EXP 4]
-reward_clip:          [FROM EXP 3]
-dd_penalty:           [FROM EXP 3]
-to_penalty:           [FROM EXP 3]
-transaction_cost_rate: 0.001 (unchanged)
-other params:         unchanged
-```
-
-**Check Promotion Gates**:
-```
-Gate 1: test_actionable_accuracy >= 0.53
-  Current: 0.500  Target: 0.55+  Status: [ ] PASS
-
-Gate 2: test_trade_win_rate >= 0.52
-  Current: 0.531  Target: 0.55+  Status: [ ] PASS
-
-Gate 3: test_alpha_vs_qqq >= 0.00
-  Current: -0.150 Target: +0.05  Status: [ ] PASS
-
-Gate 4: |val_actionable_accuracy - test_actionable_accuracy| <= 0.05
-  Current: 0.500  Target: < 0.05 Status: [ ] PASS
-
-Gate 5: test_return_cv_by_config < 1.0
-  Current: 9.43   Target: 0.5-1.0 Status: [ ] PASS
-```
-
-**Final Decision**:
-- 5/5 gates: ✅ READY FOR PROMOTION
-- 4/5 gates: ⚠️ CONDITIONAL (note which gate failed)
-- 3/5 or fewer: ❌ NOT READY (escalate)
+| Gate | Metric | Threshold | Notes |
+|------|--------|-----------|-------|
+| 1 | `test_actionable_accuracy` | ≥ 0.53 | |
+| 2 | `test_trade_win_rate` | ≥ 0.52 | |
+| 3 | `test_alpha_vs_qqq` | ≥ 0.00 | Previously blocked by overtrade drag |
+| 4 | `\|val_acc - test_acc\|` | ≤ 0.05 | |
+| 5 | `test_return_cv_by_config` | < 1.0 | Requires ≥ 5 seeds |
+| 6 | `test_trade_rate` | ∈ [0.40, 0.80] | Blocks degenerate always-long policies |
 
 ---
 
-## 🔍 Key Metrics to Track
+## Exp 9 Walk-Forward Gates (3/3 required)
 
-Print these after each experiment:
+| Gate | Metric | Threshold |
+|------|--------|-----------|
+| G1 | `ensemble_acc >= min_seed_acc - 0.5%` | Ensemble must not degrade vs worst individual seed |
+| G2 | `majority_agreement_rate` | ≥ 0.60 |
+| G3 | `unanimous_rate (high_conf)` | ≥ 0.20 |
+
+**Before running Exp 9:** Update `TICKER_CONFIG` in `scripts/run_exp9_walkforward.py` to point to the correct leaderboard and champion seeds for the ticker being validated.
+
+---
+
+## Diagnosing Sweep Problems
+
+| Symptom | Diagnosis | Fix |
+|---------|-----------|-----|
+| Trade rate 99%+ despite penalty tuning | `max_weight_delta_per_step=0.0` — cap not set | Add `--max-weight-delta-per-step 0.10` |
+| Trade rate < 40% | Over-constrained — cap + penalty both suppressing | Drop turnover penalty to 0.01, keep cap |
+| CV > 1.0 | Too few seeds for stable estimate | Run with ≥ 5 seeds |
+| Alpha fails, accuracy passes | Regime-dependent alpha (overtrade or always-long) | Check trade rate — Gate 6 should catch this |
+| 18 champions from 54 configs, all same trade rate | Degenerate always-long — Gate 6 was missing | Add Gate 6, rerun evaluate_sweep.py |
+| Duplicate seed rows in leaderboard | `load_top_n_models` pulling same seed multiple times | Fixed in `src/ensemble.py` via `drop_duplicates(subset=["seed"])` |
+| `generate_ensemble_config.py` writes wrong seeds | Label filter not working | Manually write `staging/models/ensemble_config.json` |
+
+---
+
+## Key Metrics Snippet
 
 ```python
 import pandas as pd
 
 lb = pd.read_csv('data/experiment_leaderboard.csv')
+label = 'your_label_here'
+sweep = lb[lb['run_label'].str.contains(label, na=False)]
 
-# Last N rows (new experiment runs)
-new_runs = lb.tail(50)  # Adjust as needed
-
-# Group by run label (experiment)
-for label in new_runs['run_label'].unique():
-    subset = new_runs[new_runs['run_label'].str.contains(label, na=False)]
-    print(f"\n{label}:")
-    print(f"  Count:           {len(subset)}")
-    print(f"  Acc (mean/std):  {subset['test_actionable_accuracy'].mean():.3f} ± {subset['test_actionable_accuracy'].std():.3f}")
-    print(f"  CV (mean):       {subset['test_return_cv_by_config'].mean():.2f}")
-    print(f"  Alpha (mean):    {subset['test_alpha_vs_qqq'].mean():.4f}")
-    print(f"  Sharpe (mean):   {subset['test_sharpe_ratio'].mean():.3f}")
+print(f"Rows: {len(sweep)}")
+print(f"Acc  (mean/std): {sweep['test_actionable_accuracy'].mean():.3f} ± {sweep['test_actionable_accuracy'].std():.3f}")
+print(f"CV   (mean):     {sweep['test_return_cv_by_config'].mean():.3f}")
+print(f"Alpha(mean):     {sweep['test_alpha_vs_qqq'].mean():.4f}")
+print(f"Sharpe(mean):    {sweep['test_sharpe_ratio'].mean():.3f}")
+print(f"Trade rate(med): {sweep['test_trade_rate'].median():.1%}")
+print(f"Gates 6/6:       {(sweep['test_trade_rate'].between(0.40, 0.80)).sum()} configs in trade rate range")
 ```
 
 ---
 
-## ⏰ Timeline at a Glance
+## NVDA Champion Reference (sweep_overtrade_fix_nvda_maxdelta_v2)
 
-| Exp | Duration | GPU Hrs | Cumulative |
-|-----|----------|---------|-----------|
-| 0   | 0.5h     | 0       | 0.5h      |
-| 1   | 3h       | 15      | 3.5h      |
-| 3   | 3h       | 18      | 6.5h      |
-| 4   | 3.5h     | 12      | 10h       |
-| 5   | 3h       | 15      | 13h       |
-| **Σ** | **13h** | **60**  | **13h**   |
-
----
-
-## 🚨 If Something Goes Wrong
-
-| Problem | Solution |
-|---------|----------|
-| Script fails with error | Check that `.venv` is activated & params are correct |
-| GPU out of memory | Reduce batch size in `src/experiments.py` or fewer seeds |
-| Results much worse | Verify `--append` flag; check params from previous exp |
-| Config CV stays > 5.0 | Skip to Exp 3 (reward calib) not Exp 1 (entropy) |
-| Test alpha still negative | May be data/benchmark issue; escalate |
+| Metric | Value |
+|--------|-------|
+| Seeds promoted | 13, 21, 42, 7 |
+| Sharpe | 1.64 |
+| Alpha vs QQQ | 0.514 |
+| Actionable Accuracy | 56.5% |
+| Trade Win Rate | 54.9% |
+| Val/Test Drift | 0.0073 |
+| CV (cross-seed) | 0.8926 |
+| Trade Rate | 62.3% |
+| `max_weight_delta_per_step` | 0.10 |
+| `use_stationary_features` | False ← upgrading via stationary sweep |
 
 ---
 
-## 📞 Document Reference
+## Ticker Status
 
-| Question | See Document |
-|----------|---|
-| "What's the overall strategy?" | `EXPERIMENT_STRATEGY_HANDOFF.md` |
-| "How do I run Exp 1?" | `EXPERIMENT_EXECUTION_README.md` → STEP 2 |
-| "What are success criteria?" | This file + `EXPERIMENT_EXECUTION_README.md` |
-| "What do I do after all experiments?" | `EXPERIMENT_EXECUTION_README.md` → Post-Experiment Analysis |
-| "Is my result promotable?" | Promotion Re-Evaluation (below) |
+| Ticker | Status | Next Action |
+|--------|--------|-------------|
+| NVDA | ✅ Promoted | Stationary sweep in progress → Exp 10 |
+| AAPL | ❌ Blocked | Leakage audit first |
+| AMD | ❌ Blocked | Environment fit investigation first |
 
 ---
 
-## 📊 Best Config Template
+## Common Pitfalls
 
-After all experiments, fill this in:
-
-```
-BEST FOUND CONFIGURATION (Exp 1-5 Results)
-
-Experiment 1 Results:
-  Best Treatment: [Treatment A/B/C]
-  entropy_schedule: [fixed/decay]
-  ent_coef: [X.XX]
-  test_cv: [X.XX]
-
-Experiment 3 Results:
-  Best Treatment: [A/B/C/D]
-  reward_clip: [X.X]
-  reward_drawdown_penalty_scale: [X.XX]
-  reward_turnover_penalty_scale: [X.XX]
-  test_cv: [X.XX]
-  test_alpha: [X.XXX]
-
-Experiment 4 Results:
-  Best timesteps: [XXXXX]
-  test_accuracy: [X.XXX]
-  test_cv: [X.XX]
-
-Experiment 5 Results:
-  Winning mode: [sharpe/sortino]
-  Sharpe accuracy: [X.XXX]
-  Sortino accuracy: [X.XXX]
-
-FINAL CONFIG FOR DEPLOYMENT:
-  reward_mode: [sharpe/sortino]
-  ent_coef: [X.XX]
-  entropy_schedule: [fixed/decay]
-  timesteps: [XXXXX]
-  reward_clip: [X.X]
-  reward_drawdown_penalty_scale: [X.XX]
-  reward_turnover_penalty_scale: [X.XX]
-  transaction_cost_rate: 0.001
-  [other params unchanged]
-
-PROMOTION READINESS:
-  Gate 1 (test_acc >= 0.53): [ ] PASS [ ] FAIL [Value: X.XXX]
-  Gate 2 (test_wr >= 0.52): [ ] PASS [ ] FAIL [Value: X.XXX]
-  Gate 3 (test_alpha >= 0.00): [ ] PASS [ ] FAIL [Value: X.XXX]
-  Gate 4 (|val-test| <= 0.05): [ ] PASS [ ] FAIL [Value: X.XXX]
-  Gate 5 (test_cv < 1.0): [ ] PASS [ ] FAIL [Value: X.XXX]
-
-Overall: [ ] READY [ ] NOT READY [ ] CONDITIONAL
-
-Notes: ____________________________
-```
-
----
-
-**Print this page. Reference it while running experiments.**  
-**Last updated**: 2026-04-10 08:24 UTC
+- **Never promote without Gate 6** — a bullish test period can make an always-long agent look like a champion on Gates 1–5
+- **Never run Exp 9 before verifying loaded seeds** — check `Loaded seeds:` in output matches your champion seeds
+- **Never use `sanity_scan.py --leaderboard`** — that flag doesn't exist; it operates on results directory
+- **Always deduplicate before a new sweep** — stale duplicate rows inflate CV estimates and corrupt gate counts
+- **Stationary features are mandatory** — all new sweeps must include `--use-stationary-features`

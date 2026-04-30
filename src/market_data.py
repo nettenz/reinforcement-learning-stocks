@@ -368,7 +368,7 @@ def merge_news_features(
             SentimentGeminiShare=("SentimentGeminiShare", "mean"),
             SentimentOllamaShare=("SentimentOllamaShare", "mean"),
         )
-        .sort_values("Date")
+        .sort_values(merge_key)
         .reset_index(drop=True)
     )
     daily_news["SentimentMean"] = np.where(

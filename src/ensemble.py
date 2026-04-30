@@ -41,6 +41,7 @@ class SparseEnsemble:
     def load_top_n_models(self, n: int = 3):
         """Loads the top N models into memory based on the ranking metric."""
         ranked = self.active_seeds_df.sort_values(self.ranking_metric, ascending=False)
+        ranked = ranked.drop_duplicates(subset=["seed"], keep="first")
         top_n = ranked.head(n)
         
         self.models = {}
