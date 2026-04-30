@@ -168,6 +168,18 @@ def _leaderboard_paths_for_interval_hint(interval_hint: str | None) -> list[Path
         ordered: list[Path] = [preferred]
     else:
         ordered = [DEFAULT_LEADERBOARD_PATH, INTRADAY_5M_LEADERBOARD_PATH]
+
+    # Dynamically pick up custom run leaderboards
+    data_dir = ROOT_DIR / "data"
+    if data_dir.exists():
+        dynamic_lbs = list(data_dir.glob("*leaderboard*.csv"))
+        # Also check snapshots directory
+        snapshots_dir = data_dir / "experiment_snapshots"
+        if snapshots_dir.exists():
+            dynamic_lbs.extend(list(snapshots_dir.glob("*leaderboard*.csv")))
+            
+        dynamic_lbs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        ordered.extend(dynamic_lbs)
     resolved: set[Path] = set()
     paths: list[Path] = []
     for candidate in ordered:
@@ -280,6 +292,8 @@ def _top_ranked_models_from_leaderboard(max_count: int, ticker_key: str, interva
 
         if "ranking_score" in leaderboard.columns:
             leaderboard = leaderboard.sort_values("ranking_score", ascending=False)
+        elif "test_sharpe_ratio" in leaderboard.columns:
+            leaderboard = leaderboard.sort_values("test_sharpe_ratio", ascending=False)
         elif "test_actionable_accuracy" in leaderboard.columns:
             leaderboard = leaderboard.sort_values("test_actionable_accuracy", ascending=False)
 

@@ -117,7 +117,10 @@ def _split_walk_forward(df: pd.DataFrame, train_ratio: float, val_ratio: float) 
 
 
 def _simulate_with_model(model, df: pd.DataFrame, env_kwargs: dict[str, float | bool]) -> pd.DataFrame:
-    env = TradingEnv(df, **env_kwargs)
+    eval_kwargs = env_kwargs.copy()
+    eval_kwargs["max_episode_steps"] = 0
+    eval_kwargs["random_start"] = False
+    env = TradingEnv(df, **eval_kwargs)
     obs, _ = env.reset()
     rows: list[dict[str, float | int | pd.Timestamp]] = []
 
@@ -588,6 +591,10 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         "rolling_reward_window": 100,  # Default; will be overridden per-run
         "reward_epsilon": args.reward_epsilon,
         "reward_pnl_scale": args.reward_pnl_scale,
+        "long_only": args.long_only,
+        "binary_actions": args.binary_actions,
+        "max_episode_steps": args.max_episode_steps,
+        "random_start": args.random_start,
     }
 
     reward_return_scales = _parse_float_list(args.reward_return_scale)
@@ -795,9 +802,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reward-action-bonus-scale", default="0.02", help="Bonus for taking Buy/Sell actions (list).")
     parser.add_argument("--reward-turnover-penalty-scale", default="0.05", help="Penalty scale for absolute weight changes (list).")
 
-    parser.add_argument("--reward-mode", default="sharpe", choices=["legacy", "sharpe", "sortino"], help="Reward calculation mode.")
+    parser.add_argument("--reward-mode", default="sharpe", choices=["legacy", "sharpe", "sortino", "sparse"], help="Reward calculation mode.")
     parser.add_argument("--rolling-reward-window", default="100", help="Window size for rolling rewards (list).")
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
+    parser.add_argument("--max-episode-steps", type=int, default=0, help="If > 0, truncate episodes after this many steps.")
+    parser.add_argument("--random-start", action="store_true", help="If set, randomize start step (requires max-episode-steps > 0).")
 
     parser.add_argument("--reward-clip", type=float, default=1.0, help="Reward clip bound applied symmetrically.")
     parser.add_argument(
@@ -807,6 +816,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Exclude transaction costs/penalties from reward shaping while keeping execution unchanged.",
     )
     parser.add_argument("--use-stationary-features", action="store_true", help="Use log returns and normalized technical indicators.")
+    parser.add_argument("--long-only", action="store_true", help="Clip actions to [0, 1] — no short positions.")
+    parser.add_argument("--binary-actions", action="store_true", help="Map actions to binary long/flat (1.0 or 0.0) — removes continuous sizing.")
     parser.add_argument("--max-runs", type=int, default=0, help="Limit number of experiment runs (0 = all).")
     parser.add_argument("--leaderboard-path", default=str(DEFAULT_LEADERBOARD_PATH), help="CSV output path.")
     parser.add_argument("--reward-leaderboard-path", default=str(DEFAULT_REWARD_LEADERBOARD_PATH), help="Reward leaderboard CSV output path.")

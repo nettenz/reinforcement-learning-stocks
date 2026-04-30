@@ -211,13 +211,23 @@ class TradingEnv(gym.Env):
         rolling_reward_window=100,
         reward_epsilon=1e-6,
         reward_sharpe_scale=0.0,
+        long_only=False,
+        binary_actions=False,
+        max_episode_steps=0,
+        random_start=False,
     ):
         super(TradingEnv, self).__init__()
         self.df = df
         self.include_position = bool(include_position_in_observation)
         self.current_step = 0
+        self.start_step = 0
+        self.max_episode_steps = int(max_episode_steps)
+        self.random_start = bool(random_start)
+        self.buy_hold_shares = 0.0
         self.price_column = 'RawClose' if 'RawClose' in self.df.columns else 'Close'
         self.execution_mode = str(execution_mode).lower()
+        self.long_only = bool(long_only)
+        self.binary_actions = bool(binary_actions)
         self.reward_ignore_transaction_cost = bool(reward_ignore_transaction_cost)
         self.max_weight_delta_per_step = float(max_weight_delta_per_step)
         if self.max_weight_delta_per_step < 0.0:
@@ -301,10 +311,19 @@ class TradingEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.current_step = 0
+        if self.random_start and self.max_episode_steps > 0 and len(self.df) > self.max_episode_steps:
+            self.start_step = np.random.randint(0, len(self.df) - self.max_episode_steps)
+        else:
+            self.start_step = 0
+            
+        self.current_step = self.start_step
         self.pending_target_weight = 0.0
         self.pm.reset()
         self.re.reset()
+        
+        current_price = max(float(self.df.loc[self.current_step, self.price_column]), 1e-8)
+        self.buy_hold_shares = self.pm.initial_balance / current_price
+        
         return self._get_obs(), {}
     
     @property
@@ -333,6 +352,12 @@ class TradingEnv(gym.Env):
             desired_target_weight = {0: 0.0, 1: 1.0, 2: -1.0}[int(raw_action)]
         else:
             desired_target_weight = float(raw_action)
+
+        # Option 1 simplification flags
+        if self.binary_actions:
+            desired_target_weight = 1.0 if desired_target_weight > 0.0 else 0.0
+        elif self.long_only:
+            desired_target_weight = max(0.0, desired_target_weight)
 
         if self.execution_mode == "next_bar":
             execution_target_weight = self.pending_target_weight
@@ -383,8 +408,21 @@ class TradingEnv(gym.Env):
         )
         
         self.current_step += 1
-        terminated = self.current_step >= len(self.df) - 1
+        
+        episode_ended = False
+        if self.max_episode_steps > 0 and (self.current_step - self.start_step) >= self.max_episode_steps:
+            episode_ended = True
+            
+        terminated = episode_ended or self.current_step >= len(self.df) - 1
         truncated = False
+        
+        if self.re.mode == "sparse":
+            if terminated:
+                current_price_for_bh = max(float(self.df.loc[min(self.current_step, len(self.df)-1), self.price_column]), 1e-8)
+                buy_hold_equity = self.buy_hold_shares * current_price_for_bh
+                reward = (self.pm.net_worth / max(buy_hold_equity, 1e-8)) - 1.0
+            else:
+                reward = 0.0
         
         info = {
             "reward_total": reward,
