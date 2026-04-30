@@ -228,7 +228,7 @@ def _write_topup_metadata(cache_file: Path, rows_before: int, rows_after: int, r
 
 def fetch_yahoo_ohlcv(
     tickers: Iterable[str],
-    start: str = "2018-01-01",
+    start: str = "2015-01-01",
     end: str | None = None,
     interval: str = "1d",
 ) -> pd.DataFrame:
@@ -389,7 +389,7 @@ def get_tech_training_data(
     cache_path: str | Path | None = None,
     tickers: Iterable[str] | None = None,
     ticker_preset: str | None = None,
-    start: str = "2018-01-01",
+    start: str = "2015-01-01",
     end: str | None = None,
     interval: str = "1d",
     include_news: bool = True,
@@ -398,7 +398,7 @@ def get_tech_training_data(
     use_stationary_features: bool = False,
 ) -> pd.DataFrame:
     effective_start = start
-    intraday_default_start = is_intraday_interval(interval) and start == "2018-01-01"
+    intraday_default_start = is_intraday_interval(interval) and start == "2015-01-01"
     if intraday_default_start:
         effective_start = (pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=55)).strftime("%Y-%m-%d")
 

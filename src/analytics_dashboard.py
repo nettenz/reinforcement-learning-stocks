@@ -25,6 +25,7 @@ from src.signal_analytics import (
     confusion_matrix,
     enrich_with_truth_labels,
     simulate_agent_signals,
+    simulate_ensemble_signals,
 )
 from src.trading_env import TradingEnv
 from src.market_data import TICKER_PRESETS, get_cache_path_for_ticker
@@ -191,18 +192,20 @@ def _leaderboard_paths_for_interval_hint(interval_hint: str | None) -> list[Path
     return paths
 
 
-@st.cache_data(show_spinner=False)
 def _list_available_models(cache_buster: str = "") -> list[Path]:
-    """Scans for all .zip model files in models/ and experiment snapshots."""
+    """Scans for all .zip model files in models/, experiment snapshots, and staging."""
     _ = cache_buster
     model_paths: list[Path] = []
-    models_dir = ROOT_DIR / "models"
-    if models_dir.exists():
-        model_paths.extend(list(models_dir.glob("*.zip")))
-
-    snapshots_dir = ROOT_DIR / "data" / "experiment_snapshots"
-    if snapshots_dir.exists():
-        model_paths.extend(list(snapshots_dir.rglob("*.zip")))
+    
+    search_dirs = [
+        ROOT_DIR / "models",
+        ROOT_DIR / "data" / "experiment_snapshots",
+        ROOT_DIR / "staging" / "models"
+    ]
+    
+    for directory in search_dirs:
+        if directory.exists():
+            model_paths.extend(list(directory.rglob("*.zip")))
 
     model_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return model_paths
@@ -459,12 +462,48 @@ def evaluate_signals(
     threshold: float,
     horizon_steps: int,
     deterministic_policy: bool,
+    binary_actions: bool = False,
+    use_ensemble: bool = False,
+    ticker: str = "",
+    ensemble_config_path: str = "",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     df = load_market_data(data_path)
-    signals = simulate_agent_signals(df=df, model_path=model_path, deterministic=deterministic_policy)
+    
+    if use_ensemble:
+        signals = simulate_ensemble_signals(
+            df=df,
+            ticker=ticker,
+            ensemble_config_path=ensemble_config_path,
+        )
+    else:
+        signals = simulate_agent_signals(
+            df=df, 
+            model_path=model_path, 
+            deterministic=deterministic_policy,
+            binary_actions=binary_actions
+        )
+        
     enriched = enrich_with_truth_labels(signals, threshold=threshold, horizon_steps=horizon_steps)
     conf = confusion_matrix(enriched)
     return enriched, conf
+
+
+def _apply_split_filter(df: pd.DataFrame, split: str) -> pd.DataFrame:
+    """Filter DataFrame to specific Train/Val/Test split based on 70/15/15 ratio."""
+    if split == "Full" or df.empty:
+        return df
+    
+    n = len(df)
+    train_end = int(n * 0.70)
+    val_end = int(n * (0.70 + 0.15))
+    
+    if split == "Train":
+        return df.iloc[:train_end].reset_index(drop=True)
+    elif split == "Val":
+        return df.iloc[train_end:val_end].reset_index(drop=True)
+    elif split == "Test":
+        return df.iloc[val_end:].reset_index(drop=True)
+    return df
 
 
 def _parse_snapshot_timestamp(path: Path) -> datetime:
@@ -1397,14 +1436,44 @@ def render_signal_analytics_page(
     deterministic_policy: bool,
 ) -> None:
     st.header(f"Signal Analytics - {ticker.upper()}")
-    st.caption("Evaluate one trained policy against forward-move labels.")
+    st.caption("Evaluate one trained policy or the multi-seed ensemble against forward-move labels.")
     st.info(
         "Recommended dashboard settings: "
         f"threshold={RECOMMENDED_THRESHOLD:.4f}, horizon={RECOMMENDED_HORIZON}, "
         f"chart window={RECOMMENDED_CHART_WINDOW} rows."
     )
+    
     with st.sidebar:
+        st.subheader("Simulation Controls")
+        
+        # Determine if model is SAC for binary_actions default
+        is_sac = "sac" in model_path.lower()
+        
+        use_ensemble = st.toggle(
+            "Use Ensemble", 
+            value=False,
+            help="Evaluate the top-3 seed ensemble defined in staging/models/ensemble_config.json."
+        )
+        
+        binary_actions = False
+        if not use_ensemble:
+            binary_actions = st.checkbox(
+                "Binary Actions (SAC)", 
+                value=is_sac,
+                help="If enabled, policy output > 0.0 is mapped to Buy (1.0). Matches Fork B training."
+            )
+            
+        data_split = st.selectbox(
+            "Data Split",
+            options=["Full", "Train", "Val", "Test"],
+            index=3, # Default to Test for "Historical" validation
+            help="70/15/15 split. Select 'Test' to see historical forward-look results."
+        )
+        
         run = st.button("Run analytics", type="primary", width="stretch", key="run_signal_analytics")
+        
+        st.divider()
+        st.subheader("Display Controls")
         chart_window_rows = st.slider(
             "Chart window (latest rows)",
             min_value=100,
@@ -1423,16 +1492,32 @@ def render_signal_analytics_page(
 
     try:
         with st.spinner("🚀 Running agent simulation..."):
-            # Intelligence Synchronization: Shape Validation
-            _validate_model_shape(model_path, load_market_data(data_path))
+            # Load and filter data first
+            df_full = load_market_data(data_path)
+            df_split = _apply_split_filter(df_full, data_split)
+            
+            # Intelligence Synchronization: Shape Validation (only for single model)
+            if not use_ensemble:
+                _validate_model_shape(model_path, df_split)
+            
+            ensemble_config_path = str(ROOT_DIR / "staging" / "models" / "ensemble_config.json")
             
             enriched, conf = evaluate_signals(
-                data_path=data_path,
+                data_path=data_path, # Still pass path for caching
                 model_path=model_path,
                 threshold=threshold,
                 horizon_steps=horizon_steps,
                 deterministic_policy=deterministic_policy,
+                binary_actions=binary_actions,
+                use_ensemble=use_ensemble,
+                ticker=ticker,
+                ensemble_config_path=ensemble_config_path,
             )
+            
+            # Re-apply split filter to the result if needed
+            enriched = _apply_split_filter(enriched, data_split)
+            conf = confusion_matrix(enriched) # Recompute conf for the split
+            
     except (FileNotFoundError, ValueError) as exc:
         st.error(str(exc))
         st.stop()
@@ -1440,19 +1525,35 @@ def render_signal_analytics_page(
     enriched_view = add_cumulative_pnl(enriched)
 
     # PREMIUM KPI ROW
-    st.markdown("### 📊 Performance Summary")
+    st.markdown(f"### 📊 Performance Summary - {data_split} Split")
+    if use_ensemble:
+        st.caption("🚀 **Ensemble Mode Active** (Top-3 voting)")
+    
     m1, m2, m3, m4 = st.columns(4)
     # Calculate summary stats
     acc = float(enriched_view["is_correct"].mean())
     actionable_df = enriched_view[enriched_view["action_label"].isin([ACTION_LABELS[1], ACTION_LABELS[2]])]
     act_acc = float(actionable_df["is_correct"].mean()) if not actionable_df.empty else 0.0
-    total_pnl = float(enriched_view["cumulative_pnl"].iloc[-1])
-    max_dd = float((enriched_view["net_worth"] / enriched_view["net_worth"].cummax() - 1).min())
+    total_pnl = float(enriched_view["cumulative_pnl"].iloc[-1]) if not enriched_view.empty else 0.0
+    
+    net_worth_series = enriched_view["net_worth"]
+    max_dd = float((net_worth_series / net_worth_series.cummax() - 1).min()) if not net_worth_series.empty else 0.0
 
     m1.metric("Overall Accuracy", f"{acc:.1%}", help="Percentage of correctly predicted high-conviction moves.")
     m2.metric("Actionable Accuracy", f"{act_acc:.1%}", delta=f"{act_acc - 0.5:.1%}" if act_acc > 0 else None, help="Accuracy on Buy/Sell signals only (ignores Hold).")
     m3.metric("Total P&L", f"${total_pnl:.2f}", help="Cumulative profit/loss over the evaluated period.")
     m4.metric("Max Drawdown", f"{max_dd:.1%}", delta_color="inverse", help="Deepest peak-to-trough drop in net worth.")
+
+    if use_ensemble and "confidence" in enriched_view.columns:
+        st.markdown("---")
+        c1, c2, c3 = st.columns(3)
+        avg_conf = enriched_view["confidence"].mean()
+        high_conf_rate = (enriched_view["confidence"] >= 1.0 - 1e-9).mean()
+        majority_rate = (enriched_view["confidence"] > 0.5).mean()
+        
+        c1.metric("Avg Confidence", f"{avg_conf:.1%}")
+        c2.metric("Majority Agreement", f"{majority_rate:.1%}")
+        c3.metric("Unanimous Rate", f"{high_conf_rate:.1%}")
 
     st.divider()
 
@@ -1485,24 +1586,14 @@ def render_signal_analytics_page(
     st.dataframe(action_distribution, width="stretch")
 
     st.subheader("6) Detailed Signal Log")
-    st.dataframe(
-        enriched_view[
-            [
-                "step",
-                "date",
-                "price",
-                "action_label",
-                "true_label",
-                "reward",
-                "net_worth",
-                "cumulative_pnl",
-                "horizon_return",
-                "trade_edge",
-                "is_correct",
-            ]
-        ],
-        width="stretch",
-    )
+    log_cols = [
+        "step", "date", "price", "action_label", "true_label", 
+        "reward", "net_worth", "cumulative_pnl", "horizon_return", "trade_edge", "is_correct"
+    ]
+    if "confidence" in enriched_view.columns:
+        log_cols.insert(4, "confidence")
+        
+    st.dataframe(enriched_view[log_cols], width="stretch")
 
 
 def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") -> None:

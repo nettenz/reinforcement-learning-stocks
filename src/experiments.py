@@ -1,3 +1,21 @@
+# ============================================================================ #
+# REINFORCEMENT LEARNING STOCKS - EXPERIMENT RUNNER
+# ============================================================================ #
+#
+# IMPORTANT — architecture & scope:
+# This script is the core driver for walk-forward PPO/SAC training.
+# It orchestrates data loading, environment instantiation, parallelized learning,
+# out-of-sample simulation, gate evaluation, and leaderboard synchronization.
+#
+# Core Pipeline Steps:
+#   1. Data & Feature loading (from src.market_data)
+#   2. Walk-forward split (Train / Val / Test subsets)
+#   3. Benchmark equity computation (QQQ)
+#   4. Parallelized SAC Training
+#   5. Out-of-sample simulation (Strictly deterministic, no look-ahead)
+#   6. Signal & Reward Analytics Generation
+#   7. Champion Promotion Gate evaluation
+# ============================================================================ #
 from __future__ import annotations
 
 import argparse
@@ -116,7 +134,18 @@ def _split_walk_forward(df: pd.DataFrame, train_ratio: float, val_ratio: float) 
     return train_df, val_df, test_df
 
 
+# ============================================================================ #
+# SIMULATION ENGINE
+# ============================================================================ #
 def _simulate_with_model(model, df: pd.DataFrame, env_kwargs: dict[str, float | bool]) -> pd.DataFrame:
+    """
+    Executes a deterministic out-of-sample simulation using the trained agent.
+    
+    IMPORTANT: 
+    - Execution is completely deterministic (model.predict(deterministic=True)).
+    - Environment is strictly stepped bar-by-bar.
+    - Features accessed only represent knowledge available at step T.
+    """
     eval_kwargs = env_kwargs.copy()
     eval_kwargs["max_episode_steps"] = 0
     eval_kwargs["random_start"] = False
@@ -434,7 +463,9 @@ class ProgressCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         if self.pbar:
-            self.pbar.update(1)
+            # Sync directly with SB3's true internal timestep counter
+            self.pbar.n = self.num_timesteps
+            self.pbar.refresh()
         return True
 
     def _on_training_end(self) -> None:
@@ -550,7 +581,14 @@ def write_experiment_outputs(
     return reward_leaderboard, summary
 
 
+# ============================================================================ #
+# MAIN EXPERIMENT PIPELINE
+# ============================================================================ #
 def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
+    """
+    Orchestrates the entire hyperparameter sweep over the defined configuration space.
+    Executes training, out-of-sample simulation, metrics aggregation, and scoring.
+    """
     interval = str(args.interval)
     bars_per_year = get_interval_bars_per_year(interval)
     seeds = _parse_int_list(args.seeds)
@@ -769,8 +807,15 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
     return leaderboard
 
 
+# ============================================================================ #
+# COMMAND LINE INTERFACE & CONFIGURATION
+# ============================================================================ #
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Aggressive multi-seed SAC experiment runner.")
+    
+    # ------------------------------------------------------------------ #
+    # 1. Core Configuration & Data
+    # ------------------------------------------------------------------ #
     parser.add_argument("--experiment-preset", default="daily", choices=["daily", "intraday_5m"], help="Apply a preset for the overall experiment family.")
     parser.add_argument("--ticker", default="aapl", choices=list(TICKER_PRESETS.keys()), 
                         help=f"Stock ticker preset to train on. Options: {', '.join(TICKER_PRESETS.keys())}")
@@ -788,6 +833,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--horizon", type=int, default=1, help="Forward horizon steps for evaluation.")
     parser.add_argument("--train-ratio", type=float, default=0.70, help="Walk-forward train ratio.")
     parser.add_argument("--val-ratio", type=float, default=0.15, help="Walk-forward validation ratio.")
+    
+    # ------------------------------------------------------------------ #
+    # 2. Execution Realism & Friction
+    # ------------------------------------------------------------------ #
     parser.add_argument("--transaction-cost-rate", type=float, default=0.001, help="Fee rate per executed trade.")
     parser.add_argument("--trade-penalty", type=float, default=0.05, help="Flat penalty per executed trade.")
     parser.add_argument("--execution-mode", default="same_bar", choices=["same_bar", "next_bar"], help="Execution timing model.")
@@ -802,6 +851,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reward-action-bonus-scale", default="0.02", help="Bonus for taking Buy/Sell actions (list).")
     parser.add_argument("--reward-turnover-penalty-scale", default="0.05", help="Penalty scale for absolute weight changes (list).")
 
+    # ------------------------------------------------------------------ #
+    # 3. Reward Shaping & Architectures
+    # ------------------------------------------------------------------ #
     parser.add_argument("--reward-mode", default="sharpe", choices=["legacy", "sharpe", "sortino", "sparse"], help="Reward calculation mode.")
     parser.add_argument("--rolling-reward-window", default="100", help="Window size for rolling rewards (list).")
     parser.add_argument("--reward-epsilon", type=float, default=1e-6, help="Epsilon for numerical stability in rewards.")
@@ -838,6 +890,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="SAC device (auto, cuda, cpu).")
     parser.add_argument("--use-lr-schedule", action="store_true", help="Use linear learning rate decay.")
     parser.add_argument("--n-envs", type=int, default=8, help="Number of parallel environments for vectorized training.")
+    
+    # ------------------------------------------------------------------ #
+    # 4. Promotion Gates & Model Escalation
+    # ------------------------------------------------------------------ #
     parser.add_argument(
         "--promote-require-gates",
         action=argparse.BooleanOptionalAction,

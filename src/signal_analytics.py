@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import json
 import numpy as np
 import pandas as pd
 
 from src.trading_env import TradingEnv
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
 
 ACTION_LABELS = {0: "Hold", 1: "Buy", 2: "Sell"}
 MARKET_FEATURE_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
@@ -179,6 +181,7 @@ def simulate_agent_signals(
     df: pd.DataFrame,
     model_path: str | Path,
     deterministic: bool = True,
+    binary_actions: bool = False,
 ) -> pd.DataFrame:
     model, algo_type = _load_model(model_path)
     expected_obs_dim = _expected_observation_dim(model)
@@ -187,6 +190,7 @@ def simulate_agent_signals(
         aligned_df,
         include_position_in_observation=include_position,
         market_feature_columns=market_feature_columns,
+        binary_actions=binary_actions,
     )
     actual_obs_dim = int(env.observation_space.shape[0])
     if actual_obs_dim != expected_obs_dim:
@@ -203,9 +207,12 @@ def simulate_agent_signals(
         current_price = float(aligned_df.loc[step_idx, env.price_column])
         date_value = aligned_df.loc[step_idx, "Date"] if "Date" in aligned_df.columns else step_idx
 
+        # If binary_actions=True, the env expects continuous [-1, 1] but maps to 0/1.
+        # SB3 predict returns the continuous action for SAC.
         obs, reward, terminated, truncated, _ = env.step(action)
         
         # Translate the raw [-1.0, 1.0] continuous weight into discrete 0/1/2 logic
+        # For long-only binary: 0=Hold, 1=Buy. Sell (2) is not used.
         discrete_pos = env.position
         
         current_volume = float(aligned_df.loc[step_idx, "Volume"]) if "Volume" in aligned_df.columns else 0.0
@@ -227,8 +234,111 @@ def simulate_agent_signals(
             break
 
     result = pd.DataFrame(rows)
-    # Note: future_return is ONLY for evaluation/backtesting labeling.
-    # It is NEVER used in the training reward function (which now uses realized_return).
+    result["next_price"] = result["price"].shift(-1)
+    result["future_return"] = (result["next_price"] / result["price"]) - 1.0
+    result["future_return"] = result["future_return"].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return result
+
+
+def simulate_ensemble_signals(
+    df: pd.DataFrame,
+    ticker: str,
+    ensemble_config_path: str | Path,
+    method: str = "voting",
+) -> pd.DataFrame:
+    """
+    Simulate ensemble logic using EnsembleAgent over the provided DataFrame.
+    Matches the logic in scripts/run_exp9_walkforward.py but for dashboard consumption.
+    """
+    from src.ensemble import SparseEnsemble
+    from src.trading_agent import EnsembleAgent
+
+    config_path = Path(ensemble_config_path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Ensemble config not found: {config_path}")
+
+    with open(config_path) as f:
+        config = json.load(f)
+
+    if ticker.lower() not in config:
+        raise ValueError(f"Ticker '{ticker}' not found in ensemble config.")
+
+    t_cfg = config[ticker.lower()]
+    leaderboard_csv = ROOT_DIR / t_cfg["leaderboard_csv"]
+    if not leaderboard_csv.exists():
+        # Try relative to config path if not found relative to ROOT
+        leaderboard_csv = config_path.parent.parent / t_cfg["leaderboard_csv"]
+        if not leaderboard_csv.exists():
+             raise FileNotFoundError(f"Leaderboard CSV not found: {leaderboard_csv}")
+
+    ensemble = SparseEnsemble(str(leaderboard_csv))
+    ensemble.load_top_n_models(n=len(t_cfg.get("active_seeds", [3])))
+    agent = EnsembleAgent(ensemble, str(config_path), ticker)
+
+    expected_dim = agent.expected_obs_shape[0]
+    aligned_df, include_pos, market_cols = _align_features_to_model(df.copy(), expected_obs_dim=expected_dim)
+
+    # Use TradingEnv to handle price/volume/reward logic identically to single agent
+    # but we will manually override the action selection using the EnsembleAgent.
+    env = TradingEnv(
+        aligned_df,
+        binary_actions=True, # Ensembles use binary threshold > 0.0
+        include_position_in_observation=include_pos, 
+        market_feature_columns=market_cols,
+    )
+    
+    news_cols = env.active_news_columns
+
+    obs_env, _ = env.reset()
+    agent.reset()
+
+    rows: list[dict[str, float | int | str | pd.Timestamp]] = []
+    done = False
+
+    while not done:
+        step_idx = env.current_step
+        row = aligned_df.iloc[step_idx]
+
+        market_feat  = row[market_cols].values.astype(np.float32)
+        news_feat    = row[news_cols].values.astype(np.float32) if news_cols else np.array([], dtype=np.float32)
+
+        pm = env.pm
+        unrealized_pnl = 0.0
+        if pm.entry_price > 0:
+            cur_price = max(float(row[env.price_column]), 1e-8)
+            ratio = cur_price / pm.entry_price
+            unrealized_pnl = ratio - 1.0 if pm.shares_held > 0 else 1.0 - ratio
+
+        account_state = np.array([
+            pm.balance, pm.shares_held,
+            pm.current_weight, unrealized_pnl, float(pm.time_in_position),
+        ], dtype=np.float32)
+
+        action, confidence, _ = agent.step(market_feat, news_feat, account_state)
+
+        # Convert discrete action back to continuous for env.step
+        # 1.0 = Buy, -1.0 = Hold (mapped by binary_actions=True)
+        raw_for_env = np.array([1.0 if action == 1 else -1.0], dtype=np.float32)
+        _, reward, terminated, truncated, info = env.step(raw_for_env)
+        done = terminated or truncated
+
+        current_price = float(row[env.price_column])
+        current_volume = float(row["Volume"]) if "Volume" in row else 0.0
+        date_value = row["Date"] if "Date" in row else step_idx
+
+        rows.append({
+            "step": step_idx,
+            "date": pd.to_datetime(date_value) if "Date" in df.columns else date_value,
+            "price": current_price,
+            "volume": current_volume,
+            "action": action,
+            "action_label": ACTION_LABELS[action],
+            "reward": float(reward),
+            "net_worth": float(env.net_worth),
+            "confidence": float(confidence),
+        })
+
+    result = pd.DataFrame(rows)
     result["next_price"] = result["price"].shift(-1)
     result["future_return"] = (result["next_price"] / result["price"]) - 1.0
     result["future_return"] = result["future_return"].replace([np.inf, -np.inf], np.nan).fillna(0.0)

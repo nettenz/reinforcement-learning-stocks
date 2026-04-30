@@ -202,7 +202,7 @@ class TradingEnv(gym.Env):
         reward_turnover_penalty_scale=0.05,
         reward_clip=1.0,
         reward_ignore_transaction_cost=True,
-        execution_mode="same_bar",
+        execution_mode="next_bar",
         spread_bps=0.0,
         slippage_bps=0.0,
         max_weight_delta_per_step=0.0,
