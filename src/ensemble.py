@@ -80,8 +80,10 @@ class SparseEnsemble:
             
             # Predict (deterministic=True is standard for evaluation)
             action, _ = model.predict(observation, deterministic=True)
-            # Ensure action is scalar int (e.g. 0 or 1)
-            action_val = int(action.item() if isinstance(action, np.ndarray) else action)
+            # SAC outputs a continuous value in (-1, 1). Match the env's binary_actions
+            # binarization: target_weight = 1.0 if raw > 0.0 else 0.0
+            raw = action.item() if isinstance(action, np.ndarray) else float(action)
+            action_val = 1 if raw > 0.0 else 0
             votes.append(action_val)
             
             # For weighted voting
