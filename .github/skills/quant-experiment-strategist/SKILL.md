@@ -1,7 +1,7 @@
 ---
 name: quant-experiment-strategist
-description: 'Design tightly scoped experiment batches for Stage 1 or RL follow-up work after the research question has already been identified. Use to isolate variables, define controls, set success criteria, and produce execution-ready run plans.'
-argument-hint: 'What validated research question, failure mode, or follow-up hypothesis should be turned into an experiment batch?'
+description: 'Design tightly scoped experiment batches for RL follow-up work after the research question has already been identified. Use to isolate variables, define controls, set success criteria, and produce execution-ready sweep commands. Adapted for SAC multi-seed sweep workflow with 6-gate promotion framework and max_weight_delta structural fix.'
+argument-hint: 'What validated research question, failure mode, or follow-up hypothesis should be turned into an experiment batch? (e.g. AAPL post-audit sweep, AMD env-fit diagnosis, stationary feature validation)'
 user-invocable: true
 ---
 
@@ -10,217 +10,133 @@ user-invocable: true
 Turn a validated research question into a controlled experiment batch.
 
 ## Objective
-Design the next batch of experiments so the team can learn the maximum amount with the minimum amount of noise.
+Design the next batch of experiments so the maximum amount can be learned with the minimum compute and noise.
 
-This skill is not the research judge. It does not decide whether a result is real. It assumes the question has already been identified by refinement, reward analysis, signal analysis, or audit work.
-
-Its job is to:
-- isolate variables
-- define controls
-- specify batch structure
-- define success criteria
-- define failure interpretation
-- preserve comparability where possible
-
-## Primary mindset
-This repository is signal-first and RL-second.
-
-The strategist should not use experiment planning to bypass weak Stage 1 evidence.
-
-Default questions:
-- what exactly are we trying to learn next?
-- what is the minimum clean batch needed to answer that question?
-- what must stay fixed so the result is interpretable?
+## Project Context (read before designing)
+- **Algorithm:** SAC only. PPO deprecated.
+- **Standard sweep template:**
+  ```powershell
+  .\.venv\Scripts\python.exe src\experiments.py `
+      --ticker <ticker> `
+      --reward-mode sharpe `
+      --ent-coefs 0.02,0.05 `
+      --timesteps 40000 `
+      --seeds 3,7,13,21,42 `
+      --execution-mode next_bar `
+      --reward-hold-penalty-scale 0.01 `
+      --reward-turnover-penalty-scale 0.10 `
+      --max-weight-delta-per-step 0.10 `
+      --use-stationary-features `
+      --run-label "your_label_here" `
+      --append
+  ```
+- **Non-negotiable flags:** `--max-weight-delta-per-step 0.10`, `--use-stationary-features`, `--append`, minimum 5 seeds.
+- **Post-sweep evaluation:** Always `python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv --label <label>`.
+- **Promotion pipeline (in order):** evaluate_sweep.py → sanity_scan.py → generate_ensemble_config.py (verify seeds manually) → run_exp9_walkforward.py (update TICKER_CONFIG first).
+- **6 promotion gates required.** Gate 6 = `test_trade_rate ∈ [0.40, 0.80]`. Without Gate 6, degenerate always-long passes.
+- **CV stability requires ≥ 5 seeds.** CV > 1.0 with 3–4 seeds is a seed count artifact, not structural instability.
+- **Ticker status:** NVDA promoted (seeds 13,21,42,7). AAPL blocked (leakage audit first). AMD blocked (CV 4.5+, env fit issue).
+- **Known failure modes:**
+  - Overtrade (99%+ rate): `max_weight_delta_per_step=0.0` → fix the cap, not the reward
+  - Degenerate always-long: high accuracy + bullish test period → Gate 6 catches this
+  - CV instability: < 5 seeds → add seeds, not reward changes
+  - Seed collapse: some seeds score 0.0/0.0 → expected, filter with `filter_active_seeds`
 
 ## Use this skill when
-- the next research question is already known
-- a follow-up batch needs to be designed
-- reward variants already exist and need controlled testing
-- a Stage 1 gate failure needs focused diagnosis
-- a robust result needs confirmation
-- a fragile result needs targeted clarification
+- The next research question is already known
+- A follow-up batch needs to be designed
+- A ticker needs its first baseline sweep
+- A gate failure needs focused diagnosis
+- A stationary vs raw feature comparison is needed
 
 ## Do not use this skill when
-- the main problem is still figuring out what happened
-- the dominant failure mode is still unclear
-- the correct next skill has not yet been determined
-- Stage 1 and RL conclusions are still being mixed together without separation
-
-## Default Inputs
-- handoff from `strategy-refinement-analyst`
-- handoff from `reward-architect`
-- handoff from `signal-analytics-interpreter`
-- handoff from `backtest-auditor`
-- `data/experiment_leaderboard.csv`
-- `data/experiment_reward_leaderboard.csv`
-- `data/experiment_summary.json`
-- `data/experiment_snapshots/`
-- `logs/stage1_gate_report*.json`
-- `logs/stage1_trading_eval*.json`
-- `results/stage1/`
-- `results/stage1_confirmation_3seed/`
-- relevant code paths and prior notes when needed for run design
+- The main problem is still figuring out what happened (use `strategy-refinement-analyst` first)
+- AAPL leakage audit has not been completed (use audit checklist first)
+- AMD CV root cause is still unknown
 
 ## Core Procedure
 
-### 1. Identify the active research track
-Classify the batch as:
-- Stage 1 signal-first follow-up
-- RL follow-up
-- blocked RL work due to weak Stage 1 evidence
+### 1. Restate the exact research question
+Convert the handoff into one explicit question. Examples:
+- Does AAPL pass 6/6 gates post leakage audit?
+- Does AMD CV stabilize with a different reward config?
+- Does increasing timesteps to 60k help stationary feature convergence?
 
-If RL is blocked, do not design RL-heavy batches as the default path.
+### 2. Choose the minimum informative batch
+Design the smallest clean batch that answers the question.
 
-### 2. Restate the exact research question
-Convert the handoff into one explicit question.
+**Default batch size guidance:**
+- Baseline sweep: 2 ent_coefs × 5 seeds = 10 runs
+- Variable isolation: fix all but one parameter, 10 runs max
+- Timestep comparison: 2–3 timestep values × 5 seeds = 10–15 runs
+- Never run > 20 runs without justification
 
-Examples:
-- Does news improve signal quality or only add variance?
-- Does the reward redesign reduce churn without killing test return?
-- Is the narrow promotion candidate robust across seeds?
-- Is baseline gate failure caused by threshold design or weak predictive structure?
-
-If the question is still vague, narrow it before designing the batch.
-
-### 3. Choose the minimum informative batch
-Design the smallest clean batch that can answer the question.
-
-Prefer:
-- one main variable family at a time
-- fixed controls
-- limited batch size
-- interpretable comparisons
-
-Avoid:
-- broad mixed sweeps
-- testing multiple theories at once
-- large search spaces that weaken interpretation
-
-### 4. Define the experiment structure
+### 3. Define the experiment structure
 For each experiment specify:
 - goal
-- exact variables to change
-- exact variables to hold constant
-- seed plan
+- exact variable(s) being changed
+- exact variables held constant (always include max_weight_delta, use_stationary_features, seeds)
 - evaluation artifacts to inspect
-- expected comparability level
 
-### 5. Define success and failure interpretation
-Each experiment must answer:
-- what result would count as support?
-- what result would count as rejection?
-- what ambiguous result would require a follow-up batch?
+### 4. Define success and failure interpretation
 
-### 6. Protect comparability
-State whether the batch preserves comparability with prior results.
+**Universal success criteria (all sweeps):**
+- Gate 6 in target zone (60–75% trade rate)
+- CV < 1.0 (requires ≥ 5 seeds)
+- Alpha ≥ 0.00 vs QQQ
+- Actionable accuracy ≥ 0.53
+- Val/test drift ≤ 0.05
 
-Classify impact:
-- Low = mostly same semantics, small parameter changes
-- Medium = partial comparability, some interpretation shift
-- High = semantics changed enough that leaderboard history weakens
+**Failure patterns to watch:**
+- All seeds collapsed (0.0/0.0 metrics) → env fit issue, not a reward problem
+- CV > 4.0 → AMD-pattern structural mismatch
+- Trade rate 99%+ → max_weight_delta not set, check leaderboard column
+- 2/5 seeds pass, 3 collapse → may need more timesteps (try 60k before changing other params)
 
-### 7. Produce execution-ready run plans
-If implementation detail is expected, include:
-- activation command
-- runner command
-- full relative script path
-- key args
-- expected output artifacts
+### 5. Protect comparability
+Always use the same base config as the NVDA v2 champion unless specifically testing a deviation:
+```
+--reward-mode sharpe
+--ent-coefs 0.02,0.05
+--timesteps 40000
+--reward-hold-penalty-scale 0.01
+--reward-turnover-penalty-scale 0.10
+--max-weight-delta-per-step 0.10
+--use-stationary-features
+```
 
-## Decision Logic
-
-- If Stage 1 verdict is `signal_weak`: keep the batch inside Stage 1 by default.
-- If Stage 1 trading gate passes but baseline gate fails: design baseline-signal diagnosis batches, not RL reward batches.
-- If both Stage 1 gates pass with stable confirmation: RL follow-up batches are allowed.
-- If the last result was fragile but promising: design a confirmation batch before broadening the search.
-- If reward variants already exist: test those variants directly instead of redesigning reward logic.
-- If feature noise is suspected: isolate the feature family before touching unrelated knobs.
-- If leakage or unrealistic evaluation is suspected: route back to audit rather than designing optimization batches.
+### 6. Produce execution-ready run plans
+Always include:
+- `.\.venv\Scripts\Activate.ps1`
+- Full one-liner sweep command
+- Post-sweep evaluate command
+- Expected label in leaderboard
 
 ## Required Output Format
 
-Always return sections in this exact order:
-
 1. **Research question**
-2. **Active track**
-3. **Why this batch is the right next step**
-4. **Controlled experiment batch**
-5. **Variables changed**
-6. **Variables held constant**
-7. **Success criteria**
-8. **Failure interpretation**
-9. **Next proposed experiments or runs**
-10. **Priority order**
-11. **Leaderboard comparability impact (REQUIRED)**
-12. **Pipeline Decision**
+2. **Why this batch is the right next step**
+3. **Controlled experiment batch**
+4. **Variables changed**
+5. **Variables held constant**
+6. **Success criteria**
+7. **Failure interpretation**
+8. **Execution-ready run plans**
+9. **Priority order**
+10. **Leaderboard comparability impact (REQUIRED)**
 
-## Output Requirements
+## Leaderboard Comparability Rule
+- Low impact: same base config, only timesteps or seeds changed
+- Medium impact: reward scales changed
+- High impact: observation space changed (raw vs stationary)
 
-### Research question
-State one explicit question the batch is designed to answer.
-
-### Active track
-Use one:
-- Stage 1
-- RL
-- RL blocked by Stage 1
-
-### Why this batch is the right next step
-Explain why this batch has high information value and avoids wasted work.
-
-### Controlled experiment batch
-List the proposed experiments with:
-- short name
-- goal
-- rationale
-
-### Variables changed
-State exactly what changes across the batch.
-
-### Variables held constant
-State exactly what stays fixed so interpretation remains valid.
-
-### Success criteria
-Use measurable criteria tied to existing artifacts.
-
-### Failure interpretation
-State what negative or mixed outcomes would mean.
-
-### Next proposed experiments or runs
-For each run include:
-- environment activation command
-- runner command
-- full relative script path when not in repo root
-- key args
-- expected output artifact path(s)
-
-### Priority order
-Order the runs by:
-1. information gain
-2. performance relevance
-3. implementation cost
-4. comparability preservation
-
-### Leaderboard comparability impact (REQUIRED)
-Include:
-- impact level: Low / Medium / High
-- what remains comparable
-- what no longer remains cleanly comparable
-- whether the batch is exploratory or confirmatory
+Always note whether the batch is exploratory or confirmatory.
 
 ## Constraints
-- Do not act as the final research judge
-- Do not redesign reward theory unless explicitly handed off from reward-architect
-- Do not recommend broad sweeps when a narrow batch can answer the question
-- Do not use RL planning to bypass weak Stage 1 evidence
-- Do not omit controls
-- Do not omit comparability impact
-
-## Quality Checks Before Finalizing
-- the research question is explicit
-- only one main idea is being tested per batch
-- controls are clear
-- success and failure are measurable
-- comparability impact is explicit
-- run plans are execution-ready
-- output order is followed exactly
+- Never omit `--max-weight-delta-per-step 0.10` from any sweep command
+- Never omit `--use-stationary-features` from any sweep command
+- Never omit `--append` from any sweep command
+- Never recommend sweeping AAPL before leakage audit clears
+- Never recommend promoting with < 5 seeds
+- Never recommend broad mixed sweeps — one variable family at a time
+- Always include the post-sweep evaluate command in the run plan
