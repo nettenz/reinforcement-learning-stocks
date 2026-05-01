@@ -160,4 +160,4 @@ print(f"Gates 6/6:       {(sweep['test_trade_rate'].between(0.40, 0.80)).sum()} 
 - **Never run Exp 9 before verifying loaded seeds** — check `Loaded seeds:` in output matches your champion seeds
 - **Never use `sanity_scan.py --leaderboard`** — that flag doesn't exist; it operates on results directory
 - **Always deduplicate before a new sweep** — stale duplicate rows inflate CV estimates and corrupt gate counts
-- **Stationary features are mandatory** — all new sweeps must include `--use-stationary-features`
+- **Raw features for now** — Stationary features are deferred until after Exp 10. Use `--use-stationary-features False` (default) for current production-aligned sweeps.

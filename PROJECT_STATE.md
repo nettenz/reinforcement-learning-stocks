@@ -69,28 +69,21 @@ The agent failed the Test Alpha gate (-0.1929 vs QQQ) due to trading on **99.5%*
 
 ---
 
-## 4. Active Work: Stationary Feature Sweep
+## 4. Active Work: Stationary Feature Investigation (Deferred)
 
-**Sweep in progress:** `sweep_overtrade_fix_nvda_stationary`
-
-```powershell
-.\.venv\Scripts\python.exe src\experiments.py --ticker nvda --reward-mode sharpe --ent-coefs 0.02,0.05 --timesteps 40000 --seeds 13,21,42,7 --execution-mode next_bar --reward-hold-penalty-scale 0.01 --reward-turnover-penalty-scale 0.10 --max-weight-delta-per-step 0.10 --use-stationary-features --run-label "sweep_overtrade_fix_nvda_stationary" --append
-```
-
-**Goal:** Confirm that stationary features (27-dim) produce equivalent or better Sharpe/alpha vs the v2 raw-feature champion. If gates pass, update staging to the stationary champion and mark the architectural discrepancy as resolved.
-
-**Evaluate with:**
-```powershell
-python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv --label sweep_overtrade_fix_nvda_stationary
-```
+**Sweep Results (`v3` @ 60k timesteps):**
+- Stationary features attempted at 40k and 60k timesteps.
+- **Ensemble Depth:** Only 2 seeds (7, 42) pass 6/6 gates.
+- **Alpha Margin:** Significantly lower (+0.047) vs v2 (+0.514).
+- **Outcome:** Investigation deferred. The v2 raw-feature configuration is the stronger, more stable foundation for immediate deployment.
 
 ---
 
-## 5. Architectural Discrepancy — RESOLVED IN PROGRESS
+## 5. Architectural Discrepancy — INVESTIGATION DEFERRED
 
 **Issue:** NVDA sweeps through v2 used `use_stationary_features=False` (10-feature raw space), inconsistent with `feature_engineering.py` being the declared ground truth (27-feature stationary space).
 
-**Decision:** Stationary features adopted as the mandatory standard going forward. The `sweep_overtrade_fix_nvda_stationary` sweep is the resolution vehicle. All future sweeps for NVDA, AAPL, and AMD must use `--use-stationary-features`.
+**Decision:** `v2` (raw features) is retained as the production baseline for NVDA. Stationary features are adopted as the architectural goal, but full migration is deferred to a future R&D cycle. All results in staging currently leverage the 10-feature raw observation space.
 
 ---
 
@@ -114,8 +107,7 @@ python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv -
 
 ## 8. Immediate Next Steps
 
-1. **Evaluate stationary sweep** → run `evaluate_sweep.py --label sweep_overtrade_fix_nvda_stationary`
-2. **If 6/6 gates pass** → update `staging/models/ensemble_config.json` with stationary champion seeds → re-run Exp 9 walk-forward
-3. **Proceed to Exp 10** (deployment readiness / paper trading dry-run) once stationary NVDA is locked
-4. **Cross-ticker sweeps** → apply `--max-weight-delta-per-step 0.10 --use-stationary-features` to AMD and AAPL (after AAPL leakage audit)
-5. **AI Sector Pipeline** → begin Phase 1 (FinBERT upgrade) per `ai_sector_pipeline_spec.jsx` after NVDA stationary is confirmed
+1. **Proceed to Exp 10** (deployment readiness / paper trading dry-run) using the locked `v2` NVDA ensemble.
+2. **AAPL Leakage Audit:** Prioritize resolving the AAPL validation collapse before expanding.
+3. **Cross-ticker sweeps:** Apply `--max-weight-delta-per-step 0.10` to AMD and AAPL using the raw-feature baseline to ensure consistency with the NVDA champion.
+4. **AI Sector Pipeline:** Begin Phase 1 (FinBERT upgrade) as a potential way to "fix" stationary feature performance by adding stronger semantic signals.
