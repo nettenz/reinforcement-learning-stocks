@@ -2,9 +2,10 @@ import json
 import warnings
 import numpy as np
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from src.ensemble import SparseEnsemble
+from src.exit_manager import ExitManager
 
 
 class EnsembleAgent:
@@ -16,7 +17,13 @@ class EnsembleAgent:
     (LogReturn, RelVWAP, MACD_Signal_Rel, etc.).
     """
 
-    def __init__(self, ensemble: SparseEnsemble, config_path: str, ticker: str):
+    def __init__(
+        self,
+        ensemble: SparseEnsemble,
+        config_path: str,
+        ticker: str,
+        exit_manager: Optional[ExitManager] = None,
+    ):
         """
         Args:
             ensemble: SparseEnsemble with models already loaded via load_top_n_models()
@@ -25,6 +32,7 @@ class EnsembleAgent:
         """
         self.ensemble = ensemble
         self.ticker = ticker.lower()
+        self.exit_manager = exit_manager
 
         with open(config_path) as f:
             config = json.load(f)
@@ -68,6 +76,8 @@ class EnsembleAgent:
     def reset(self) -> None:
         """Clear session tracking counters for a new inference session."""
         self._reset_session()
+        if self.exit_manager is not None:
+            self.exit_manager.reset()
 
     def _reset_session(self) -> None:
         self._total_steps = 0
@@ -110,7 +120,23 @@ class EnsembleAgent:
                 "(market_features + news_features + account_state)."
             )
 
-        action, confidence = self.ensemble.ensemble_predict(obs, method=self.ensemble_method)
+        model_action, confidence = self.ensemble.ensemble_predict(obs, method=self.ensemble_method)
+        action = model_action
+
+        state = np.asarray(account_state, dtype=np.float32).reshape(-1)
+        shares_held = float(state[1]) if state.size > 1 else 0.0
+        position_state = {
+            "in_position": abs(shares_held) > 1e-9,
+            "unrealized_pnl": float(state[3]) if state.size > 3 else 0.0,
+            "time_in_position": int(max(state[4], 0.0)) if state.size > 4 else 0,
+        }
+
+        exit_fired = False
+        if self.exit_manager is not None:
+            should_exit = self.exit_manager.should_exit(position_state, confidence)
+            if position_state["in_position"] and should_exit:
+                action = 0
+                exit_fired = True
 
         self._total_steps += 1
         if action == 1:
@@ -127,6 +153,9 @@ class EnsembleAgent:
             "agreement": confidence,
             "ticker": self.ticker,
             "step": self._total_steps,
+            "exit_fired": exit_fired,
+            "exit_rule": self.exit_manager.rule if exit_fired and self.exit_manager is not None else None,
+            "model_action": model_action,
         }
 
         return action, confidence, debug_info
