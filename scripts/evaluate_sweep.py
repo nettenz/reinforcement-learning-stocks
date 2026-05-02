@@ -1,9 +1,13 @@
 """
 scripts/evaluate_sweep.py
 
-Post-sweep evaluation script. Loads a leaderboard CSV, applies all 5 promotion
+Post-sweep evaluation script. Loads a leaderboard CSV, applies all 6 promotion
 gates, surfaces the overtrade diagnostic, ranks survivors by Sharpe, and prints
 a champion summary with copy-paste ensemble config command.
+
+Gate 5 (CV Stability) recomputes CV using only active seeds (Sharpe > 0,
+trade_rate > 10%) to prevent collapsed seeds from artificially inflating
+the config-level CV and blocking otherwise stable configurations.
 
 Usage:
     python scripts/evaluate_sweep.py --leaderboard data/experiment_leaderboard.csv
@@ -180,6 +184,51 @@ def main():
         print("\n  No rows match the filter criteria. Exiting.")
         sys.exit(0)
 
+    # ---- Recompute CV using active seeds only --------------------------------
+    # The leaderboard's test_return_cv_by_config includes collapsed seeds
+    # (Sharpe < 0, trade_rate < 0.10) which artificially inflates CV.
+    # We recompute CV per config group using only non-collapsed seeds.
+    ACTIVE_SHARPE_MIN  = 0.0
+    ACTIVE_TRADE_MIN   = 0.10
+    ret_col  = _find_col(df.columns, ["test_cumulative_return", "test_return"])
+    shr_col  = _find_col(df.columns, ["test_sharpe_ratio", "test_sharpe"])
+    tr_col_  = _find_col(df.columns, [TRADE_RATE_COL, "trade_rate", "trade_frequency"])
+
+    if ret_col and shr_col and tr_col_:
+        active_mask = (df[shr_col] > ACTIVE_SHARPE_MIN) & (df[tr_col_] > ACTIVE_TRADE_MIN)
+        active_df   = df[active_mask]
+        n_active    = active_mask.sum()
+
+        # Group by config (run_label + ent_coef if present) over ACTIVE seeds only
+        config_keys = [c for c in ["run_label", "ent_coef"] if c in df.columns]
+        if config_keys and not active_df.empty:
+            cv_map = (
+                active_df.groupby(config_keys)[ret_col]
+                .apply(lambda x: x.std() / x.mean() if len(x) > 1 and x.mean() != 0 else float("nan"))
+                .reset_index()
+                .rename(columns={ret_col: "clean_cv"})
+            )
+            df = df.merge(cv_map, on=config_keys, how="left")
+            print(f"\n  CV recomputed over active seeds only ({n_active}/{len(df)} rows active, "
+                  f"Sharpe > {ACTIVE_SHARPE_MIN}, trade_rate > {ACTIVE_TRADE_MIN:.0%})")
+        else:
+            # Fallback: compute single clean CV across all active seeds
+            if not active_df.empty and ret_col in active_df.columns:
+                ret_vals  = active_df[ret_col]
+                single_cv = ret_vals.std() / ret_vals.mean() if ret_vals.mean() != 0 else float("nan")
+            else:
+                single_cv = float("nan")
+            df["clean_cv"] = single_cv
+            print(f"\n  CV recomputed over active seeds only ({n_active}/{len(df)} rows active) — "
+                  f"single config group, clean_cv={single_cv:.4f}")
+    else:
+        df["clean_cv"] = df.get("test_return_cv_by_config", float("nan"))
+
+    # Update Gate 5 to use clean_cv
+    for gate in GATES:
+        if gate["id"] == 5:
+            gate["col"] = "clean_cv"
+
     # ---- Per-row gate evaluation --------------------------------------------
     gate_cols = []
     for gate in GATES:
@@ -244,7 +293,7 @@ def main():
     display_always = ["run_label", "ticker", "seed"]
     display_metrics = [
         "test_actionable_accuracy", "test_trade_win_rate",
-        "test_alpha_vs_qqq", "test_return_cv_by_config",
+        "test_alpha_vs_qqq", "test_return_cv_by_config", "clean_cv",
         rank_col, tr_col,
     ]
     display_gate = ["gates_passed"]
@@ -279,6 +328,10 @@ def main():
                 test_col = _find_col(row.index, ["test_actionable_accuracy", "test_accuracy"])
                 drift    = abs(row[val_col] - row[test_col]) if (val_col and test_col) else float("nan")
                 detail   = f"drift={drift:.4f}"
+            elif gate["id"] == 5:
+                raw_cv   = row.get("test_return_cv_by_config", float("nan"))
+                clean_cv = row.get("clean_cv", float("nan"))
+                detail   = f"clean_cv={clean_cv:.4f}  (raw_cv={raw_cv:.4f})"
             else:
                 col    = gate["col"]
                 val    = row[col] if col and col in row.index else float("nan")

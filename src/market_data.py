@@ -48,12 +48,19 @@ def get_interval_bars_per_year(interval: str) -> int:
 
 # Ticker presets for different training scenarios
 TICKER_PRESETS = {
-    "aapl": ("AAPL",),
+    "googl": ("GOOGL",),
     "nvda": ("NVDA",),
     "amd": ("AMD",),
     "msft": ("MSFT",),
+    "tsm": ("TSM",),
+    "meta": ("META",),
+    "mrvl": ("MRVL",),
+    "alab": ("ALAB",),
+    "intc": ("INTC",),
+    "amzn": ("AMZN",),
+    "tsla": ("TSLA",),
 }
-DEFAULT_TICKER = "aapl"
+DEFAULT_TICKER = "nvda"
 
 
 def get_cache_path_for_ticker(ticker_name: str, stationary: bool = False, interval: str = "1d") -> Path:

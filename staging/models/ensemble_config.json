@@ -10,6 +10,20 @@
     "top_3_mean_sharpe": 1.635,
     "top_3_mean_val_test_gap": 0.0073,
     "production_ready": true,
-    "notes": "4/5 seeds pass all 6 gates. max_weight_delta=0.10. sweep_overtrade_fix_nvda_maxdelta_v2."
+    "notes": "Champion: sweep_overtrade_fix_nvda_maxdelta_v2. max_weight_delta=0.10. 6/6 gates."
+  },
+  "amd": {
+    "active_seeds": [
+      7,
+      13,
+      42,
+      33,
+      5
+    ],
+    "ensemble_method": "voting",
+    "top_3_mean_sharpe": 1.716,
+    "top_3_mean_val_test_gap": 0.0457,
+    "production_ready": true,
+    "notes": "Champion: sweep_amd_baseline_v5. max_weight_delta=0.10. 6/6 gates. Data fix: rebuilt parquet from 2015."
   }
 }

@@ -40,18 +40,30 @@ TICKER_CONFIG = {
         "leaderboard": ROOT / "data" / "experiment_leaderboard.csv",
         "parquet":     ROOT / "data" / "tech_training_data_nvda.parquet",
         "top_seeds":   [13, 21, 42, 7],
+        "use_stationary_features": False,
+        "sweep_label": "sweep_overtrade_fix_nvda_maxdelta_v2",
+    },
+    "amd": {
+        "leaderboard": ROOT / "data" / "experiment_leaderboard.csv",
+        "parquet":     ROOT / "data" / "tech_training_data_amd.parquet",
+        "top_seeds":   [7, 13, 42, 33, 5],
+        "use_stationary_features": True,
+        "sweep_label": "sweep_amd_baseline_v5",
     },
     "aapl": {
         "leaderboard": ROOT / "data" / "exp_2_aapl_10seed_foundation_leaderboard.csv",
         "parquet":     ROOT / "data" / "tech_training_data_aapl_stationary.parquet",
         "top_seeds":   [6, 8, 1],
-    },
-    "amd": {
-        "leaderboard": ROOT / "data" / "exp_3_amd_10seed_foundation_leaderboard.csv",
-        "parquet":     ROOT / "data" / "tech_training_data_amd_stationary.parquet",
-        "top_seeds":   [5, 2, 10],
+        "use_stationary_features": False,
+        "sweep_label": None,
     },
 }
+
+STATIONARY_COLS = [
+    'LogReturn', 'VolLogDiff', 'RelRange', 'RelOpen', 'RelMACD',
+    'RSI_Centered', 'RelATR', 'BB_Width', 'BB_Upper_Dist', 'BB_Lower_Dist',
+    'SMA_Trend', 'RelVWAP', 'MACD_Signal_Rel', 'MACD_Hist_Rel'
+]
 
 ENV_PARAMS = {
     "initial_balance":       1000.0,
@@ -67,6 +79,7 @@ ENV_PARAMS = {
     "include_position_in_observation": True,
     "max_episode_steps":     0,   # full test period, no episode boundaries
     "random_start":          False,
+    "max_weight_delta_per_step": 0.10,
 }
 
 GATE_G2_AGREEMENT_RATE = 0.60  # majority (>= 2/3 seeds) agreement on >= 60% of steps
@@ -82,9 +95,9 @@ def _test_split(df: pd.DataFrame) -> pd.DataFrame:
     return df.iloc[val_end:].reset_index(drop=True)
 
 
-def _run_single_seed(model, test_df: pd.DataFrame) -> dict:
+def _run_single_seed(model, test_df: pd.DataFrame, env_params: dict) -> dict:
     """Run a single SAC model over the full test split. Returns accuracy metrics."""
-    env = TradingEnv(test_df.copy(), **ENV_PARAMS)
+    env = TradingEnv(test_df.copy(), **env_params)
     obs, _ = env.reset()
 
     buy_correct = 0
@@ -110,9 +123,9 @@ def _run_single_seed(model, test_df: pd.DataFrame) -> dict:
     return {"buy_total": buy_total, "buy_correct": buy_correct, "accuracy": accuracy}
 
 
-def _run_ensemble(ensemble: SparseEnsemble, agent: EnsembleAgent, test_df: pd.DataFrame) -> dict:
+def _run_ensemble(ensemble: SparseEnsemble, agent: EnsembleAgent, test_df: pd.DataFrame, env_params: dict) -> dict:
     """Run ensemble over full test split. Returns accuracy + voting metrics."""
-    env = TradingEnv(test_df.copy(), **ENV_PARAMS)
+    env = TradingEnv(test_df.copy(), **env_params)
 
     market_cols = env.market_feature_columns
     news_cols   = env.active_news_columns
@@ -170,6 +183,11 @@ def _run_ensemble(ensemble: SparseEnsemble, agent: EnsembleAgent, test_df: pd.Da
 
 def run_ticker(ticker: str) -> dict:
     cfg = TICKER_CONFIG[ticker]
+    ticker_env_params = ENV_PARAMS.copy()
+    if cfg.get("use_stationary_features", False):
+        ticker_env_params["market_feature_columns"] = STATIONARY_COLS
+    else:
+        ticker_env_params["market_feature_columns"] = None
 
     if not cfg["parquet"].exists():
         print(f"  [SKIP] No stationary parquet for {ticker.upper()}: {cfg['parquet']}")
@@ -187,7 +205,11 @@ def run_ticker(ticker: str) -> dict:
     lb = pd.read_csv(cfg["leaderboard"])
     ensemble = SparseEnsemble(str(cfg["leaderboard"]))
     ensemble.filter_active_seeds(min_test_trades=20)
-    ensemble.load_top_n_models(n=len(cfg["top_seeds"]))
+    ensemble.load_top_n_models(
+        n=len(cfg["top_seeds"]),
+        seed_filter=cfg["top_seeds"],
+        run_label_filter=cfg.get("sweep_label"),
+    )
 
     with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
@@ -204,7 +226,7 @@ def run_ticker(ticker: str) -> dict:
     # Run each seed individually
     seed_results = {}
     for seed, model in ensemble.models.items():
-        r = _run_single_seed(model, test_df)
+        r = _run_single_seed(model, test_df, ticker_env_params)
         seed_results[seed] = r
         tag = "  " + "CORRECT" if r["accuracy"] >= 0.50 else "  " + "below 50%"
         print(f"  Seed {seed:>3}: buys={r['buy_total']:>4}  accuracy={r['accuracy']:.3f}{tag}")
@@ -216,7 +238,7 @@ def run_ticker(ticker: str) -> dict:
     min_individual_acc = min(r["accuracy"] for r in seed_results.values())
 
     # Run ensemble
-    ens_result = _run_ensemble(ensemble, agent, test_df)
+    ens_result = _run_ensemble(ensemble, agent, test_df, ticker_env_params)
     print()
     print(f"  Ensemble:   buys={ens_result['buy_total']:>4}  accuracy={ens_result['accuracy']:.3f}"
           f"  agreement={ens_result['agreement_rate']:.2f}  avg_conf={ens_result['avg_confidence']:.2f}")

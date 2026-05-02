@@ -38,9 +38,14 @@ class SparseEnsemble:
         ranked = self.active_seeds_df.sort_values(rank_col, ascending=False)
         return list(zip(ranked["seed"], ranked[rank_col]))
         
-    def load_top_n_models(self, n: int = 3):
+    def load_top_n_models(self, n: int = 3, seed_filter=None, run_label_filter=None):
         """Loads the top N models into memory based on the ranking metric."""
-        ranked = self.active_seeds_df.sort_values(self.ranking_metric, ascending=False)
+        df = self.active_seeds_df
+        if seed_filter is not None:
+            df = df[df['seed'].isin(seed_filter)]
+        if run_label_filter is not None:
+            df = df[df['run_label'] == run_label_filter]
+        ranked = df.sort_values(self.ranking_metric, ascending=False)
         ranked = ranked.drop_duplicates(subset=["seed"], keep="first")
         top_n = ranked.head(n)
         
