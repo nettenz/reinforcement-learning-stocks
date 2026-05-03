@@ -1,12 +1,12 @@
 # Project State: Reinforcement Learning Stocks
-**Date:** May 02, 2026  
+**Date:** May 03, 2026  
 **Phase:** Exit Signal Development & Dashboard Integration
 
 ---
 
 ## 1. Executive Summary
 
-The foundational trading architecture is grounded, leakage-free, and validated. NVDA and AMD are fully promoted to staging with clean Exp 9 walk-forward validation. The 6-gate promotion framework is in place. Ensemble loading is sweep-locked and deterministic per ticker.
+The foundational trading architecture is grounded, leakage-free, and validated. NVDA and AMD are fully promoted to staging with clean Exp 9 walk-forward validation. AMD's staging ensemble config is now aligned to the promoted bridge-c seeds. The 6-gate promotion framework is in place. Ensemble loading is sweep-locked and deterministic per ticker.
 
 A thorough ticker expansion effort screened 8 candidates beyond NVDA and AMD. None were promotable — AAPL and GOOGL collapsed due to insufficient reward signal, others failed Stage 1 screening. ALAB is flagged for re-evaluation in 6–9 months once sufficient training data exists.
 
@@ -34,22 +34,22 @@ Stationary technical features audited and corrected for strict realism:
 
 ## 3. NVDA — Promoted ✅
 
-**Champion sweep:** `sweep_overtrade_fix_nvda_maxdelta_v2`  
-**Seeds:** 13, 21, 42, 7 | **Obs space:** Raw 10-feature
+**Champion sweep:** `nvda-sharpe-news-recovery`  
+**Seeds:** 7, 13 | **Obs space:** Raw 10-feature (reward_mode: sharpe, include_news, stationary features)
 
 | Metric | Value |
 |--------|-------|
-| Sharpe | 1.64 |
-| Alpha vs QQQ | 0.514 |
-| Actionable Accuracy | 56.5% |
-| Trade Win Rate | 54.9% |
-| Val/Test Drift | 0.0073 |
-| CV (clean seeds) | 0.8926 |
-| Trade Rate | 62.3% |
+| Sharpe | 1.61 |
+| Alpha vs QQQ | 0.41 |
+| Actionable Accuracy | 56.3% |
+| Trade Win Rate | 54.7% |
+| Val/Test Drift | 0.004 |
+| CV (clean seeds) | 0.053 |
+| Trade Rate | 62.5% |
 
-**Root cause of prior failure:** `max_weight_delta_per_step=0.0` — agent flipped 100% portfolio per step, making turnover penalties irrelevant. Fix: hard cap at 0.10.
+**Prior failure analysis:** Sortino reward mode trained inaction bias ("do nothing"). Recovery fix: switched to Sharpe mode + news features to improve signal quality on NVDA's news-reactive AI boom context.
 
-**Exp 9:** PASS — G1/G2/G3, 4 seeds, agreement 1.00, avg_conf 0.83, unanimous 0.33.
+**Exp 9:** PASS — G1/G2/G3, 2 promoted seeds [7, 13], agreement 1.00, avg_conf 0.92, unanimous 0.69.
 
 **Stage 1 baseline:** val_acc=46.4%, test_acc=50.5% (reference benchmark for ticker screening).
 
@@ -57,24 +57,24 @@ Stationary technical features audited and corrected for strict realism:
 
 ## 4. AMD — Promoted ✅
 
-**Champion sweep:** `sweep_amd_baseline_v5`  
-**Seeds:** 7, 13, 42, 33, 5 | **Obs space:** Stationary 27-feature
+**Champion sweep:** `amd-news-bridge-c`  
+**Seeds:** 13, 7 | **Obs space:** Stationary 27-feature
 
 | Metric | Value |
 |--------|-------|
-| Sharpe | 1.99 |
-| Alpha vs QQQ | 0.028–0.928 across seeds |
-| Actionable Accuracy | 55.2% |
-| Trade Win Rate | 55.3% |
-| Val/Test Drift | 0.047 |
-| CV (clean seeds) | 0.709 |
-| Trade Rate | 68.6–68.9% |
+| Sharpe | 1.60 |
+| Alpha vs QQQ | 1.37 |
+| Actionable Accuracy | 55.0% |
+| Trade Win Rate | 55.1% |
+| Val/Test Drift | 0.046 |
+| CV (clean seeds) | 1.596 |
+| Trade Rate | 68.9% |
 
 **Root cause of prior failure:** AMD parquet started 2018 — missing 3 years of regime diversity. Val period was near-flat (12.77%) vs explosive train (876%), causing CV 4.5. Fix: deleted stale cache, rebuilt from 2015.
 
 **CV gate fix:** `evaluate_sweep.py` recomputes CV over active seeds only (Sharpe > 0, trade_rate > 10%). Collapsed seeds were inflating raw CV to 1.45 despite clean-seed CV of 0.71.
 
-**Exp 9:** PASS — G1/G2/G3, 5 seeds loaded via sweep_label filter, all correct.
+**Exp 9:** PASS — G1/G2/G3, AMD validation passed. Staging ensemble config is pinned to the bridge-c pair [13, 7].
 
 **Stage 1 baseline:** val_acc=43.8%, test_acc=44.2% (RL finds signal RF baseline misses).
 
@@ -128,7 +128,7 @@ DEFAULT_TICKER = "nvda"
 - **ensemble.py:** `load_top_n_models` accepts `seed_filter` and `run_label_filter`
 - **run_exp9_walkforward.py:** Per-ticker `market_feature_columns`, `sweep_label` filter, `max_weight_delta_per_step=0.10`
 - **Leaderboard:** Deduplicated 202 → 162 rows (2026-04-30)
-- **staging/models/ensemble_config.json:** Manually maintained — `generate_ensemble_config.py` label filter unreliable
+- **staging/models/ensemble_config.json:** Manually maintained — AMD block now pinned to bridge-c seeds [13, 7]; `generate_ensemble_config.py` label filter unreliable
 
 ---
 
@@ -136,8 +136,8 @@ DEFAULT_TICKER = "nvda"
 
 | Ticker | Status | Seeds | Sweep |
 |--------|--------|-------|-------|
-| NVDA | ✅ Promoted | 13, 21, 42, 7 | sweep_overtrade_fix_nvda_maxdelta_v2 |
-| AMD | ✅ Promoted | 7, 13, 42, 33, 5 | sweep_amd_baseline_v5 |
+| NVDA | ✅ Promoted | 7, 13 | nvda-sharpe-news-recovery |
+| AMD | ✅ Promoted | 13, 7 | amd-news-bridge-c |
 | AAPL | ❌ Dropped | — | Reward-signal incompatibility |
 | GOOGL | ❌ Dropped | — | Val→test complete collapse |
 | ALAB | ⏳ Future | — | Re-screen mid-2027 |
@@ -150,6 +150,8 @@ DEFAULT_TICKER = "nvda"
 ### Immediate
 1. **Exit Signal Phase 1** — `src/exit_manager.py` with confidence-based, trailing stop, time-based rules. Backtest on NVDA test split first. See `EXIT_SIGNAL_TODO.md`.
 2. **Alpaca dashboard integration** — keys confirmed. Wire `backend/signals/agent.py` → `/api/signals/:symbol` → buy/exit overlays in `TradingChart.jsx`.
+
+**Next repo step:** start Exit Signal Phase 1 now that both AMD and NVDA are promoted and Exp 9 is complete.
 
 ### Near-term
 3. **Exit signal backtesting** — tune params on val, evaluate on test. No re-tuning on test.
