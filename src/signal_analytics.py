@@ -439,3 +439,81 @@ def confusion_matrix(signal_df: pd.DataFrame) -> pd.DataFrame:
     )
     order = [ACTION_LABELS[0], ACTION_LABELS[1], ACTION_LABELS[2]]
     return matrix.reindex(index=order, columns=order, fill_value=0)
+
+
+def calculate_rolling_sharpe(returns: pd.Series, window: int = 21, rf_rate: float = 0.0) -> pd.Series:
+    """Calculate rolling Sharpe ratio (annualized)."""
+    if len(returns) < window:
+        return pd.Series(np.nan, index=returns.index)
+    
+    rolling_mean = returns.rolling(window=window).mean()
+    rolling_std = returns.rolling(window=window).std()
+    
+    # Annualize (assuming daily returns, 252 trading days)
+    annualized_return = rolling_mean * 252
+    annualized_vol = rolling_std * np.sqrt(252)
+    
+    sharpe = (annualized_return - rf_rate) / (annualized_vol + 1e-8)
+    return sharpe
+
+
+def calculate_rolling_sortino(returns: pd.Series, window: int = 21, target_return: float = 0.0) -> pd.Series:
+    """Calculate rolling Sortino ratio (downside deviation)."""
+    if len(returns) < window:
+        return pd.Series(np.nan, index=returns.index)
+    
+    rolling_mean = returns.rolling(window=window).mean()
+    
+    # Downside deviation (only negative returns)
+    downside_returns = returns.copy()
+    downside_returns[downside_returns > target_return] = 0
+    downside_std = downside_returns.rolling(window=window).std()
+    
+    annualized_return = rolling_mean * 252
+    annualized_downside = downside_std * np.sqrt(252)
+    
+    sortino = (annualized_return - target_return) / (annualized_downside + 1e-8)
+    return sortino
+
+
+def calculate_drawdown(equity_curve: pd.Series) -> tuple[pd.Series, float]:
+    """Calculate drawdown series and max drawdown."""
+    cummax = equity_curve.expanding().max()
+    drawdown = (equity_curve - cummax) / (cummax + 1e-8)
+    max_dd = drawdown.min()
+    return drawdown, max_dd
+
+
+def calculate_trade_statistics(signal_df: pd.DataFrame) -> dict:
+    """Extract trade distribution: buy %, hold %, sell %."""
+    total = len(signal_df)
+    if total == 0:
+        return {"buy_pct": 0, "hold_pct": 0, "sell_pct": 0, "trade_rate": 0}
+    
+    action_counts = signal_df["action_label"].value_counts()
+    buy_count = action_counts.get(ACTION_LABELS[1], 0)
+    hold_count = action_counts.get(ACTION_LABELS[0], 0)
+    sell_count = action_counts.get(ACTION_LABELS[2], 0)
+    
+    trade_count = buy_count + sell_count
+    return {
+        "buy_pct": (buy_count / total) * 100 if total > 0 else 0,
+        "hold_pct": (hold_count / total) * 100 if total > 0 else 0,
+        "sell_pct": (sell_count / total) * 100 if total > 0 else 0,
+        "trade_rate": (trade_count / total) * 100 if total > 0 else 0,
+    }
+
+
+def calculate_buy_and_hold(df: pd.DataFrame, initial_balance: float = 100000.0) -> tuple[pd.Series, float]:
+    """Calculate buy & hold equity curve for price column."""
+    if "Close" not in df.columns:
+        return pd.Series(np.nan, index=df.index), 0.0
+    
+    prices = df["Close"].values
+    start_price = prices[0]
+    returns = (prices - start_price) / start_price
+    
+    equity = initial_balance * (1 + returns)
+    final_return = (prices[-1] - start_price) / start_price
+    
+    return pd.Series(equity, index=df.index), final_return

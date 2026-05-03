@@ -21,6 +21,9 @@ from src.signal_analytics import (
     _align_features_to_model,
     _expected_observation_dim,
     _load_model,
+    calculate_drawdown,
+    calculate_rolling_sharpe,
+    calculate_rolling_sortino,
     compute_metrics,
     confusion_matrix,
     enrich_with_truth_labels,
@@ -506,6 +509,68 @@ def _apply_split_filter(df: pd.DataFrame, split: str) -> pd.DataFrame:
     return df
 
 
+def display_ensemble_config(ticker: str, ensemble_config_path: str) -> None:
+    """Display ensemble configuration as a visual panel."""
+    try:
+        with open(ensemble_config_path) as f:
+            config = json.load(f)
+        
+        if ticker.lower() not in config:
+            st.warning(f"Ensemble config not found for {ticker.upper()}.")
+            return
+        
+        cfg = config[ticker.lower()]
+        
+        st.markdown(f"### 🎯 Ensemble Configuration - {ticker.upper()}")
+        
+        # Create a 2-column layout for key info
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric(
+                "Active Seeds",
+                ", ".join(map(str, cfg.get("active_seeds", []))),
+                help="Seeds used in the multi-seed voting ensemble"
+            )
+            st.metric(
+                "Ensemble Method",
+                cfg.get("ensemble_method", "voting").title(),
+                help="How predictions are combined across seeds"
+            )
+        
+        with col2:
+            st.metric(
+                "Top 3 Mean Sharpe",
+                f"{cfg.get('top_3_mean_sharpe', 0):.3f}",
+                help="Expected Sharpe ratio from top 3 performers"
+            )
+            st.metric(
+                "Val-Test Gap",
+                f"{cfg.get('top_3_mean_val_test_gap', 0):.2%}",
+                help="Validation-test gap (overfitting indicator). <5% is healthy."
+            )
+        
+        # Production status and notes
+        status = "✅ Production Ready" if cfg.get("production_ready") else "⚠️ Development"
+        st.info(
+            f"**Status:** {status}\n\n"
+            f"**Configuration:** {cfg.get('notes', 'No notes')}"
+        )
+        
+        # Data preprocessing notes by ticker
+        if ticker.lower() == "nvda":
+            st.caption("📊 **Data:** Raw features (no stationarity transform)")
+        elif ticker.lower() == "amd":
+            st.caption("📊 **Data:** Stationary features (differencing applied)")
+        
+    except FileNotFoundError:
+        st.warning(f"Ensemble config file not found: {ensemble_config_path}")
+    except json.JSONDecodeError:
+        st.error("Failed to parse ensemble config JSON")
+    except Exception as e:
+        st.error(f"Error loading ensemble config: {str(e)}")
+
+
 def _parse_snapshot_timestamp(path: Path) -> datetime:
     match = re.search(r"(\d{8}-\d{6}Z?)", path.stem)
     if match:
@@ -517,55 +582,7 @@ def _parse_snapshot_timestamp(path: Path) -> datetime:
         if pd.notna(parsed_without_zone):
             return parsed_without_zone.to_pydatetime()
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-
-
-def _extract_snapshot_label(path: Path) -> str:
-    stem = path.stem
-    for prefix in ("experiment_leaderboard_", "leaderboard_"):
-        if stem.startswith(prefix):
-            stem = stem[len(prefix) :]
-            break
-    stem = re.sub(r"^\d{8}-\d{6}Z?_?", "", stem)
-    stem = stem.strip("_-")
-    return stem if stem else "unlabeled"
-
-
-def _format_float(value: float) -> str:
-    text = f"{float(value):.6f}".rstrip("0").rstrip(".")
-    return text if text else "0"
-
-
-def _detect_leaderboard_tickers(leaderboard_path: str) -> set[str]:
-    """Detect supported ticker preset keys present in the leaderboard."""
-    if not Path(leaderboard_path).exists():
-        return set()
-    try:
-        df = pd.read_csv(leaderboard_path)
-        if "ticker" in df.columns:
-            # Leaderboard may store either preset keys (aapl) or canonical symbols (AAPL).
-            symbol_to_key = {
-                str(symbols[0]).upper(): key
-                for key, symbols in TICKER_PRESETS.items()
-                if symbols
-            }
-            supported_keys = set(TICKER_PRESETS.keys())
-            detected: set[str] = set()
-            for raw in df["ticker"].dropna().unique():
-                text = str(raw).strip()
-                if not text:
-                    continue
-                key_candidate = text.lower()
-                symbol_candidate = text.upper()
-                if key_candidate in supported_keys:
-                    detected.add(key_candidate)
-                    continue
-                mapped = symbol_to_key.get(symbol_candidate)
-                if mapped is not None:
-                    detected.add(mapped)
-            return detected
-    except Exception:
-        pass
-    return set()
+    
 
 
 def _make_command_from_config(
@@ -614,6 +631,38 @@ def _make_command_from_config(
         f"--max-runs {seed_count} "
         f"--run-label {run_label}"
     )
+
+
+def _detect_leaderboard_tickers(leaderboard_path: str) -> set[str]:
+    """Detect supported ticker preset keys present in the leaderboard."""
+    if not Path(leaderboard_path).exists():
+        return set()
+    try:
+        df = pd.read_csv(leaderboard_path)
+        if "ticker" in df.columns:
+            symbol_to_key = {
+                str(symbols[0]).upper(): key
+                for key, symbols in TICKER_PRESETS.items()
+                if symbols
+            }
+            supported_keys = set(TICKER_PRESETS.keys())
+            detected: set[str] = set()
+            for raw in df["ticker"].dropna().unique():
+                text = str(raw).strip()
+                if not text:
+                    continue
+                key_candidate = text.lower()
+                symbol_candidate = text.upper()
+                if key_candidate in supported_keys:
+                    detected.add(key_candidate)
+                    continue
+                mapped = symbol_to_key.get(symbol_candidate)
+                if mapped is not None:
+                    detected.add(mapped)
+            return detected
+    except Exception:
+        pass
+    return set()
 
 
 @st.cache_data(show_spinner=False)
@@ -1275,7 +1324,7 @@ def render_charts(
 
     # Errors as sharp markers
     error_df = chart_df[(chart_df["action_label"].isin([ACTION_LABELS[1], ACTION_LABELS[2]])) & (~chart_df["is_correct"])].copy()
-    error_marks = alt.Chart(pd.DataFrame()) # Empty default
+    error_marks = None
     if not error_df.empty:
         error_df["error_y"] = error_df.apply(lambda r: r["price"] * 1.025 if r["action_label"] == ACTION_LABELS[2] else r["price"] * 0.975, axis=1)
         error_marks = (
@@ -1285,8 +1334,12 @@ def render_charts(
         )
 
     # Layer and stack
+    layer_components = [background_zones, price_area, line, signal_points]
+    if error_marks is not None:
+        layer_components.append(error_marks)
+    
     price_main = (
-        alt.layer(background_zones, price_area, line, signal_points, error_marks)
+        alt.layer(*layer_components)
         .properties(height=350, width="container")
         .resolve_scale(color='independent')
     )
@@ -1492,6 +1545,11 @@ def render_signal_analytics_page(
 
     if not run:
         st.info("Set your inputs and click **Run analytics** in the sidebar to begin.")
+        # Show ensemble config preview even when not running
+        if use_ensemble:
+            st.divider()
+            ensemble_config_path = str(ROOT_DIR / "staging" / "models" / "ensemble_config.json")
+            display_ensemble_config(ticker, ensemble_config_path)
         return
 
     try:
@@ -1527,6 +1585,12 @@ def render_signal_analytics_page(
         st.stop()
 
     enriched_view = add_cumulative_pnl(enriched)
+
+    # Display ensemble configuration if in ensemble mode
+    if use_ensemble:
+        ensemble_config_path = str(ROOT_DIR / "staging" / "models" / "ensemble_config.json")
+        display_ensemble_config(ticker, ensemble_config_path)
+        st.divider()
 
     # PREMIUM KPI ROW
     st.markdown(f"### 📊 Performance Summary - {data_split} Split")
@@ -1589,7 +1653,84 @@ def render_signal_analytics_page(
     action_distribution = build_action_mix_table(enriched_view)
     st.dataframe(action_distribution, width="stretch")
 
-    st.subheader("6) Detailed Signal Log")
+    st.subheader("6) Signal Quality Diagnostics")
+    st.caption("Visualizing the relationship between market returns and agent rewards/confidence.")
+    
+    # Prep scatterplot data
+    scatter_df = enriched_view.copy()
+    if len(scatter_df) > 5000:
+        scatter_df = scatter_df.sample(5000).sort_values("step")
+        st.caption("Note: Chart is sampled to 5,000 points for performance.")
+
+    # Horizon Return vs Reward Scatter
+    y_field = "reward:Q"
+    y_title = "Reward"
+    size_field = alt.value(60)
+    size_title = ""
+    
+    if "confidence" in scatter_df.columns:
+        has_conf = True
+        size_field = "confidence:Q"
+        size_title = "Ensemble Confidence"
+    else:
+        has_conf = False
+
+    scatter = (
+        alt.Chart(scatter_df)
+        .mark_circle(opacity=0.6, stroke="white", strokeWidth=0.5)
+        .encode(
+            x=alt.X("horizon_return:Q", title=f"Horizon Return ({horizon_steps} steps)", axis=alt.Axis(format=".1%")),
+            y=alt.Y(y_field, title=y_title),
+            color=alt.Color(
+                "action_label:N",
+                title="Action",
+                scale=alt.Scale(
+                    domain=[ACTION_LABELS[0], ACTION_LABELS[1], ACTION_LABELS[2]],
+                    range=["#94a3b8", "#10b981", "#ef4444"], 
+                ),
+            ),
+            size=alt.Size(size_field, title=size_title) if has_conf else size_field,
+            tooltip=[
+                "step:Q",
+                "date:T",
+                alt.Tooltip("price:Q", format=".2f"),
+                alt.Tooltip("horizon_return:Q", format=".2%"),
+                alt.Tooltip("reward:Q", format=".4f"),
+                "action_label:N",
+                "true_label:N",
+                "is_correct:N",
+            ],
+        )
+    )
+
+    vline = alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(color="#94a3b8", strokeDash=[4, 4]).encode(x="x:Q")
+    hline = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#94a3b8", strokeDash=[4, 4]).encode(y="y:Q")
+
+    st.altair_chart((scatter + vline + hline).interactive(), width="stretch")
+
+    # Add P&L contribution bar chart
+    st.caption("PnL Contribution by Action (visualized from table above)")
+    pnl_chart = (
+        alt.Chart(action_distribution)
+        .mark_bar()
+        .encode(
+            x=alt.X("action:N", title="Action"),
+            y=alt.Y("total_pnl:Q", title="Total P&L Contribution"),
+            color=alt.Color(
+                "action:N",
+                scale=alt.Scale(
+                    domain=[ACTION_LABELS[0], ACTION_LABELS[1], ACTION_LABELS[2]],
+                    range=["#94a3b8", "#10b981", "#ef4444"],
+                ),
+                legend=None
+            ),
+            tooltip=["action:N", alt.Tooltip("total_pnl:Q", format=".2f"), "count:Q"]
+        )
+        .properties(height=200)
+    )
+    st.altair_chart(pnl_chart, width="stretch")
+
+    st.subheader("7) Detailed Signal Log")
     log_cols = [
         "step", "date", "price", "action_label", "true_label", 
         "reward", "net_worth", "cumulative_pnl", "horizon_return", "trade_edge", "is_correct"
@@ -2045,7 +2186,42 @@ def render_experiment_insights_page(ticker: str = DEFAULT_TICKER, interval: str 
     )
     st.altair_chart(stability_chart.interactive(), width="stretch")
 
-    st.subheader("3) Recent Best Configs")
+    st.subheader("3) Generalization Scatter (Val vs Test)")
+    st.caption("Visualizing drift between validation and test performance across all snapshots.")
+    
+    # Prep generalization scatter data
+    gen_scatter_df = bests.copy()
+    if "val_actionable_accuracy" in gen_scatter_df.columns and "test_actionable_accuracy" in gen_scatter_df.columns:
+        gen_scatter = (
+            alt.Chart(gen_scatter_df)
+            .mark_circle(size=100, opacity=0.7, stroke="white", strokeWidth=0.5)
+            .encode(
+                x=alt.X("val_actionable_accuracy:Q", title="Val Actionable Accuracy", scale=alt.Scale(domain=[0.4, 0.7])),
+                y=alt.Y("test_actionable_accuracy:Q", title="Test Actionable Accuracy", scale=alt.Scale(domain=[0.4, 0.7])),
+                color=alt.Color("snapshot_label:N", title="Snapshot"),
+                size=alt.Size("ranking_score:Q", title="Ranking Score"),
+                tooltip=[
+                    alt.Tooltip("snapshot_time:T", title="Time"),
+                    alt.Tooltip("snapshot_label:N", title="Label"),
+                    alt.Tooltip("val_actionable_accuracy:Q", title="Val Acc", format=".4f"),
+                    alt.Tooltip("test_actionable_accuracy:Q", title="Test Acc", format=".4f"),
+                    alt.Tooltip("ranking_score:Q", title="Score", format=".4f"),
+                ],
+            )
+        )
+        
+        # Identity line (Ideal generalization)
+        identity_line = (
+            alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]}))
+            .mark_line(color="#94a3b8", strokeDash=[5, 5], opacity=0.5)
+            .encode(x="x:Q", y="y:Q")
+        )
+        
+        st.altair_chart((gen_scatter + identity_line).interactive(), width="stretch")
+    else:
+        st.info("Insufficient data for generalization scatter.")
+
+    st.subheader("4) Recent Best Configs")
     display_cols = [
         "snapshot_time",
         "snapshot_label",
@@ -2069,7 +2245,7 @@ def render_experiment_insights_page(ticker: str = DEFAULT_TICKER, interval: str 
     visible_cols = [c for c in display_cols if c in bests.columns]
     st.dataframe(bests[visible_cols].sort_values("snapshot_time", ascending=False), width="stretch")
 
-    st.subheader("4) Model Interpretation")
+    st.subheader("5) Model Interpretation")
     interpretation = build_experiment_interpretation(history=history, target=target_actionable)
     stage = str(interpretation["stage"])
     summary = str(interpretation["summary"])
@@ -2084,7 +2260,7 @@ def render_experiment_insights_page(ticker: str = DEFAULT_TICKER, interval: str 
         st.write(f"- {finding}")
     st.caption(f"Recommended focus: {interpretation['focus']}")
 
-    st.subheader("5) Recommended Next Steps")
+    st.subheader("6) Recommended Next Steps")
     recs = build_next_step_recommendations(
         history=history,
         target=target_actionable,
@@ -2105,111 +2281,329 @@ def render_experiment_insights_page(ticker: str = DEFAULT_TICKER, interval: str 
             st.code(str(rec["command"]), language="bash")
 
 
-def render_stage1_pivot_page(ticker: str = DEFAULT_TICKER) -> None:
-    st.header("Stage 1 Pivot")
-    st.caption("Visualize the signal-first pivot separately from the RL leaderboard views.")
+def render_performance_analytics_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") -> None:
+    st.header("Performance Analytics")
+    st.caption("Freshness indicator and quick equity-curve diagnostics for the selected model or ensemble.")
 
-    cache_buster = build_stage1_cache_buster()
-    stage1 = load_stage1_snapshot_history(
-        results_dir=str(STAGE1_RESULTS_DIR),
-        confirmation_dir=str(STAGE1_CONFIRMATION_DIR),
-        cache_buster=cache_buster,
-    )
-
-    gate_summary = load_stage1_gate_summary()
+    leaderboard_path, _, _, snapshot_dir = _artifact_paths_for_interval(interval)
 
     with st.sidebar:
-        st.subheader("Stage 1 controls")
-        source_family = st.selectbox("Source family", options=["All", "stage1", "confirmation"], index=0)
-        horizon_filter = st.selectbox("Horizon", options=["All", 1, 3], index=0)
-        model_filter = st.selectbox("Model type", options=["All", "linear", "rf", "xgb", "mlp"], index=0)
+        st.subheader("Performance controls")
+        choose_leaderboard = st.selectbox("Leaderboard file", options=_leaderboard_paths_for_interval_hint(interval), index=0)
+        use_ensemble = st.toggle("Use Ensemble (fast, top-3 voting)", value=False, help="Use the combined ensemble simulation path when available.")
+        show_seed_overlays = st.checkbox("Show per-seed overlays (slow)", value=False, help="Simulate top-N models individually and overlay their equity curves.")
+        seed_overlay_count = st.number_input("Per-seed overlay count", min_value=1, max_value=10, value=3, step=1)
+        normalize_equity = st.checkbox("Normalize equity (index to 100)", value=False, help="Index net worth to 100 for relative comparison against benchmarks.")
+        show_kpis = st.checkbox("Show KPI summary above chart", value=True)
+        refresh_now = st.button("Refresh metrics", type="primary", key="perf_refresh")
 
-    if stage1.empty:
-        st.info("No Stage 1 snapshot JSON files found yet. Run the Stage 1 baseline script to populate results/stage1.")
+    # Resolve best model for ticker from leaderboard; fallback to local curated models
+    model_candidates = _top_ranked_models_from_leaderboard(max_count=1, ticker_key=ticker, interval_hint=interval)
+    if model_candidates:
+        model_path = model_candidates[0]
+    else:
+        all_models = _list_available_models(cache_buster=build_model_cache_buster())
+        curated = _curate_model_choices(all_models, max_count=1, ticker_key=ticker, interval_hint=interval)
+        model_path = curated[0] if curated else None
+
+    if not model_path:
+        st.info("No model snapshots found for this ticker. Run experiments to produce snapshots.")
         return
 
-    filtered = stage1.copy()
-    if "ticker" in filtered.columns:
-        filtered = filtered[_ticker_match_mask(filtered["ticker"], ticker_key=ticker)].copy()
-    if source_family != "All" and "source_family" in filtered.columns:
-        filtered = filtered[filtered["source_family"] == source_family].copy()
-    if horizon_filter != "All" and "horizon" in filtered.columns:
-        filtered = filtered[filtered["horizon"] == int(horizon_filter)].copy()
-    if model_filter != "All" and "model_type" in filtered.columns:
-        filtered = filtered[filtered["model_type"] == model_filter].copy()
+    model_file = Path(model_path)
+    try:
+        mtime = datetime.fromtimestamp(model_file.stat().st_mtime, tz=timezone.utc)
+        st.metric("Model snapshot last modified (UTC)", mtime.strftime("%Y-%m-%d %H:%M:%SZ"))
+    except Exception:
+        st.warning("Unable to stat model snapshot file for freshness check")
 
-    if filtered.empty:
-        st.info("No Stage 1 rows match the current filters.")
-        return
+    # Quick simulation and equity curve when requested
+    if refresh_now:
+        data_path = str(_preferred_data_path_for_model(ticker, expected_obs_dim=None, interval_hint=interval))
+        try:
+            with st.spinner("Running quick simulation..."):
+                if use_ensemble:
+                    enriched, _ = evaluate_signals(
+                        data_path=data_path,
+                        model_path=str(model_path),
+                        threshold=RECOMMENDED_THRESHOLD,
+                        horizon_steps=RECOMMENDED_HORIZON,
+                        deterministic_policy=True,
+                        binary_actions=False,
+                        use_ensemble=True,
+                        ticker=ticker,
+                        ensemble_config_path=str(ROOT_DIR / "staging" / "models" / "ensemble_config.json"),
+                    )
+                else:
+                    enriched, _ = evaluate_signals(
+                        data_path=data_path,
+                        model_path=str(model_path),
+                        threshold=RECOMMENDED_THRESHOLD,
+                        horizon_steps=RECOMMENDED_HORIZON,
+                        deterministic_policy=True,
+                        binary_actions=False,
+                        use_ensemble=False,
+                        ticker=ticker,
+                        ensemble_config_path=str(ROOT_DIR / "staging" / "models" / "ensemble_config.json"),
+                    )
+        except Exception as e:
+            st.error(f"Simulation failed: {e}")
+            return
 
-    best_idx = filtered["test_r2"].idxmax() if "test_r2" in filtered.columns else filtered.index[0]
-    best = filtered.loc[best_idx]
+        if enriched.empty:
+            st.info("Simulation returned no rows; check data/model compatibility.")
+            return
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Snapshots", f"{len(filtered)}")
-    c2.metric("Best test R2", f"{float(best.get('test_r2', np.nan)):.4f}")
-    c3.metric("Best val R2", f"{float(best.get('val_r2', np.nan)):.4f}")
-    c4.metric("R2 gap", f"{float(best.get('val_test_r2_gap', np.nan)):.4f}")
+        enriched = add_cumulative_pnl(enriched)
+        enriched["date"] = pd.to_datetime(enriched["date"], errors="coerce")
 
-    if gate_summary:
-        verdict = str(gate_summary.get("verdict", "unknown"))
-        if verdict == "signal_exists":
-            st.success(f"Gate verdict: {verdict} | baseline={gate_summary.get('baseline_passed')} | trading={gate_summary.get('trading_passed')}")
-        elif verdict == "signal_weak":
-            st.warning(f"Gate verdict: {verdict} | baseline={gate_summary.get('baseline_passed')} | trading={gate_summary.get('trading_passed')}")
-        else:
-            st.info(f"Gate summary loaded from {gate_summary.get('source_path', 'unknown')}")
+        chart_df = enriched[["date", "step", "net_worth", "cumulative_pnl"]].copy()
+        if "price" in enriched.columns and not enriched["price"].isna().all():
+            price = enriched["price"].astype(float)
+            initial_balance = float(enriched["net_worth"].iloc[0])
+            benchmark_net = initial_balance * (price / float(price.iloc[0]))
+            chart_df["benchmark_net_worth"] = benchmark_net.values
 
-    chart_cols = [c for c in ["val_r2", "test_r2", "val_test_r2_gap"] if c in filtered.columns]
-    if chart_cols:
-        st.subheader("1) Stage 1 Snapshot Comparison")
-        chart_df = filtered[["ticker", "model_type", "horizon", "source_family", *chart_cols]].copy()
-        chart_df = chart_df.rename(columns={"ticker": "ticker", "model_type": "model_type"})
-        chart_long = chart_df.melt(
-            id_vars=["ticker", "model_type", "horizon", "source_family"],
-            var_name="metric",
-            value_name="value",
-        )
-        scatter = (
-            alt.Chart(chart_long)
-            .mark_circle(size=100, opacity=0.85)
+        chart_df["cummax"] = chart_df["net_worth"].cummax()
+        chart_df["drawdown_pct"] = ((chart_df["cummax"] - chart_df["net_worth"]) / chart_df["cummax"]).fillna(0.0)
+
+        if "benchmark_net_worth" in chart_df.columns:
+            chart_df["benchmark_cummax"] = chart_df["benchmark_net_worth"].cummax()
+            chart_df["benchmark_drawdown_pct"] = (
+                (chart_df["benchmark_cummax"] - chart_df["benchmark_net_worth"]) / chart_df["benchmark_cummax"]
+            ).fillna(0.0)
+
+        y_title = "Net worth ($)"
+        strategy_col = "net_worth"
+        benchmark_col = "benchmark_net_worth"
+        if normalize_equity and not chart_df.empty:
+            base = float(chart_df["net_worth"].iloc[0]) if float(chart_df["net_worth"].iloc[0]) != 0.0 else 1.0
+            chart_df["net_worth_index"] = (chart_df["net_worth"] / base) * 100.0
+            strategy_col = "net_worth_index"
+            y_title = "Equity Index (start = 100)"
+            if "benchmark_net_worth" in chart_df.columns:
+                base_b = float(chart_df["benchmark_net_worth"].iloc[0]) if float(chart_df["benchmark_net_worth"].iloc[0]) != 0.0 else 1.0
+                chart_df["benchmark_index"] = (chart_df["benchmark_net_worth"] / base_b) * 100.0
+                benchmark_col = "benchmark_index"
+
+        # KPI strip
+        final_net = float(chart_df["net_worth"].iloc[-1])
+        start_net = float(chart_df["net_worth"].iloc[0])
+        total_return = (final_net / max(start_net, 1e-8)) - 1.0
+        max_drawdown = float(chart_df["drawdown_pct"].max())
+        trade_rate = float(enriched["action"].isin([1, 2]).mean()) if "action" in enriched.columns else 0.0
+
+        bench_return = np.nan
+        alpha_vs_bench = np.nan
+        if "benchmark_net_worth" in chart_df.columns and len(chart_df):
+            bench_start = float(chart_df["benchmark_net_worth"].iloc[0])
+            bench_end = float(chart_df["benchmark_net_worth"].iloc[-1])
+            bench_return = (bench_end / max(bench_start, 1e-8)) - 1.0
+            alpha_vs_bench = total_return - bench_return
+
+        returns = chart_df["net_worth"].pct_change().fillna(0.0)
+        risk_window = min(60, max(20, int(len(returns) / 8)))
+        rolling_sharpe = calculate_rolling_sharpe(returns, window=risk_window)
+        rolling_sortino = calculate_rolling_sortino(returns, window=risk_window)
+        latest_sharpe = float(rolling_sharpe.dropna().iloc[-1]) if not rolling_sharpe.dropna().empty else np.nan
+
+        if show_kpis:
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric("Final Net Worth", f"${final_net:,.0f}")
+            k2.metric("Total Return", f"{total_return:.2%}")
+            k3.metric("Alpha vs Benchmark", "N/A" if pd.isna(alpha_vs_bench) else f"{alpha_vs_bench:.2%}")
+            k4.metric("Max Drawdown", f"{max_drawdown:.2%}", delta_color="inverse")
+            k5.metric("Trade Rate", f"{trade_rate:.1%}", delta="Latest Sharpe: n/a" if pd.isna(latest_sharpe) else f"Latest Sharpe: {latest_sharpe:.2f}")
+
+        st.subheader("Equity Curve")
+        x_field = "date" if chart_df["date"].notna().any() else "step"
+
+        layers: list[alt.Chart] = []
+
+        strategy_line = (
+            alt.Chart(chart_df)
+            .mark_line(color="#38bdf8", strokeWidth=2.5)
             .encode(
-                x=alt.X("horizon:O", title="Horizon"),
-                y=alt.Y("value:Q", title="Metric value"),
-                color=alt.Color("metric:N", title="Metric"),
-                shape=alt.Shape("source_family:N", title="Source family"),
-                column=alt.Column("ticker:N", title="Ticker"),
-                tooltip=["ticker:N", "model_type:N", "horizon:O", "source_family:N", alt.Tooltip("metric:N", title="Metric"), alt.Tooltip("value:Q", format=".4f")],
+                x=(x_field + ":T") if x_field == "date" else x_field + ":Q",
+                y=alt.Y(strategy_col + ":Q", title=y_title),
+                tooltip=[
+                    alt.Tooltip("date:T", title="Date"),
+                    alt.Tooltip("net_worth:Q", title="Strategy Net", format=",.2f"),
+                    alt.Tooltip("drawdown_pct:Q", title="Strategy Drawdown", format=".2%"),
+                    alt.Tooltip("cumulative_pnl:Q", title="Cumulative PnL", format=",.2f"),
+                ] if x_field == "date" else [
+                    alt.Tooltip("step:Q", title="Step"),
+                    alt.Tooltip("net_worth:Q", title="Strategy Net", format=",.2f"),
+                    alt.Tooltip("drawdown_pct:Q", title="Strategy Drawdown", format=".2%"),
+                    alt.Tooltip("cumulative_pnl:Q", title="Cumulative PnL", format=",.2f"),
+                ],
             )
         )
-        st.altair_chart(scatter.interactive(), width="stretch")
+        layers.append(strategy_line)
 
-    st.subheader("2) Snapshot Table")
-    table_cols = [
-        c for c in [
-            "ticker",
-            "horizon",
-            "model_type",
-            "source_family",
-            "seed",
-            "val_r2",
-            "test_r2",
-            "val_test_r2_gap",
-            "val_mae",
-            "test_mae",
-            "val_test_mae_gap",
-            "source_path",
-        ] if c in filtered.columns
-    ]
-    st.dataframe(filtered.sort_values([c for c in ["ticker", "horizon", "model_type"] if c in filtered.columns], ascending=True)[table_cols], width="stretch")
+        if benchmark_col in chart_df.columns:
+            benchmark_line = (
+                alt.Chart(chart_df)
+                .mark_line(color="#f59e0b", strokeWidth=1.8, strokeDash=[6, 4])
+                .encode(
+                    x=(x_field + ":T") if x_field == "date" else x_field + ":Q",
+                    y=alt.Y(benchmark_col + ":Q"),
+                    tooltip=[
+                        alt.Tooltip("date:T", title="Date"),
+                        alt.Tooltip("benchmark_net_worth:Q", title="Benchmark Net", format=",.2f"),
+                        alt.Tooltip("benchmark_drawdown_pct:Q", title="Benchmark Drawdown", format=".2%"),
+                    ] if x_field == "date" else [
+                        alt.Tooltip("step:Q", title="Step"),
+                        alt.Tooltip("benchmark_net_worth:Q", title="Benchmark Net", format=",.2f"),
+                        alt.Tooltip("benchmark_drawdown_pct:Q", title="Benchmark Drawdown", format=".2%"),
+                    ],
+                )
+            )
+            layers.append(benchmark_line)
 
-    st.subheader("3) Best Runs")
-    best_runs = (
-        filtered.sort_values("test_r2", ascending=False)
-        .groupby([c for c in ["ticker", "horizon"] if c in filtered.columns], dropna=False)
-        .head(1)
-        .reset_index(drop=True)
-    )
+        if normalize_equity:
+            reference_line = (
+                alt.Chart(pd.DataFrame({"reference": [100.0]}))
+                .mark_rule(color="#64748b", strokeDash=[3, 3], opacity=0.5)
+                .encode(y="reference:Q")
+            )
+            layers.append(reference_line)
+
+        # Per-seed overlays (on-demand)
+        seed_lines: list[alt.Chart] = []
+        if show_seed_overlays:
+            top_models = _top_ranked_models_from_leaderboard(max_count=int(seed_overlay_count), ticker_key=ticker, interval_hint=interval)
+            for idx, mpath in enumerate(top_models, start=1):
+                try:
+                    m_enriched, _ = evaluate_signals(
+                        data_path=data_path,
+                        model_path=str(mpath),
+                        threshold=RECOMMENDED_THRESHOLD,
+                        horizon_steps=RECOMMENDED_HORIZON,
+                        deterministic_policy=True,
+                        binary_actions=False,
+                        use_ensemble=False,
+                        ticker=ticker,
+                        ensemble_config_path=str(ROOT_DIR / "staging" / "models" / "ensemble_config.json"),
+                    )
+                except Exception:
+                    continue
+                if m_enriched.empty:
+                    continue
+                m_enriched["date"] = pd.to_datetime(m_enriched["date"], errors="coerce")
+                m_df = m_enriched[["date", "step", "net_worth"]].copy()
+                if normalize_equity and not m_df.empty:
+                    m_base = float(m_df["net_worth"].iloc[0]) if float(m_df["net_worth"].iloc[0]) != 0.0 else 1.0
+                    m_df["net_plot"] = (m_df["net_worth"] / m_base) * 100.0
+                else:
+                    m_df["net_plot"] = m_df["net_worth"]
+                m_df["seed_label"] = f"Seed {idx}"
+                seed_lines.append(
+                    alt.Chart(m_df)
+                    .mark_line(opacity=0.28, color="#10b981")
+                    .encode(
+                        x=(x_field + ":T") if x_field == "date" else x_field + ":Q",
+                        y=alt.Y("net_plot:Q"),
+                        tooltip=["seed_label:N", "date:T", "net_worth:Q"] if x_field == "date" else ["seed_label:N", "step:Q", "net_worth:Q"],
+                    )
+                )
+
+        combined = None
+        for layer in [*layers, *seed_lines]:
+            combined = layer if combined is None else (combined + layer)
+
+        if combined is not None and not chart_df.empty:
+            dd_idx = int(chart_df["drawdown_pct"].idxmax())
+            dd_row = chart_df.iloc[[dd_idx]]
+            dd_marker = (
+                alt.Chart(dd_row)
+                .mark_point(color="#ef4444", size=110, shape="triangle-down")
+                .encode(
+                    x=(x_field + ":T") if x_field == "date" else x_field + ":Q",
+                    y=alt.Y(strategy_col + ":Q"),
+                    tooltip=[
+                        alt.Tooltip("date:T", title="Max DD Date"),
+                        alt.Tooltip("net_worth:Q", title="Strategy Net", format=",.2f"),
+                        alt.Tooltip("drawdown_pct:Q", title="Max Drawdown", format=".2%"),
+                    ] if x_field == "date" else [
+                        alt.Tooltip("step:Q", title="Max DD Step"),
+                        alt.Tooltip("net_worth:Q", title="Strategy Net", format=",.2f"),
+                        alt.Tooltip("drawdown_pct:Q", title="Max Drawdown", format=".2%"),
+                    ],
+                )
+            )
+            st.altair_chart((combined + dd_marker).interactive(), use_container_width=True)
+
+        risk_col_left, risk_col_right = st.columns(2)
+
+        with risk_col_left:
+            st.subheader("Drawdown")
+            dd_long = chart_df[["date", "step", "drawdown_pct"]].copy()
+            dd_long["series"] = "Strategy"
+            if "benchmark_drawdown_pct" in chart_df.columns:
+                bench_dd = chart_df[["date", "step", "benchmark_drawdown_pct"]].rename(columns={"benchmark_drawdown_pct": "drawdown_pct"})
+                bench_dd["series"] = "Benchmark"
+                dd_long = pd.concat([dd_long, bench_dd], ignore_index=True)
+
+            dd_chart = (
+                alt.Chart(dd_long)
+                .mark_area(opacity=0.18)
+                .encode(
+                    x=(x_field + ":T") if x_field == "date" else x_field + ":Q",
+                    y=alt.Y("drawdown_pct:Q", title="Drawdown", axis=alt.Axis(format=".0%")),
+                    color=alt.Color("series:N", scale=alt.Scale(domain=["Strategy", "Benchmark"], range=["#ef4444", "#f59e0b"])),
+                    tooltip=["series:N", "date:T", alt.Tooltip("drawdown_pct:Q", format=".2%")]
+                    if x_field == "date"
+                    else ["series:N", "step:Q", alt.Tooltip("drawdown_pct:Q", format=".2%")],
+                )
+            )
+            st.altair_chart(dd_chart.interactive(), use_container_width=True)
+
+        with risk_col_right:
+            st.subheader(f"Rolling Risk Ratios (window={risk_window})")
+            risk_df = pd.DataFrame(
+                {
+                    "date": chart_df["date"],
+                    "step": chart_df["step"],
+                    "Rolling Sharpe": rolling_sharpe,
+                    "Rolling Sortino": rolling_sortino,
+                }
+            )
+            risk_long = risk_df.melt(id_vars=["date", "step"], var_name="metric", value_name="value").dropna()
+            if not risk_long.empty:
+                risk_chart = (
+                    alt.Chart(risk_long)
+                    .mark_line()
+                    .encode(
+                        x=(x_field + ":T") if x_field == "date" else x_field + ":Q",
+                        y=alt.Y("value:Q", title="Ratio"),
+                        color=alt.Color("metric:N", scale=alt.Scale(domain=["Rolling Sharpe", "Rolling Sortino"], range=["#22d3ee", "#a78bfa"])),
+                        tooltip=["metric:N", "date:T", alt.Tooltip("value:Q", format=".3f")]
+                        if x_field == "date"
+                        else ["metric:N", "step:Q", alt.Tooltip("value:Q", format=".3f")],
+                    )
+                )
+                zero_rule = alt.Chart(pd.DataFrame({"zero": [0.0]})).mark_rule(color="#94a3b8", strokeDash=[3, 3]).encode(y="zero:Q")
+                st.altair_chart((risk_chart + zero_rule).interactive(), use_container_width=True)
+            else:
+                st.info("Not enough rows for rolling risk metrics yet.")
+
+    else:
+        st.info("Press 'Refresh metrics' to run a quick simulation and view equity curve.")
+    
+    # Load recent experiment snapshot history and derive best-per-snapshot rows
+    history_cache_buster = build_history_cache_buster(snapshot_dir=str(snapshot_dir), leaderboard_path=str(leaderboard_path))
+    try:
+        history = load_experiment_history(snapshot_dir=str(snapshot_dir), leaderboard_path=str(leaderboard_path), cache_buster=history_cache_buster)
+    except Exception:
+        history = pd.DataFrame()
+
+    if "ticker" in history.columns:
+        history = history[_ticker_match_mask(history["ticker"], ticker_key=ticker)].copy()
+
+    best_runs = summarize_snapshot_bests(history) if not history.empty else pd.DataFrame()
+    best = best_runs.iloc[0] if (not best_runs.empty) else {}
+
     best_visible_cols = [c for c in ["ticker", "horizon", "model_type", "source_family", "val_r2", "test_r2", "val_test_r2_gap", "source_path"] if c in best_runs.columns]
     st.dataframe(best_runs[best_visible_cols], width="stretch")
 
@@ -2232,8 +2626,8 @@ def main() -> None:
     
     with st.sidebar:
         st.header("Global inputs")
-        page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights", "Stage 1 Pivot"], index=0)
         
+        page = st.radio("Section", options=["Signal Analytics", "Experiments", "Experiment Insights", "Performance Analytics"], index=0)
         # Ticker selector
         available_tickers: set[str] = set()
         for discovery_path in [DEFAULT_LEADERBOARD_PATH, INTRADAY_5M_LEADERBOARD_PATH]:
@@ -2412,8 +2806,8 @@ def main() -> None:
         render_experiment_insights_page(ticker=ticker, interval=selected_interval)
         return
 
-    if page == "Stage 1 Pivot":
-        render_stage1_pivot_page(ticker=ticker)
+    if page == "Performance Analytics":
+        render_performance_analytics_page(ticker=ticker, interval=selected_interval)
         return
 
     render_experiments_page(ticker=ticker, interval=selected_interval)
