@@ -180,37 +180,27 @@ copy data\exp_3_amd_10seed_foundation_leaderboard.csv staging\metrics\amd_leader
 
 ### Step 7 — Update `staging/models/ensemble_config.json`
 
-The current config has `nvda.production_ready = false` (stale). Update it to the final state
-below. Leaderboard paths should now point to `staging/metrics/`:
+Ensure `staging/models/ensemble_config.json` matches the promoted seeds and production flags below (example reflects current staging):
 
 ```json
 {
   "nvda": {
-    "active_seeds": [4, 6, 8],
+    "active_seeds": [13, 21, 42, 7],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.722,
-    "top_3_mean_val_test_gap": 0.177,
+    "top_3_mean_sharpe": 1.635,
+    "top_3_mean_val_test_gap": 0.0073,
     "production_ready": true,
-    "leaderboard_csv": "staging/metrics/nvda_leaderboard.csv",
-    "notes": "9/10 active seeds. Exp 9 gate passed 2026-04-30."
-  },
-  "aapl": {
-    "active_seeds": [6, 8, 1],
-    "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.178,
-    "top_3_mean_val_test_gap": 0.015,
-    "production_ready": "monitor",
-    "leaderboard_csv": "staging/metrics/aapl_leaderboard.csv",
-    "notes": "6/10 active. Borderline alpha — monitor only, not in primary deployment."
+    "notes": "Champion: sweep_overtrade_fix_nvda_maxdelta_v2. max_weight_delta=0.10. 6/6 gates.",
+    "leaderboard_csv": "staging/metrics/nvda_leaderboard.csv"
   },
   "amd": {
-    "active_seeds": [5, 2, 10],
+    "active_seeds": [7, 13, 42, 33, 5],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.960,
-    "top_3_mean_val_test_gap": 0.025,
+    "top_3_mean_sharpe": 1.716,
+    "top_3_mean_val_test_gap": 0.0457,
     "production_ready": true,
-    "leaderboard_csv": "staging/metrics/amd_leaderboard.csv",
-    "notes": "6/10 active. Exp 9 gate passed 2026-04-30."
+    "notes": "Champion: sweep_amd_baseline_v5. max_weight_delta=0.10. 6/6 gates. Data fix: rebuilt parquet from 2015.",
+    "leaderboard_csv": "staging/metrics/amd_leaderboard.csv"
   }
 }
 ```

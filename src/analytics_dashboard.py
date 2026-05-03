@@ -58,6 +58,8 @@ PROMOTION_GATE_DEFAULTS = {
     "min_test_alpha": 0.00,
     "max_val_test_gap": 0.05,
     "max_test_cv": 1.0,
+    "test_trade_rate_min": 0.40,
+    "test_trade_rate_max": 0.80,
 }
 
 def _validate_model_shape(model_path: str, data_df: pd.DataFrame) -> None:
@@ -889,6 +891,10 @@ def _evaluate_promotion_gates(row: pd.Series) -> dict[str, object]:
     val_actionable = float(_safe_get(row, "val_actionable_accuracy", 0.0))
     test_cv_raw = row.get("test_return_cv_by_config", np.inf)
     test_cv = float(pd.to_numeric(pd.Series([test_cv_raw]), errors="coerce").fillna(np.inf).iloc[0])
+    test_trade_rate = float(_safe_get(row, "test_trade_rate", np.nan))
+
+    gate_6_min = PROMOTION_GATE_DEFAULTS["test_trade_rate_min"]
+    gate_6_max = PROMOTION_GATE_DEFAULTS["test_trade_rate_max"]
 
     checks = {
         "test_actionable": test_actionable >= PROMOTION_GATE_DEFAULTS["min_test_actionable"],
@@ -896,6 +902,7 @@ def _evaluate_promotion_gates(row: pd.Series) -> dict[str, object]:
         "test_alpha": test_alpha >= PROMOTION_GATE_DEFAULTS["min_test_alpha"],
         "val_test_gap": abs(val_actionable - test_actionable) <= PROMOTION_GATE_DEFAULTS["max_val_test_gap"],
         "test_cv": test_cv < PROMOTION_GATE_DEFAULTS["max_test_cv"],
+        "test_trade_rate": (gate_6_min <= test_trade_rate <= gate_6_max) if not np.isnan(test_trade_rate) else False,
     }
     return {
         "pass": all(checks.values()),
@@ -906,6 +913,7 @@ def _evaluate_promotion_gates(row: pd.Series) -> dict[str, object]:
             "test_alpha": test_alpha,
             "val_test_gap": abs(val_actionable - test_actionable),
             "test_cv": test_cv,
+            "test_trade_rate": test_trade_rate,
         },
     }
 
@@ -1867,6 +1875,156 @@ def render_signal_analytics_page(
     st.dataframe(enriched_view[log_cols], width="stretch")
 
 
+def render_trade_rate_histogram(leaderboard: pd.DataFrame, run_label: str = "") -> None:
+    """Render histogram of test_trade_rate with Gate 6 band overlay.
+    
+    Gate 6 (test_trade_rate) passes if value is in [0.40, 0.80].
+    """
+    if "test_trade_rate" not in leaderboard.columns:
+        st.warning("test_trade_rate column not found in leaderboard.")
+        return
+    
+    trade_rates = leaderboard["test_trade_rate"].dropna()
+    if len(trade_rates) == 0:
+        st.info("No test_trade_rate data available.")
+        return
+    
+    gate_min = PROMOTION_GATE_DEFAULTS["test_trade_rate_min"]
+    gate_max = PROMOTION_GATE_DEFAULTS["test_trade_rate_max"]
+    
+    in_zone = (trade_rates >= gate_min) & (trade_rates <= gate_max)
+    count_pass = int(in_zone.sum())
+    count_total = len(trade_rates)
+    
+    df = pd.DataFrame({
+        "test_trade_rate": trade_rates.values,
+        "in_zone": in_zone.values
+    })
+    
+    histogram = (
+        alt.Chart(df)
+        .mark_bar(opacity=0.7)
+        .encode(
+            x=alt.X("test_trade_rate:Q", title="Test Trade Rate", bin=alt.Bin(step=0.05)),
+            y=alt.Y("count():Q", title="Config Count"),
+            color=alt.Color(
+                "in_zone:N",
+                scale=alt.Scale(domain=[False, True], range=["#ef4444", "#10b981"]),
+                legend=alt.Legend(title="Gate 6 Zone", labelExpr="datum.value == 'true' ? 'Pass (0.40–0.80)' : 'Fail (outside)'")
+            ),
+            tooltip=[
+                alt.Tooltip("test_trade_rate:Q", title="Trade Rate", format=".3f"),
+                alt.Tooltip("count():Q", title="Count")
+            ]
+        )
+    )
+    
+    lower_rule = alt.Chart(pd.DataFrame({"x": [gate_min]})).mark_rule(
+        color="#10b981", strokeDash=[2, 2], size=2
+    ).encode(x="x:Q")
+    
+    upper_rule = alt.Chart(pd.DataFrame({"x": [gate_max]})).mark_rule(
+        color="#10b981", strokeDash=[2, 2], size=2
+    ).encode(x="x:Q")
+    
+    title = f"Trade Rate Distribution: {count_pass} / {count_total} in healthy zone"
+    if run_label:
+        title += f" (run: {run_label})"
+    
+    chart = (histogram + lower_rule + upper_rule).properties(
+        title=title,
+        height=300
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
+
+
+def render_promotion_gate_cards(gate_eval: dict[str, object]) -> None:
+    """Render 6 promotion gate status cards with threshold awareness.
+    
+    Each card shows gate name, current value, threshold, and color-coded PASS/FAIL state.
+    """
+    gate_values = gate_eval["values"]
+    gate_checks = gate_eval["checks"]
+    
+    gates_info = [
+        {
+            "name": "Gate 1: Test Accuracy",
+            "value": gate_values["test_actionable"],
+            "format": ".1%",
+            "threshold": PROMOTION_GATE_DEFAULTS["min_test_actionable"],
+            "comparison": ">=",
+            "key": "test_actionable",
+        },
+        {
+            "name": "Gate 2: Win Rate",
+            "value": gate_values["test_win_rate"],
+            "format": ".1%",
+            "threshold": PROMOTION_GATE_DEFAULTS["min_test_win_rate"],
+            "comparison": ">=",
+            "key": "test_win_rate",
+        },
+        {
+            "name": "Gate 3: Alpha",
+            "value": gate_values["test_alpha"],
+            "format": ".4f",
+            "threshold": PROMOTION_GATE_DEFAULTS["min_test_alpha"],
+            "comparison": ">=",
+            "key": "test_alpha",
+        },
+        {
+            "name": "Gate 4: Val-Test Gap",
+            "value": gate_values["val_test_gap"],
+            "format": ".1%",
+            "threshold": PROMOTION_GATE_DEFAULTS["max_val_test_gap"],
+            "comparison": "<=",
+            "key": "val_test_gap",
+        },
+        {
+            "name": "Gate 5: Config CV",
+            "value": gate_values["test_cv"],
+            "format": ".2f",
+            "threshold": PROMOTION_GATE_DEFAULTS["max_test_cv"],
+            "comparison": "<",
+            "key": "test_cv",
+        },
+        {
+            "name": "Gate 6: Trade Rate",
+            "value": gate_values["test_trade_rate"],
+            "format": ".1%",
+            "threshold": f"{PROMOTION_GATE_DEFAULTS['test_trade_rate_min']:.0%}–{PROMOTION_GATE_DEFAULTS['test_trade_rate_max']:.0%}",
+            "comparison": "∈",
+            "key": "test_trade_rate",
+        },
+    ]
+    
+    cols = st.columns(3)
+    for idx, gate in enumerate(gates_info):
+        col = cols[idx % 3]
+        is_pass = gate_checks.get(gate["key"], False)
+        status_color = "#10b981" if is_pass else "#ef4444"
+        status_text = "✓ PASS" if is_pass else "✗ FAIL"
+        
+        with col:
+            st.markdown(
+                f"""
+                <div style="border: 2px solid {status_color}; border-radius: 8px; padding: 16px; background-color: {'rgba(16,185,129,0.05)' if is_pass else 'rgba(239,68,68,0.05)'};">
+                    <div style="font-weight: bold; color: #1f2937; margin-bottom: 8px;">{gate['name']}</div>
+                    <div style="font-size: 24px; font-weight: bold; color: {status_color}; margin-bottom: 4px;">
+                        {format(gate["value"], gate["format"]) if isinstance(gate["value"], (int, float)) and not np.isnan(gate["value"]) and np.isfinite(gate["value"]) else "N/A"}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280;">
+                        Threshold: {gate["comparison"]} {gate["threshold"]}
+                    </div>
+                    <div style="font-size: 12px; font-weight: bold; color: {status_color}; margin-top: 8px;">
+                        {status_text}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+
 def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") -> None:
     st.header(f"Experiments - {ticker.upper()}")
     st.caption("Run multi-seed SAC (continuous) sweeps and rank configurations on validation performance.")
@@ -2025,25 +2183,41 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") 
         leaderboard = leaderboard[_ticker_match_mask(leaderboard["ticker"], ticker_key=ticker)].copy()
     st.subheader("1) Leaderboard")
     st.dataframe(leaderboard, width="stretch")
+    
+    render_trade_rate_histogram(leaderboard, run_label=leaderboard.iloc[0].get("run_label", "") if len(leaderboard) > 0 else "")
 
     if len(leaderboard):
         st.subheader("2) Best Run Snapshot")
         best = leaderboard.iloc[0]
         c1, c2, c3 = st.columns(3)
         c1.metric("Best ranking score", f"{best['ranking_score']:.4f}")
-        c2.metric("Best val actionable acc", f"{best['val_actionable_accuracy'] * 100:.2f}%")
+        test_actionable = best.get('test_actionable_accuracy', 0.0)
+        c2.metric(
+            "Best test actionable acc",
+            f"{test_actionable * 100:.2f}%",
+            delta=f"{(test_actionable - PROMOTION_GATE_DEFAULTS['min_test_actionable']) * 100:.2f}%",
+            delta_color="normal"
+        )
         c3.metric("Best test cumulative return", f"{best['test_cumulative_signal_return'] * 100:.2f}%")
 
         # Risk-adjusted metrics row
         r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Val Sharpe", f"{best.get('val_sharpe_ratio', 0):.2f}")
-        r2.metric("Test Sharpe", f"{best.get('test_sharpe_ratio', 0):.2f}")
+        val_sharpe = best.get('val_sharpe_ratio', 0)
+        test_sharpe = best.get('test_sharpe_ratio', 0)
+        r1.metric("Val Sharpe", f"{val_sharpe:.2f}")
+        r2.metric("Test Sharpe", f"{test_sharpe:.2f}")
         r3.metric("Val Max DD", f"{best.get('val_max_drawdown', 0) * 100:.2f}%")
         r4.metric("Test Max DD", f"{best.get('test_max_drawdown', 0) * 100:.2f}%")
 
         if "test_return_cv_by_config" in leaderboard.columns:
             cv_col, risk_col = st.columns(2)
-            cv_col.metric("Config Test Return CV", f"{float(best.get('test_return_cv_by_config', 0.0)):.2f}")
+            config_cv = float(best.get('test_return_cv_by_config', 0.0))
+            cv_col.metric(
+                "Config Test Return CV",
+                f"{config_cv:.2f}",
+                delta=f"{(PROMOTION_GATE_DEFAULTS['max_test_cv'] - config_cv):.2f}" if np.isfinite(config_cv) else "N/A",
+                delta_color="inverse" if np.isfinite(config_cv) else "off"
+            )
             risk_col.metric(
                 "High CV Risk",
                 "YES" if int(float(best.get("high_return_cv_risk", 0))) == 1 else "NO",
@@ -2056,38 +2230,7 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") 
         else:
             st.error("FAIL: Best run does not satisfy all promotion gates.")
 
-        gate_values = gate_eval["values"]
-        gate_checks = gate_eval["checks"]
-        gate_table = pd.DataFrame(
-            [
-                {
-                    "gate": "test_actionable_accuracy >= 0.53",
-                    "value": f"{gate_values['test_actionable']:.4f}",
-                    "status": "PASS" if gate_checks["test_actionable"] else "FAIL",
-                },
-                {
-                    "gate": "test_trade_win_rate >= 0.52",
-                    "value": f"{gate_values['test_win_rate']:.4f}",
-                    "status": "PASS" if gate_checks["test_win_rate"] else "FAIL",
-                },
-                {
-                    "gate": "test_alpha_vs_qqq >= 0.00",
-                    "value": f"{gate_values['test_alpha']:.4f}",
-                    "status": "PASS" if gate_checks["test_alpha"] else "FAIL",
-                },
-                {
-                    "gate": "|val_actionable - test_actionable| <= 0.05",
-                    "value": f"{gate_values['val_test_gap']:.4f}",
-                    "status": "PASS" if gate_checks["val_test_gap"] else "FAIL",
-                },
-                {
-                    "gate": "test_return_cv_by_config < 1.0",
-                    "value": "inf" if not np.isfinite(gate_values["test_cv"]) else f"{gate_values['test_cv']:.4f}",
-                    "status": "PASS" if gate_checks["test_cv"] else "FAIL",
-                },
-            ]
-        )
-        st.dataframe(gate_table, width="stretch", hide_index=True)
+        render_promotion_gate_cards(gate_eval)
 
     # Leaderboard Performance Charts
     if len(leaderboard) > 1:
@@ -2169,7 +2312,26 @@ def render_experiments_page(ticker: str = DEFAULT_TICKER, interval: str = "1d") 
             )
             zero_line_y = alt.Chart(pd.DataFrame({"zero": [0]})).mark_rule(color="#f43f5e", strokeDash=[4, 4]).encode(y="zero:Q")
             zero_line_x = alt.Chart(pd.DataFrame({"zero": [0]})).mark_rule(color="#f43f5e", strokeDash=[4, 4]).encode(x="zero:Q")
-            st.altair_chart((scatter + zero_line_y + zero_line_x).interactive(), width="stretch")
+            
+            # Add y=x diagonal to show perfect generalization (val=test)
+            if len(leaderboard) > 0:
+                val_min = leaderboard["val_sharpe_ratio"].min()
+                val_max = leaderboard["val_sharpe_ratio"].max()
+                test_min = leaderboard["test_sharpe_ratio"].min()
+                test_max = leaderboard["test_sharpe_ratio"].max()
+                diag_min = min(val_min, test_min)
+                diag_max = max(val_max, test_max)
+                
+                diagonal_line = alt.Chart(pd.DataFrame({
+                    "x": [diag_min, diag_max],
+                    "y": [diag_min, diag_max]
+                })).mark_line(color="#9ca3af", strokeDash=[4, 4], size=2).encode(
+                    x=alt.X("x:Q"),
+                    y=alt.Y("y:Q")
+                )
+                st.altair_chart((scatter + zero_line_y + zero_line_x + diagonal_line).interactive(), width="stretch")
+            else:
+                st.altair_chart((scatter + zero_line_y + zero_line_x).interactive(), width="stretch")
 
     if reward_leaderboard_path.exists():
         reward_leaderboard = pd.read_csv(reward_leaderboard_path)
