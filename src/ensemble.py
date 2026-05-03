@@ -68,7 +68,7 @@ class SparseEnsemble:
     def ensemble_predict(self, observation: np.ndarray, method: str = "voting") -> Tuple[int, float]:
         """
         Args:
-            observation: Current market state
+            observation: Current market state (will be padded/trimmed per model)
             method: "voting" (majority) | "weighted" (by Sharpe)
         Returns:
             action: 0 (Hold), 1 (Buy)
@@ -84,23 +84,35 @@ class SparseEnsemble:
             seed = int(info["seed"])
             model = self.models[seed]
             
+            # Pad or trim observation to match this model's expected shape
+            model_obs_shape = model.observation_space.shape[0]
+            if observation.shape[0] < model_obs_shape:
+                # Pad with zeros
+                padded_obs = np.concatenate([observation, np.zeros(model_obs_shape - observation.shape[0], dtype=np.float32)])
+            elif observation.shape[0] > model_obs_shape:
+                # Trim
+                padded_obs = observation[:model_obs_shape]
+            else:
+                padded_obs = observation
+            
             # Predict (deterministic=True is standard for evaluation)
-            action, _ = model.predict(observation, deterministic=True)
-            # SAC outputs a continuous value in (-1, 1). Match the env's binary_actions
-            # binarization: target_weight = 1.0 if raw > 0.0 else 0.0
+            action, _ = model.predict(padded_obs, deterministic=True)
+            # SAC outputs a continuous value in (-1, 1). 
+            # Convert to binary action: 1 if positive (indicates long), 0 if negative/hold
             raw = action.item() if isinstance(action, np.ndarray) else float(action)
-            action_val = 1 if raw > 0.0 else 0
+            action_val = 1 if raw > 0.0 else 0  # Back to 0.0, let majority vote decide
             votes.append(action_val)
             
             # For weighted voting
             weights.append(float(info[self.ranking_metric]))
             
         if method == "voting":
-            # Majority vote
+            # Majority vote: require 3+ out of 5 models to agree (>50%)
             vote_counts = {0: 0, 1: 0}
             for v in votes:
                 vote_counts[v] += 1
-                
+            
+            # Only signal if we have >50% agreement; otherwise hold (0)
             winning_action = 1 if vote_counts[1] > vote_counts[0] else 0
             confidence = vote_counts[winning_action] / len(votes)
             return winning_action, confidence
