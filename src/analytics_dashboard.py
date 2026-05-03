@@ -1177,6 +1177,151 @@ def render_theoretical_headroom(enriched: pd.DataFrame) -> None:
     c3.metric("Oracle-vs-Model Return Gap", f"{return_headroom * 100:.2f}%")
 
 
+def render_confusion_heatmap(conf: pd.DataFrame) -> None:
+    """Renders a normalized confusion matrix as an Altair heatmap."""
+    conf_melted = conf.reset_index().melt(id_vars="True", var_name="Predicted", value_name="count")
+    
+    # Normalize by row (True class) to show Recall distribution
+    conf_melted["row_total"] = conf_melted.groupby("True")["count"].transform("sum")
+    conf_melted["percentage"] = (conf_melted["count"] / conf_melted["row_total"]).fillna(0)
+    
+    # Label: count (percentage)
+    conf_melted["label"] = conf_melted.apply(
+        lambda r: f"{int(r['count'])}\n({r['percentage']:.0%})" if r["row_total"] > 0 else "0", 
+        axis=1
+    )
+    
+    sort_order = [ACTION_LABELS[0], ACTION_LABELS[1], ACTION_LABELS[2]]
+    base = alt.Chart(conf_melted).encode(
+        x=alt.X("Predicted:N", sort=sort_order, title="Predicted Action"),
+        y=alt.Y("True:N", sort=sort_order, title="True Signal")
+    )
+    
+    heatmap = base.mark_rect().encode(
+        color=alt.Color(
+            "percentage:Q", 
+            scale=alt.Scale(scheme="blues"), 
+            legend=alt.Legend(title="Recall %", format=".0%")
+        ),
+        tooltip=[
+            "True:N", 
+            "Predicted:N", 
+            alt.Tooltip("count:Q", title="Absolute Count"),
+            alt.Tooltip("percentage:Q", title="Recall %", format=".1%")
+        ]
+    )
+    
+    text = base.mark_text(fontSize=13, fontWeight="bold", lineBreak="\n").encode(
+        text="label:N",
+        color=alt.condition(
+            alt.datum.percentage > 0.5,
+            alt.value("white"),
+            alt.value("black")
+        )
+    )
+    
+    chart = (heatmap + text).properties(
+        title="Normalized Confusion Matrix (Recall)",
+        height=300
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
+def render_roc_curves(enriched: pd.DataFrame) -> None:
+    """Renders multi-class ROC curves using Model Skill (confidence) or Oracle (returns)."""
+    try:
+        from sklearn.metrics import roc_curve, auc
+    except ImportError:
+        st.warning("scikit-learn required for ROC curves")
+        return
+
+    # Determine if we have "Skill" data (confidence) or just "Oracle" data (returns)
+    has_confidence = "confidence" in enriched.columns
+    
+    if has_confidence:
+        # Skill-based scores: How well does model certainty map to reality?
+        # We use (action == k) * confidence to score each class.
+        scores = {
+            ACTION_LABELS[1]: np.where(enriched["action"] == 1, enriched["confidence"], 0.0),
+            ACTION_LABELS[2]: np.where(enriched["action"] == 2, enriched["confidence"], 0.0),
+            ACTION_LABELS[0]: np.where(enriched["action"] == 0, enriched["confidence"], 0.0)
+        }
+        title_prefix = "Model Skill"
+    else:
+        # Oracle-based scores: Theoretical ceiling
+        scores = {
+            ACTION_LABELS[1]: enriched["horizon_return"],
+            ACTION_LABELS[2]: -enriched["horizon_return"],
+            ACTION_LABELS[0]: -(enriched["horizon_return"].abs())
+        }
+        title_prefix = "Theoretical Oracle"
+    
+    roc_data = []
+    labels_with_auc = []
+    actual_colors = []
+    color_map = {
+        ACTION_LABELS[0]: "#94a3b8",
+        ACTION_LABELS[1]: "#10b981",
+        ACTION_LABELS[2]: "#ef4444"
+    }
+
+    for k in range(3):
+        label = ACTION_LABELS[k]
+        y_true = (enriched["true_signal"] == k).astype(int)
+        score = scores[label]
+        
+        if len(np.unique(y_true)) < 2:
+            continue
+            
+        fpr, tpr, _ = roc_curve(y_true, score)
+        roc_auc = auc(fpr, tpr)
+        
+        legend_label = f"{label} (AUC={roc_auc:.2f})"
+        labels_with_auc.append(legend_label)
+        actual_colors.append(color_map[label])
+        
+        df = pd.DataFrame({
+            "fpr": fpr,
+            "tpr": tpr,
+            "class_label": legend_label
+        })
+        roc_data.append(df)
+        
+    if not roc_data:
+        st.info("Insufficient signal diversity to compute ROC curves.")
+        return
+        
+    roc_df = pd.concat(roc_data)
+    
+    line_chart = alt.Chart(roc_df).mark_line(strokeWidth=2.5).encode(
+        x=alt.X("fpr:Q", title="False Positive Rate", axis=alt.Axis(format=".0%")),
+        y=alt.Y("tpr:Q", title="True Positive Rate", axis=alt.Axis(format=".0%")),
+        color=alt.Color(
+            "class_label:N", 
+            title="Class",
+            scale=alt.Scale(
+                domain=labels_with_auc,
+                range=actual_colors
+            )
+        ),
+        tooltip=[
+            alt.Tooltip("class_label:N", title="Class"),
+            alt.Tooltip("fpr:Q", title="FPR", format=".1%"),
+            alt.Tooltip("tpr:Q", title="TPR", format=".1%")
+        ]
+    )
+    
+    diagonal = alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]})).mark_line(
+        color="#9ca3af", strokeDash=[4, 4], opacity=0.5
+    ).encode(x="x:Q", y="y:Q")
+    
+    chart = (line_chart + diagonal).properties(
+        title=f"One-vs-Rest ROC Curves ({title_prefix})",
+        height=300
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
 def render_metrics(enriched: pd.DataFrame) -> None:
     metrics = compute_metrics(enriched)
     total_pnl, pnl_return = compute_pnl_summary(enriched)
@@ -1645,8 +1790,11 @@ def render_signal_analytics_page(
     render_theoretical_headroom(enriched_view)
 
     st.subheader("4) Classification Quality")
-    st.subheader("Confusion matrix (true signal vs predicted action)")
-    st.dataframe(conf, width="stretch")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        render_confusion_heatmap(conf)
+    with col2:
+        render_roc_curves(enriched_view)
 
     st.subheader("5) Action Mix and P&L")
     st.write("Action distribution and P&L contribution by action")
@@ -1707,28 +1855,6 @@ def render_signal_analytics_page(
     hline = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#94a3b8", strokeDash=[4, 4]).encode(y="y:Q")
 
     st.altair_chart((scatter + vline + hline).interactive(), width="stretch")
-
-    # Add P&L contribution bar chart
-    st.caption("PnL Contribution by Action (visualized from table above)")
-    pnl_chart = (
-        alt.Chart(action_distribution)
-        .mark_bar()
-        .encode(
-            x=alt.X("action:N", title="Action"),
-            y=alt.Y("total_pnl:Q", title="Total P&L Contribution"),
-            color=alt.Color(
-                "action:N",
-                scale=alt.Scale(
-                    domain=[ACTION_LABELS[0], ACTION_LABELS[1], ACTION_LABELS[2]],
-                    range=["#94a3b8", "#10b981", "#ef4444"],
-                ),
-                legend=None
-            ),
-            tooltip=["action:N", alt.Tooltip("total_pnl:Q", format=".2f"), "count:Q"]
-        )
-        .properties(height=200)
-    )
-    st.altair_chart(pnl_chart, width="stretch")
 
     st.subheader("7) Detailed Signal Log")
     log_cols = [
