@@ -1,0 +1,19 @@
+{
+  "ticker": "NVDA",
+  "status": "complete",
+  "bars": 427,
+  "buy_count": 427,
+  "hold_count": 0,
+  "exit_signal_count": 0,
+  "buy_rate_pct": 100.0,
+  "hold_rate_pct": 0.0,
+  "exit_signal_rate_pct": 0.0,
+  "avg_buy_vote_share": 1.0,
+  "active_seeds": [
+    7,
+    13
+  ],
+  "include_news": false,
+  "use_stationary_features": true,
+  "output_csv": "data\\audit\\exit_signal_sweep\\nvda_exit_audit.csv"
+}

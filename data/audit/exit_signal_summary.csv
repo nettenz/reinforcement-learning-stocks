@@ -1,0 +1,3 @@
+ticker,bars,exit_signal_rate_pct,exit_signal_count,avg_confidence,high_confidence_rate_pct,buy_rate_pct,hold_rate_pct,exit_rate_pct,file
+AMD,427,7.03,30,0.9578,91.57,91.57,1.41,7.03,amd_exit_audit.csv
+NVDA,427,0.0,0,1.0,100.0,100.0,0.0,0.0,nvda_exit_audit.csv

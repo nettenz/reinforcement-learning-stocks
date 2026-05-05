@@ -1,0 +1,19 @@
+{
+  "ticker": "AMD",
+  "status": "complete",
+  "bars": 427,
+  "buy_count": 391,
+  "hold_count": 6,
+  "exit_signal_count": 30,
+  "buy_rate_pct": 91.57,
+  "hold_rate_pct": 1.41,
+  "exit_signal_rate_pct": 7.03,
+  "avg_buy_vote_share": 0.9578,
+  "active_seeds": [
+    13,
+    7
+  ],
+  "include_news": false,
+  "use_stationary_features": true,
+  "output_csv": "data\\audit\\exit_signal_sweep\\amd_exit_audit.csv"
+}
