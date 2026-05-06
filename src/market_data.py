@@ -59,6 +59,7 @@ TICKER_PRESETS = {
     "intc": ("INTC",),
     "amzn": ("AMZN",),
     "tsla": ("TSLA",),
+    "mu": ("MU",),
 }
 DEFAULT_TICKER = "nvda"
 
