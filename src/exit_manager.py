@@ -1,77 +1,158 @@
 from __future__ import annotations
 
-import math
 from typing import Any, Mapping
 
 
-DEFAULT_EXIT_PARAMS: dict[str, dict[str, float | int]] = {
-    "confidence": {"threshold": 0.60, "n_bars": 3},
+_VALID_RULES = {"confidence", "trailing_stop", "profit_take", "time", "composite"}
+
+_DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
+    "confidence":    {"threshold": 0.67, "n_bars": 1},
     "trailing_stop": {"stop_pct": 0.05},
-    "time": {"max_bars": 20},
+    "profit_take":   {"threshold": 0.03},
+    "time":          {"max_bars": 20},
+    "composite":     {"rules": []},
 }
 
 
 class ExitManager:
-    """Rule-based exit layer for buy/hold ensemble inference."""
+    """
+    Rule-based exit layer applied post-inference over ensemble buy/hold signals.
 
-    def __init__(self, rule: str = "confidence", params: Mapping[str, Any] | None = None):
-        normalized_rule = str(rule).strip().lower()
-        if normalized_rule not in DEFAULT_EXIT_PARAMS:
+    Supported rules: confidence, trailing_stop, profit_take, time, composite.
+    All state lives in instance variables and is cleared by reset().
+    """
+
+    def __init__(self, rule: str, params: Mapping[str, Any] | None = None) -> None:
+        normalized = str(rule).strip().lower()
+        if normalized not in _VALID_RULES:
             raise ValueError(
-                f"Unsupported exit rule '{rule}'. Expected one of: {list(DEFAULT_EXIT_PARAMS)}"
+                f"Unknown exit rule '{rule}'. Valid: {sorted(_VALID_RULES)}"
             )
-
-        self.rule = normalized_rule
+        self.rule = normalized
         self.params: dict[str, Any] = {
-            **DEFAULT_EXIT_PARAMS[self.rule],
+            **_DEFAULT_PARAMS[self.rule],
             **(dict(params) if params is not None else {}),
         }
+
+        # Build sub-managers eagerly so bad rule names raise at __init__ time.
+        if self.rule == "composite":
+            self._sub_managers: list[ExitManager] = [
+                ExitManager(r["rule"], r["params"])
+                for r in self.params.get("rules", [])
+            ]
+        else:
+            self._sub_managers = []
+
         self.reset()
 
-    def reset(self) -> None:
-        """Reset all rule state, typically between positions or sessions."""
-        self._low_confidence_streak = 0
-        self._peak_unrealized_pnl = 0.0
-        self._prev_in_position = False
+    # ------------------------------------------------------------------
+    # State management
+    # ------------------------------------------------------------------
 
-    def should_exit(self, position_state: Mapping[str, Any], confidence: float) -> bool:
+    def reset(self) -> None:
+        """Clear all per-position state. Call when a new position opens."""
+        self._peak_pnl_pct: float = 0.0
+        self._confidence_streak: int = 0
+        for sub in self._sub_managers:
+            sub.reset()
+
+    def update_peak(self, unrealized_pnl_pct: float) -> None:
+        """Update the running peak unrealized P&L. Floor is 0.0."""
+        self._peak_pnl_pct = max(self._peak_pnl_pct, unrealized_pnl_pct, 0.0)
+
+    # ------------------------------------------------------------------
+    # Core decision
+    # ------------------------------------------------------------------
+
+    def should_exit(
+        self,
+        position_state: Mapping[str, Any],
+        confidence: float,
+    ) -> tuple[bool, str]:
         """
-        Return True when the configured exit rule is triggered.
+        Evaluate exit rule for the current bar.
 
         position_state keys:
-            in_position (bool): whether a position is currently open
-            unrealized_pnl (float): current unrealized pnl ratio (e.g. 0.03 = +3%)
-            time_in_position (int): bars since position entry
-        """
-        in_position = bool(position_state.get("in_position", False))
-        if not in_position:
-            self._low_confidence_streak = 0
-            self._peak_unrealized_pnl = 0.0
-            self._prev_in_position = False
-            return False
+            shares_held (float): current shares held; <= 0 means no position.
+            entry_price (float): price at position open.
+            current_price (float): current bar price.
+            unrealized_pnl_pct (float): (current - entry) / entry.
+            peak_pnl_pct (float): caller-provided running peak (informational only).
+            bars_held (int): bars since entry.
 
-        if not self._prev_in_position:
-            self._low_confidence_streak = 0
-            self._peak_unrealized_pnl = 0.0
-            self._prev_in_position = True
+        confidence: ensemble vote_share in [0.5, 1.0].
+
+        Returns:
+            (exit_signal, triggered_rule)  — triggered_rule is '' when no exit.
+        """
+        shares_held = float(position_state.get("shares_held", 0.0))
+        if shares_held <= 0:
+            return False, ""
+
+        unrealized_pnl_pct = float(position_state.get("unrealized_pnl_pct", 0.0))
+        bars_held = int(position_state.get("bars_held", 0))
+
+        # Maintain internal peak every bar, regardless of which rule is active.
+        self.update_peak(unrealized_pnl_pct)
 
         if self.rule == "confidence":
-            threshold = float(self.params["threshold"])
-            n_bars = int(self.params["n_bars"])
-            self._low_confidence_streak = (
-                self._low_confidence_streak + 1 if confidence < threshold else 0
-            )
-            return self._low_confidence_streak >= n_bars
+            return self._check_confidence(confidence)
 
         if self.rule == "trailing_stop":
-            stop_pct = float(self.params["stop_pct"])
-            unrealized_pnl = float(position_state.get("unrealized_pnl", 0.0))
-            self._peak_unrealized_pnl = max(self._peak_unrealized_pnl, unrealized_pnl, 0.0)
-            drawdown_from_peak = self._peak_unrealized_pnl - unrealized_pnl
-            return drawdown_from_peak > stop_pct or math.isclose(
-                drawdown_from_peak, stop_pct, rel_tol=0.0, abs_tol=1e-12
-            )
+            return self._check_trailing_stop(unrealized_pnl_pct)
 
+        if self.rule == "profit_take":
+            return self._check_profit_take(unrealized_pnl_pct)
+
+        if self.rule == "time":
+            return self._check_time(bars_held)
+
+        if self.rule == "composite":
+            return self._check_composite(position_state, confidence)
+
+        return False, ""  # unreachable
+
+    # ------------------------------------------------------------------
+    # Per-rule helpers
+    # ------------------------------------------------------------------
+
+    def _check_confidence(self, confidence: float) -> tuple[bool, str]:
+        threshold = float(self.params["threshold"])
+        n_bars = int(self.params["n_bars"])
+        if confidence < threshold:
+            self._confidence_streak += 1
+        else:
+            self._confidence_streak = 0
+        if self._confidence_streak >= n_bars:
+            return True, "confidence"
+        return False, ""
+
+    def _check_trailing_stop(self, unrealized_pnl_pct: float) -> tuple[bool, str]:
+        stop_pct = float(self.params["stop_pct"])
+        drawdown = self._peak_pnl_pct - unrealized_pnl_pct
+        if drawdown >= stop_pct:
+            return True, "trailing_stop"
+        return False, ""
+
+    def _check_profit_take(self, unrealized_pnl_pct: float) -> tuple[bool, str]:
+        threshold = float(self.params["threshold"])
+        if unrealized_pnl_pct >= threshold:
+            return True, "profit_take"
+        return False, ""
+
+    def _check_time(self, bars_held: int) -> tuple[bool, str]:
         max_bars = int(self.params["max_bars"])
-        time_in_position = int(position_state.get("time_in_position", 0))
-        return time_in_position >= max_bars
+        if bars_held >= max_bars:
+            return True, "time"
+        return False, ""
+
+    def _check_composite(
+        self,
+        position_state: Mapping[str, Any],
+        confidence: float,
+    ) -> tuple[bool, str]:
+        for sub in self._sub_managers:
+            fired, rule_name = sub.should_exit(position_state, confidence)
+            if fired:
+                return True, rule_name
+        return False, ""

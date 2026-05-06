@@ -1,27 +1,36 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 from stable_baselines3 import SAC
 import time
+
+if TYPE_CHECKING:
+    from src.exit_manager import ExitManager
 
 class SparseEnsemble:
     """
     Multi-seed ensemble for Fork B Option 2 policies.
     Loads models based on a leaderboard CSV to automatically filter by trades and rank by Sharpe.
     """
-    
-    def __init__(self, leaderboard_csv_path: str, ranking_metric: str = "test_sharpe_ratio"):
+
+    def __init__(
+        self,
+        leaderboard_csv_path: str,
+        ranking_metric: str = "test_sharpe_ratio",
+        exit_manager: Optional["ExitManager"] = None,
+    ):
         self.leaderboard_path = Path(leaderboard_csv_path)
         self.ranking_metric = ranking_metric
         self.leaderboard = pd.read_csv(self.leaderboard_path)
-        
+        self.exit_manager = exit_manager
+
         # Verify required columns exist
         required_cols = ["model_path", "test_trade_count", ranking_metric]
         for col in required_cols:
             if col not in self.leaderboard.columns:
                 raise ValueError(f"Leaderboard CSV missing required column: {col}")
-                
+
         self.active_seeds_df = self.leaderboard.copy()
         self.models: Dict[str, SAC] = {}
         self.top_models_info = []
@@ -65,17 +74,35 @@ class SparseEnsemble:
             
         return len(self.models)
 
-    def ensemble_predict(self, observation: np.ndarray, method: str = "voting") -> Tuple[int, float]:
+    def ensemble_predict(self, observation: np.ndarray, method: str = "mean") -> Tuple[int, float]:
         """
         Args:
             observation: Current market state (will be padded/trimmed per model)
-            method: "voting" (majority) | "weighted" (by Sharpe)
+            method: "mean" (continuous avg, default) | "voting" (majority) | "weighted" (by Sharpe)
         Returns:
             action: 0 (Hold), 1 (Buy)
             confidence: 0.33 to 1.0 (fraction of ensemble agreeing or weighted probability)
+        
+        Note: Default is "mean" to avoid tie fragility in 2-seed ensembles.
         """
         if not self.models:
             raise ValueError("No models loaded. Call load_top_n_models() first.")
+
+        # Make inference deterministic by seeding common RNGs here. This
+        # stabilizes `model.predict(..., deterministic=True)` across runs
+        # and avoids ensemble tie flapping when using small ensembles.
+        try:
+            import random as _random
+            import numpy as _np
+            _random.seed(42)
+            _np.random.seed(42)
+            import torch as _torch
+            _torch.manual_seed(42)
+            if _torch.cuda.is_available():
+                _torch.cuda.manual_seed_all(42)
+        except Exception:
+            # Best-effort; don't fail inference if seeding isn't available
+            pass
             
         votes = []
         weights = []
@@ -117,6 +144,33 @@ class SparseEnsemble:
             confidence = vote_counts[winning_action] / len(votes)
             return winning_action, confidence
             
+        elif method == "mean":
+            # Average continuous model outputs and threshold the mean.
+            # This avoids tie fragility in small ensembles (e.g., 2 seeds).
+            mean_raw = float(np.mean(votes))  # votes here are the binary thresholded outputs
+            # Instead, collect raw continuous outputs
+            raws = []
+            for info in self.top_models_info:
+                seed = int(info["seed"])
+                model = self.models[seed]
+                
+                model_obs_shape = model.observation_space.shape[0]
+                if observation.shape[0] < model_obs_shape:
+                    padded_obs = np.concatenate([observation, np.zeros(model_obs_shape - observation.shape[0], dtype=np.float32)])
+                elif observation.shape[0] > model_obs_shape:
+                    padded_obs = observation[:model_obs_shape]
+                else:
+                    padded_obs = observation
+                
+                action, _ = model.predict(padded_obs, deterministic=True)
+                raw = action.item() if isinstance(action, np.ndarray) else float(action)
+                raws.append(raw)
+            
+            mean_raw = float(np.mean(raws))
+            winning_action = 1 if mean_raw > 0.0 else 0
+            confidence = float(np.mean([1.0 if r > 0.0 else 0.0 for r in raws]))
+            return winning_action, confidence
+            
         elif method == "weighted":
             # Weight votes by their Sharpe ratio (normalize weights to sum to 1)
             # Only use positive weights (shift if necessary)
@@ -138,6 +192,47 @@ class SparseEnsemble:
             
         else:
             raise ValueError(f"Unknown ensemble method: {method}")
+
+    def predict_with_exit(
+        self,
+        obs: np.ndarray,
+        position_state: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Run ensemble prediction and apply ExitManager override if set.
+
+        Args:
+            obs: raw observation vector (padded/trimmed per model internally).
+            position_state: dict with keys shares_held, entry_price, current_price,
+                unrealized_pnl_pct, peak_pnl_pct, bars_held.
+
+        Returns dict with:
+            action (int): final action — 0=exit/hold, 1=buy.
+            raw_action (int): action before exit override.
+            confidence (float): ensemble vote_share.
+            exit_fired (bool): whether ExitManager triggered.
+            exit_rule (str): name of triggered rule, or ''.
+        """
+        raw_action, confidence = self.ensemble_predict(obs, method="mean")
+        action = raw_action
+        exit_fired = False
+        exit_rule = ""
+
+        shares_held = float(position_state.get("shares_held", 0.0))
+        if shares_held > 0 and self.exit_manager is not None:
+            fired, triggered_rule = self.exit_manager.should_exit(position_state, confidence)
+            if fired:
+                action = 0
+                exit_fired = True
+                exit_rule = triggered_rule
+
+        return {
+            "action": action,
+            "raw_action": raw_action,
+            "confidence": confidence,
+            "exit_fired": exit_fired,
+            "exit_rule": exit_rule,
+        }
 
     def aggregate_metrics(self) -> Dict[str, float]:
         """Return ensemble-level metrics averaged over the loaded top-N seeds."""
