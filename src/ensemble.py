@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
-from stable_baselines3 import SAC
+from stable_baselines3 import SAC, PPO
 import time
 
 if TYPE_CHECKING:
@@ -67,8 +67,16 @@ class SparseEnsemble:
             if not model_path.exists():
                 raise FileNotFoundError(f"Model file not found: {model_path}")
             
-            # Load the SAC model
-            model = SAC.load(model_path)
+            # Determine algorithm type from leaderboard
+            is_binary = bool(row.get("binary_actions", False))
+            
+            if is_binary:
+                # PPO for Discrete(2) space
+                model = PPO.load(model_path)
+            else:
+                # SAC for continuous Box space
+                model = SAC.load(model_path)
+                
             self.models[seed] = model
             self.top_models_info.append(row)
             
@@ -124,10 +132,17 @@ class SparseEnsemble:
             
             # Predict (deterministic=True is standard for evaluation)
             action, _ = model.predict(padded_obs, deterministic=True)
-            # SAC outputs a continuous value in (-1, 1). 
-            # Convert to binary action: 1 if positive (indicates long), 0 if negative/hold
-            raw = action.item() if isinstance(action, np.ndarray) else float(action)
-            action_val = 1 if raw > 0.0 else 0  # Back to 0.0, let majority vote decide
+            
+            # Convert to binary action: 1 if buy, 0 if hold/flat
+            if isinstance(model, PPO):
+                # PPO outputs the discrete index directly (0 or 1)
+                action_val = int(action.item() if isinstance(action, np.ndarray) else action)
+            else:
+                # SAC outputs a continuous value in (-1, 1). 
+                # 1 if positive (indicates long), 0 if negative/hold
+                raw = action.item() if isinstance(action, np.ndarray) else float(action)
+                action_val = 1 if raw > 0.0 else 0
+            
             votes.append(action_val)
             
             # For weighted voting
@@ -163,12 +178,23 @@ class SparseEnsemble:
                     padded_obs = observation
                 
                 action, _ = model.predict(padded_obs, deterministic=True)
-                raw = action.item() if isinstance(action, np.ndarray) else float(action)
+                
+                if isinstance(model, PPO):
+                    # PPO discrete: map 0->0, 1->1
+                    raw = float(action.item() if isinstance(action, np.ndarray) else action)
+                else:
+                    # SAC continuous
+                    raw = action.item() if isinstance(action, np.ndarray) else float(action)
                 raws.append(raw)
             
             mean_raw = float(np.mean(raws))
-            winning_action = 1 if mean_raw > 0.0 else 0
-            confidence = float(np.mean([1.0 if r > 0.0 else 0.0 for r in raws]))
+            # Thresholding mean_raw:
+            # For PPO (0/1), > 0.5 is Buy
+            # For SAC (-1/1), > 0.0 is Buy
+            # To unify, we use the binary thresholded votes from before if possible,
+            # but here we'll use a conservative threshold.
+            winning_action = 1 if mean_raw > 0.5 else 0
+            confidence = float(np.mean([1.0 if r > 0.5 else 0.0 for r in raws]))
             return winning_action, confidence
             
         elif method == "weighted":

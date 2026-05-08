@@ -1,15 +1,15 @@
 {
   "nvda": {
     "active_seeds": [
-      7,
-      13,
-      42
+      4,
+      6,
+      8
     ],
-    "ensemble_method": "mean",
-    "top_3_mean_sharpe": 1.587,
-    "top_3_mean_val_test_gap": 0.004,
-    "production_ready": true,
-    "notes": "2/10 active. HOLD: regime shift in test period. Backtest Sharpe collapsed (2.5→0.64-0.67). Mean voting does not improve. Wait for market re-diversification before retrain."
+    "ensemble_method": "voting",
+    "top_3_mean_sharpe": 0.722,
+    "top_3_mean_val_test_gap": 0.177,
+    "production_ready": false,
+    "notes": "9/10 active. Sharpe below threshold or insufficient active seeds"
   },
   "aapl": {
     "active_seeds": [
@@ -17,7 +17,7 @@
       8,
       1
     ],
-    "ensemble_method": "mean",
+    "ensemble_method": "voting",
     "top_3_mean_sharpe": 0.178,
     "top_3_mean_val_test_gap": 0.015,
     "production_ready": "monitor",
@@ -25,13 +25,39 @@
   },
   "amd": {
     "active_seeds": [
-      13,
+      5,
+      2,
+      10
+    ],
+    "ensemble_method": "voting",
+    "top_3_mean_sharpe": 0.96,
+    "top_3_mean_val_test_gap": 0.025,
+    "production_ready": true,
+    "notes": "6/10 active. production ready"
+  },
+  "mu": {
+    "active_seeds": [
+      42,
       7
     ],
-    "ensemble_method": "mean",
-    "top_3_mean_sharpe": 1.596,
-    "top_3_mean_val_test_gap": 0.046,
+    "ensemble_method": "voting",
+    "top_3_mean_sharpe": 1.817,
+    "top_3_mean_val_test_gap": 0.051,
+    "production_ready": "monitor",
+    "notes": "4 active seeds. borderline ensemble or marginal alpha",
+    "run_label": "sweep_mu_binary_minhold_v3"
+  },
+  "amzn": {
+    "active_seeds": [
+      7,
+      13,
+      42
+    ],
+    "ensemble_method": "voting",
+    "top_3_mean_sharpe": 0.943,
+    "top_3_mean_val_test_gap": 0.011,
     "production_ready": true,
-    "notes": "2/10 active. PROMOTED: mean voting restores signal (76 trades, Sharpe 0.761, exit_rate 10.8%). Majority voting had zero trades (tie fragility). Config: profit_take_5pct exit rule."
+    "notes": "7 active seeds. production ready",
+    "run_label": "sweep_amzn_stage1_v2"
   }
 }

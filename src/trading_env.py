@@ -185,6 +185,11 @@ class TradingEnv(gym.Env):
     """
     OOP Refactored Continuous Trading Environment.
     Supports fractional sizing (-1.0 to 1.0) and maintains independent state tracking.
+
+    min_hold_bars: When > 0, enforces a minimum holding period between position flips.
+    After any executed trade, further execution is blocked for min_hold_bars steps.
+    The agent's desired action continues to be recorded normally; only execution is
+    deferred. Default=0 disables the constraint (full backward compatibility).
     """
     def __init__(
         self,
@@ -215,6 +220,7 @@ class TradingEnv(gym.Env):
         binary_actions=False,
         max_episode_steps=0,
         random_start=False,
+        min_hold_bars=0,
     ):
         super(TradingEnv, self).__init__()
         self.df = df
@@ -230,13 +236,19 @@ class TradingEnv(gym.Env):
         self.binary_actions = bool(binary_actions)
         self.reward_ignore_transaction_cost = bool(reward_ignore_transaction_cost)
         self.max_weight_delta_per_step = float(max_weight_delta_per_step)
+        self.min_hold_bars = int(min_hold_bars)
         if self.max_weight_delta_per_step < 0.0:
             raise ValueError("max_weight_delta_per_step must be >= 0.0")
         if self.max_weight_delta_per_step > 2.0:
             raise ValueError("max_weight_delta_per_step must be <= 2.0")
+        if self.min_hold_bars < 0:
+            raise ValueError("min_hold_bars must be >= 0")
         if self.execution_mode not in {"same_bar", "next_bar"}:
             raise ValueError("execution_mode must be one of: same_bar, next_bar")
         self.pending_target_weight = 0.0
+        # Cooldown counter: tracks bars elapsed since the last executed trade.
+        # Initialized to min_hold_bars so bar 0 is freely tradeable.
+        self.bars_since_last_trade = self.min_hold_bars
 
         # OOP Subsystems
         self.pm = PositionManager(
@@ -253,8 +265,13 @@ class TradingEnv(gym.Env):
             sharpe_scale=reward_sharpe_scale
         )
 
-        # Continuous Action Space: [-1.0 (Full Short), 1.0 (Full Long)]
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
+        # Action Space: Discrete(2) for binary_actions mode, else continuous Box
+        # binary_actions=True → Discrete(2): 0=flat/cash, 1=full long
+        # binary_actions=False → Box(-1, 1): continuous fractional sizing
+        if self.binary_actions:
+            self.action_space = spaces.Discrete(2)
+        else:
+            self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
 
         # Observation Space Configuration
         if market_feature_columns is None:
@@ -320,6 +337,8 @@ class TradingEnv(gym.Env):
         self.pending_target_weight = 0.0
         self.pm.reset()
         self.re.reset()
+        # Reset cooldown: start ready-to-trade (counter at min_hold_bars means no cooldown active)
+        self.bars_since_last_trade = self.min_hold_bars
         
         current_price = max(float(self.df.loc[self.current_step, self.price_column]), 1e-8)
         self.buy_hold_shares = self.pm.initial_balance / current_price
@@ -346,18 +365,21 @@ class TradingEnv(gym.Env):
         else:
             raw_action = action_array.reshape(-1)[0]
 
-        # Backward-compat for legacy PPO discrete policies:
-        # 0=Hold, 1=Buy(Long), 2=Sell(Short) -> map into continuous target weights.
-        if isinstance(raw_action, (int, np.integer)) and raw_action in (0, 1, 2):
+        if self.binary_actions:
+            # Discrete(2) space: 0=flat/cash, 1=full long.
+            # Integer actions are passed directly; float values from evaluation
+            # rollouts are rounded to the nearest integer.
+            discrete_action = int(round(float(raw_action)))
+            discrete_action = max(0, min(1, discrete_action))
+            desired_target_weight = 1.0 if discrete_action == 1 else 0.0
+        elif isinstance(raw_action, (int, np.integer)) and raw_action in (0, 1, 2):
+            # Backward-compat for legacy PPO discrete policies:
+            # 0=Hold, 1=Buy(Long), 2=Sell(Short) -> map into continuous target weights.
             desired_target_weight = {0: 0.0, 1: 1.0, 2: -1.0}[int(raw_action)]
         else:
             desired_target_weight = float(raw_action)
-
-        # Option 1 simplification flags
-        if self.binary_actions:
-            desired_target_weight = 1.0 if desired_target_weight > 0.0 else 0.0
-        elif self.long_only:
-            desired_target_weight = max(0.0, desired_target_weight)
+            if self.long_only:
+                desired_target_weight = max(0.0, desired_target_weight)
 
         if self.execution_mode == "next_bar":
             execution_target_weight = self.pending_target_weight
@@ -373,6 +395,14 @@ class TradingEnv(gym.Env):
             pre_trade_weight,
             execution_target_weight,
         )
+
+        # Minimum hold period: if cooldown is active, lock execution to the current position.
+        # The agent's desired action (pending buffer) is unaffected — it continues to accumulate.
+        # When cooldown expires, the next step executes the most recently desired weight.
+        cooldown_active = self.min_hold_bars > 0 and self.bars_since_last_trade < self.min_hold_bars
+        if cooldown_active:
+            execution_target_weight = pre_trade_weight
+
         prev_net_worth = float(self.pm.net_worth)
         
         prev_step = max(0, self.current_step - 1)
@@ -384,6 +414,12 @@ class TradingEnv(gym.Env):
             execution_target_weight,
             current_price,
         )
+
+        # Update cooldown counter: reset on any executed trade, increment otherwise.
+        if trade_executed:
+            self.bars_since_last_trade = 0
+        else:
+            self.bars_since_last_trade = min(self.bars_since_last_trade + 1, self.min_hold_bars)
 
         # Reward attribution uses prior exposure for this bar's realized return.
         # This avoids crediting a newly opened position for a return that occurred before the trade.
@@ -440,6 +476,9 @@ class TradingEnv(gym.Env):
             "reward_risk_metric": risk_metric,
             "execution_mode": self.execution_mode,
             "max_weight_delta_per_step": self.max_weight_delta_per_step,
+            "min_hold_bars": self.min_hold_bars,
+            "cooldown_active": int(cooldown_active),
+            "bars_since_last_trade": self.bars_since_last_trade,
             "execution_weight_delta_limited": int(weight_delta_limited),
             "execution_target_weight": execution_target_weight,
             "execution_target_weight_pre_cap": execution_target_weight_pre_cap,

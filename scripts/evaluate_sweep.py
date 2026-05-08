@@ -151,7 +151,23 @@ def main():
     parser.add_argument("--ticker",  default=None, help="Filter by ticker (e.g. NVDA)")
     parser.add_argument("--top",     type=int, default=10, help="How many rows to show in ranked table (default 10)")
     parser.add_argument("--promote", action="store_true", help="Run generate_ensemble_config.py for the champion after evaluation")
+    parser.add_argument("--g6-min-trade-rate", type=float, default=None, help="Override G6 lower bound for trade rate (default: 0.40). Use 0.60 for bull-regime tickers.")
+    parser.add_argument("--g6-max-trade-rate", type=float, default=None, help="Override G6 upper bound for trade rate (default: 0.80). Use 1.00 for high-conviction long-biased strategies.")
     args = parser.parse_args()
+
+    # Apply G6 threshold overrides before gate evaluation
+    if args.g6_min_trade_rate is not None or args.g6_max_trade_rate is not None:
+        for gate in GATES:
+            if gate["id"] == 6:
+                lo = args.g6_min_trade_rate if args.g6_min_trade_rate is not None else gate["threshold"][0]
+                hi = args.g6_max_trade_rate if args.g6_max_trade_rate is not None else gate["threshold"][1]
+                gate["threshold"] = (lo, hi)
+                break
+        global TRADE_RATE_TARGET_LOW, TRADE_RATE_TARGET_HIGH
+        if args.g6_min_trade_rate is not None:
+            TRADE_RATE_TARGET_LOW = args.g6_min_trade_rate
+        if args.g6_max_trade_rate is not None:
+            TRADE_RATE_TARGET_HIGH = args.g6_max_trade_rate
 
     # ---- Load ---------------------------------------------------------------
     lb_path = Path(args.leaderboard)

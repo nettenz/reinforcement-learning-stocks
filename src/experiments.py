@@ -32,7 +32,7 @@ from urllib import request
 
 import numpy as np
 import pandas as pd
-from stable_baselines3 import SAC
+from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, BarColumn, TextColumn
 from dotenv import load_dotenv
@@ -328,8 +328,11 @@ def _attach_config_stability_metrics(leaderboard: pd.DataFrame) -> pd.DataFrame:
         "reward_hold_penalty_scale",
         "reward_drawdown_penalty_scale",
         "reward_action_bonus_scale",
+        "reward_turnover_penalty_scale",
         "reward_clip",
         "reward_ignore_transaction_cost",
+        "binary_actions",
+        "min_hold_bars",
     ]
 
     grouped = (
@@ -638,6 +641,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         "reward_pnl_scale": args.reward_pnl_scale,
         "long_only": args.long_only,
         "binary_actions": args.binary_actions,
+        "min_hold_bars": args.min_hold_bars,
         "max_episode_steps": args.max_episode_steps,
         "random_start": args.random_start,
     }
@@ -692,19 +696,33 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         else:
             env_train = TradingEnv(train_df, **env_kwargs_run)
             
-        model_ent_coef = ent_coef if ent_coef > 0.0 else "auto"
-        model = SAC(
-            "MlpPolicy",
-            env_train,
-            verbose=0,
-            seed=seed,
-            learning_rate=lr_arg,
-            gamma=gamma,
-            ent_coef=model_ent_coef,
-            batch_size=args.batch_size,
-            buffer_size=max(100000, timesteps),  # Prevents 1,000,000 pre-allocation in System RAM
-            device=DEFAULT_DEVICE,
-        )
+        if args.binary_actions:
+            # PPO supports Discrete action spaces; SAC requires a continuous Box.
+            model = PPO(
+                "MlpPolicy",
+                env_train,
+                verbose=0,
+                seed=seed,
+                learning_rate=lr_arg,
+                gamma=gamma,
+                ent_coef=ent_coef if ent_coef > 0.0 else 0.0,
+                batch_size=args.batch_size,
+                device=DEFAULT_DEVICE,
+            )
+        else:
+            model_ent_coef = ent_coef if ent_coef > 0.0 else "auto"
+            model = SAC(
+                "MlpPolicy",
+                env_train,
+                verbose=0,
+                seed=seed,
+                learning_rate=lr_arg,
+                gamma=gamma,
+                ent_coef=model_ent_coef,
+                batch_size=args.batch_size,
+                buffer_size=max(100000, timesteps),  # Prevents 1,000,000 pre-allocation in System RAM
+                device=DEFAULT_DEVICE,
+            )
         
         callback = ProgressCallback(total_timesteps=timesteps)
         
@@ -769,6 +787,8 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "reward_turnover_penalty_scale": turnover_scale,
             "reward_clip": args.reward_clip,
             "reward_ignore_transaction_cost": int(args.reward_ignore_transaction_cost),
+            "binary_actions": int(args.binary_actions),
+            "min_hold_bars": args.min_hold_bars,
             "bars_per_year": bars_per_year,
             "val_overall_accuracy": val_metrics.overall_accuracy,
             "val_actionable_accuracy": val_metrics.actionable_accuracy,
@@ -879,6 +899,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--use-stationary-features", action="store_true", help="Use log returns and normalized technical indicators.")
     parser.add_argument("--long-only", action="store_true", help="Clip actions to [0, 1] — no short positions.")
     parser.add_argument("--binary-actions", action="store_true", help="Map actions to binary long/flat (1.0 or 0.0) — removes continuous sizing.")
+    parser.add_argument("--min-hold-bars", type=int, default=0, help="Minimum bars between executed position flips (0 = disabled). Cooldown applies after any executed trade.")
     parser.add_argument("--max-runs", type=int, default=0, help="Limit number of experiment runs (0 = all).")
     parser.add_argument("--leaderboard-path", default=str(DEFAULT_LEADERBOARD_PATH), help="CSV output path.")
     parser.add_argument("--reward-leaderboard-path", default=str(DEFAULT_REWARD_LEADERBOARD_PATH), help="Reward leaderboard CSV output path.")
