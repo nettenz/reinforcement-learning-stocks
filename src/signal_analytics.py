@@ -182,15 +182,23 @@ def simulate_agent_signals(
     model_path: str | Path,
     deterministic: bool = True,
     binary_actions: bool = False,
+    min_hold_bars: int = 0,
 ) -> pd.DataFrame:
     model, algo_type = _load_model(model_path)
+    
+    # Auto-config binary actions based on algorithm type
+    # PPO models in this repo are exclusively used for Binary mode.
+    effective_binary = True if algo_type == "ppo" else binary_actions
+    
     expected_obs_dim = _expected_observation_dim(model)
     aligned_df, include_position, market_feature_columns = _align_features_to_model(df, expected_obs_dim=expected_obs_dim)
+    
     env = TradingEnv(
         aligned_df,
         include_position_in_observation=include_position,
         market_feature_columns=market_feature_columns,
-        binary_actions=binary_actions,
+        binary_actions=effective_binary,
+        min_hold_bars=min_hold_bars,
     )
     actual_obs_dim = int(env.observation_space.shape[0])
     if actual_obs_dim != expected_obs_dim:
@@ -264,16 +272,26 @@ def simulate_ensemble_signals(
         raise ValueError(f"Ticker '{ticker}' not found in ensemble config.")
 
     t_cfg = config[ticker.lower()]
-    leaderboard_csv = ROOT_DIR / t_cfg["leaderboard_csv"]
+    lb_name = t_cfg.get("leaderboard_csv")
+    if not lb_name:
+        raise KeyError(f"Ticker '{ticker}' config is missing 'leaderboard_csv'. Please regenerate ensemble config.")
+
+    leaderboard_csv = ROOT_DIR / lb_name
     if not leaderboard_csv.exists():
         # Try relative to config path if not found relative to ROOT
-        leaderboard_csv = config_path.parent.parent / t_cfg["leaderboard_csv"]
+        leaderboard_csv = config_path.parent.parent / lb_name
         if not leaderboard_csv.exists():
              raise FileNotFoundError(f"Leaderboard CSV not found: {leaderboard_csv}")
 
     ensemble = SparseEnsemble(str(leaderboard_csv))
     ensemble.load_top_n_models(n=len(t_cfg.get("active_seeds", [3])))
     agent = EnsembleAgent(ensemble, str(config_path), ticker)
+
+    # Extract min_hold_bars from champion metadata if available
+    min_hold = 0
+    if ensemble.top_models_info:
+        # Assuming the top model's config is representative of the ensemble's training regime
+        min_hold = int(ensemble.top_models_info[0].get("min_hold_bars", 0))
 
     expected_dim = agent.expected_obs_shape[0]
     aligned_df, include_pos, market_cols = _align_features_to_model(df.copy(), expected_obs_dim=expected_dim)
@@ -285,6 +303,7 @@ def simulate_ensemble_signals(
         binary_actions=True, # Ensembles use binary threshold > 0.0
         include_position_in_observation=include_pos, 
         market_feature_columns=market_cols,
+        min_hold_bars=min_hold,
     )
     
     news_cols = env.active_news_columns

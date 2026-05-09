@@ -108,7 +108,8 @@ def main():
             "top_3_mean_val_test_gap": round(top_3_gap, 3),
             "production_ready": ready,
             "notes": f"{active_seeds_count} active seeds. {notes}",
-            "run_label": label_filter if label_filter else "N/A"
+            "run_label": label_filter if label_filter else "N/A",
+            "leaderboard_csv": str(leaderboard_path.relative_to(ROOT_DIR)) if leaderboard_path.is_relative_to(ROOT_DIR) else str(leaderboard_path)
         }
         
     with open(config_out, "w") as f:

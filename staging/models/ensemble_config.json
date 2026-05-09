@@ -1,15 +1,16 @@
 {
   "nvda": {
     "active_seeds": [
-      4,
-      6,
-      8
+      42,
+      13
     ],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.722,
-    "top_3_mean_val_test_gap": 0.177,
-    "production_ready": false,
-    "notes": "9/10 active. Sharpe below threshold or insufficient active seeds"
+    "top_3_mean_sharpe": 0.937,
+    "top_3_mean_val_test_gap": 0.004,
+    "production_ready": true,
+    "notes": "4 active seeds. production ready",
+    "run_label": "ppo_binary_retrofit_nvda",
+    "leaderboard_csv": "data\\experiment_leaderboard.csv"
   },
   "aapl": {
     "active_seeds": [
@@ -21,7 +22,8 @@
     "top_3_mean_sharpe": 0.178,
     "top_3_mean_val_test_gap": 0.015,
     "production_ready": "monitor",
-    "notes": "6/10 active. borderline ensemble or marginal alpha"
+    "notes": "6/10 active. borderline ensemble or marginal alpha",
+    "leaderboard_csv": "data/exp_2_aapl_10seed_foundation_leaderboard.csv"
   },
   "amd": {
     "active_seeds": [
@@ -33,7 +35,8 @@
     "top_3_mean_sharpe": 0.96,
     "top_3_mean_val_test_gap": 0.025,
     "production_ready": true,
-    "notes": "6/10 active. production ready"
+    "notes": "6/10 active. production ready",
+    "leaderboard_csv": "data/exp_3_amd_10seed_foundation_leaderboard.csv"
   },
   "mu": {
     "active_seeds": [
@@ -45,7 +48,8 @@
     "top_3_mean_val_test_gap": 0.051,
     "production_ready": "monitor",
     "notes": "4 active seeds. borderline ensemble or marginal alpha",
-    "run_label": "sweep_mu_binary_minhold_v3"
+    "run_label": "sweep_mu_binary_minhold_v3",
+    "leaderboard_csv": "data/experiment_leaderboard.csv"
   },
   "amzn": {
     "active_seeds": [
@@ -58,6 +62,19 @@
     "top_3_mean_val_test_gap": 0.011,
     "production_ready": true,
     "notes": "7 active seeds. production ready",
-    "run_label": "sweep_amzn_stage1_v2"
+    "run_label": "sweep_amzn_stage1_v2",
+    "leaderboard_csv": "data/experiment_leaderboard.csv"
+  },
+  "googl": {
+    "active_seeds": [
+      13
+    ],
+    "ensemble_method": "voting",
+    "top_3_mean_sharpe": 1.67,
+    "top_3_mean_val_test_gap": 0.013,
+    "production_ready": true,
+    "notes": "4 active seeds. production ready",
+    "run_label": "googl_ppo_pilot",
+    "leaderboard_csv": "data/experiment_leaderboard.csv"
   }
 }

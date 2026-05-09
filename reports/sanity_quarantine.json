@@ -1,99 +1,90 @@
 {
   "metadata": {
-    "generated_at_utc": "2026-05-08T05:00:53.055110+00:00",
+    "generated_at_utc": "2026-05-09T00:53:20.394690+00:00",
     "scanner_version": "0.2.0",
     "apply_mode": "dry-run"
   },
   "rows_to_quarantine": [
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 201,
+      "row_index": 205,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 201 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-235932Z_sweep_mu_weight_cap_v1_seed3.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 205 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-235932Z_sweep_mu_weight_cap_v1_seed3.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 202,
+      "row_index": 206,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 202 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000413Z_sweep_mu_weight_cap_v1_seed21.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 206 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000413Z_sweep_mu_weight_cap_v1_seed21.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 203,
+      "row_index": 207,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 203 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000654Z_sweep_mu_weight_cap_v1_seed42.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 207 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000654Z_sweep_mu_weight_cap_v1_seed42.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 216,
+      "row_index": 220,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 216 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234959Z_sweep_mu_entropy_stab_v1_seed21.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
-    },
-    {
-      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 227,
-      "issue_code": "missing_model_file",
-      "reason": "model_path points to a missing file.",
-      "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 227 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223434Z_sweep_mu_overtrade_fix_v3_seed7.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
-    },
-    {
-      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 228,
-      "issue_code": "missing_model_file",
-      "reason": "model_path points to a missing file.",
-      "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 228 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223920Z_sweep_mu_overtrade_fix_v3_seed42.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
-    },
-    {
-      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 229,
-      "issue_code": "missing_model_file",
-      "reason": "model_path points to a missing file.",
-      "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 229 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225013Z_sweep_mu_overtrade_fix_v3_seed13.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
-    },
-    {
-      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 230,
-      "issue_code": "missing_model_file",
-      "reason": "model_path points to a missing file.",
-      "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 230 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225337Z_sweep_mu_overtrade_fix_v3_seed42.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 220 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234959Z_sweep_mu_entropy_stab_v1_seed21.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
       "row_index": 231,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
-      "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 231 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234632Z_sweep_mu_entropy_stab_v1_seed7.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "run_label": "sweep_mu_overtrade_fix_v3",
+      "recommendation": "Delete row 231 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223434Z_sweep_mu_overtrade_fix_v3_seed7.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 266,
+      "row_index": 232,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 266 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225159Z_sweep_mu_overtrade_fix_v3_seed21.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 232 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223920Z_sweep_mu_overtrade_fix_v3_seed42.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
+    },
+    {
+      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
+      "row_index": 233,
+      "issue_code": "missing_model_file",
+      "reason": "model_path points to a missing file.",
+      "run_label": "sweep_mu_overtrade_fix_v3",
+      "recommendation": "Delete row 233 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225013Z_sweep_mu_overtrade_fix_v3_seed13.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
+    },
+    {
+      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
+      "row_index": 234,
+      "issue_code": "missing_model_file",
+      "reason": "model_path points to a missing file.",
+      "run_label": "sweep_mu_overtrade_fix_v3",
+      "recommendation": "Delete row 234 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225337Z_sweep_mu_overtrade_fix_v3_seed42.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
+    },
+    {
+      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
+      "row_index": 235,
+      "issue_code": "missing_model_file",
+      "reason": "model_path points to a missing file.",
+      "run_label": "sweep_mu_entropy_stab_v1",
+      "recommendation": "Delete row 235 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234632Z_sweep_mu_entropy_stab_v1_seed7.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
@@ -101,179 +92,179 @@
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 272 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223737Z_sweep_mu_overtrade_fix_v3_seed21.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 272 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225159Z_sweep_mu_overtrade_fix_v3_seed21.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 276,
+      "row_index": 278,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 276 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223248Z_sweep_mu_overtrade_fix_v3_seed3.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 278 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223737Z_sweep_mu_overtrade_fix_v3_seed21.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 334,
+      "row_index": 283,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 334 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-224841Z_sweep_mu_overtrade_fix_v3_seed7.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 283 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223248Z_sweep_mu_overtrade_fix_v3_seed3.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 358,
+      "row_index": 349,
+      "issue_code": "missing_model_file",
+      "reason": "model_path points to a missing file.",
+      "run_label": "sweep_mu_overtrade_fix_v3",
+      "recommendation": "Delete row 349 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-224841Z_sweep_mu_overtrade_fix_v3_seed7.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
+    },
+    {
+      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
+      "row_index": 373,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 358 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000240Z_sweep_mu_weight_cap_v1_seed13.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 373 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000240Z_sweep_mu_weight_cap_v1_seed13.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 370,
+      "row_index": 385,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 370 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223605Z_sweep_mu_overtrade_fix_v3_seed13.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 385 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223605Z_sweep_mu_overtrade_fix_v3_seed13.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 371,
+      "row_index": 386,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 371 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234500Z_sweep_mu_entropy_stab_v1_seed3.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 386 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234500Z_sweep_mu_entropy_stab_v1_seed3.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 372,
+      "row_index": 387,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 372 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-235150Z_sweep_mu_entropy_stab_v1_seed42.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 387 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-235150Z_sweep_mu_entropy_stab_v1_seed42.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 399,
+      "row_index": 414,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 399 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-224704Z_sweep_mu_overtrade_fix_v3_seed3.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 414 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-224704Z_sweep_mu_overtrade_fix_v3_seed3.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 522,
+      "row_index": 537,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 522 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234822Z_sweep_mu_entropy_stab_v1_seed13.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 537 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234822Z_sweep_mu_entropy_stab_v1_seed13.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-      "row_index": 523,
+      "row_index": 538,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 523 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000106Z_sweep_mu_weight_cap_v1_seed7.zip)",
-      "data_hash": "52242792270af715efbddd4fd9c40cd4960c99ce38c93d16af3d6d20f07cfcaf"
+      "recommendation": "Delete row 538 from experiment_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000106Z_sweep_mu_weight_cap_v1_seed7.zip)",
+      "data_hash": "fa88fe516ee937c6367c1bae6381ec3c7de1c456a16c35880dec71e62d69845a"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 181,
+      "row_index": 185,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 181 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234959Z_sweep_mu_entropy_stab_v1_seed21.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 185 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234959Z_sweep_mu_entropy_stab_v1_seed21.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 182,
+      "row_index": 186,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 182 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-235932Z_sweep_mu_weight_cap_v1_seed3.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 186 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000413Z_sweep_mu_weight_cap_v1_seed21.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 183,
+      "row_index": 187,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 183 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000654Z_sweep_mu_weight_cap_v1_seed42.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 187 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000654Z_sweep_mu_weight_cap_v1_seed42.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 184,
+      "row_index": 188,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 184 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000413Z_sweep_mu_weight_cap_v1_seed21.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
-    },
-    {
-      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 213,
-      "issue_code": "missing_model_file",
-      "reason": "model_path points to a missing file.",
-      "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 213 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225337Z_sweep_mu_overtrade_fix_v3_seed42.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 188 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-235932Z_sweep_mu_weight_cap_v1_seed3.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
       "row_index": 217,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
-      "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 217 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234632Z_sweep_mu_entropy_stab_v1_seed7.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "run_label": "sweep_mu_overtrade_fix_v3",
+      "recommendation": "Delete row 217 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225337Z_sweep_mu_overtrade_fix_v3_seed42.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
       "row_index": 221,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
-      "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 221 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223248Z_sweep_mu_overtrade_fix_v3_seed3.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "run_label": "sweep_mu_entropy_stab_v1",
+      "recommendation": "Delete row 221 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234632Z_sweep_mu_entropy_stab_v1_seed7.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 227,
+      "row_index": 225,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 227 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223737Z_sweep_mu_overtrade_fix_v3_seed21.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 225 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223248Z_sweep_mu_overtrade_fix_v3_seed3.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 228,
+      "row_index": 231,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 228 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223920Z_sweep_mu_overtrade_fix_v3_seed42.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 231 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223737Z_sweep_mu_overtrade_fix_v3_seed21.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 229,
+      "row_index": 232,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 229 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225159Z_sweep_mu_overtrade_fix_v3_seed21.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 232 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223920Z_sweep_mu_overtrade_fix_v3_seed42.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
@@ -281,89 +272,98 @@
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 233 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225013Z_sweep_mu_overtrade_fix_v3_seed13.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 233 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225159Z_sweep_mu_overtrade_fix_v3_seed21.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 238,
+      "row_index": 237,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 238 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223434Z_sweep_mu_overtrade_fix_v3_seed7.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 237 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-225013Z_sweep_mu_overtrade_fix_v3_seed13.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 277,
+      "row_index": 242,
+      "issue_code": "missing_model_file",
+      "reason": "model_path points to a missing file.",
+      "run_label": "sweep_mu_overtrade_fix_v3",
+      "recommendation": "Delete row 242 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223434Z_sweep_mu_overtrade_fix_v3_seed7.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
+    },
+    {
+      "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
+      "row_index": 282,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 277 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000106Z_sweep_mu_weight_cap_v1_seed7.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 282 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000106Z_sweep_mu_weight_cap_v1_seed7.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 344,
+      "row_index": 361,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 344 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234822Z_sweep_mu_entropy_stab_v1_seed13.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 361 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234822Z_sweep_mu_entropy_stab_v1_seed13.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 433,
+      "row_index": 473,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_weight_cap_v1",
-      "recommendation": "Delete row 433 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000240Z_sweep_mu_weight_cap_v1_seed13.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 473 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260507-000240Z_sweep_mu_weight_cap_v1_seed13.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 434,
+      "row_index": 474,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 434 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-224841Z_sweep_mu_overtrade_fix_v3_seed7.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 474 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-224841Z_sweep_mu_overtrade_fix_v3_seed7.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 460,
+      "row_index": 500,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 460 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-224704Z_sweep_mu_overtrade_fix_v3_seed3.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 500 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-224704Z_sweep_mu_overtrade_fix_v3_seed3.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 464,
+      "row_index": 504,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 464 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-235150Z_sweep_mu_entropy_stab_v1_seed42.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 504 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-235150Z_sweep_mu_entropy_stab_v1_seed42.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 465,
+      "row_index": 505,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_entropy_stab_v1",
-      "recommendation": "Delete row 465 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234500Z_sweep_mu_entropy_stab_v1_seed3.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 505 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-234500Z_sweep_mu_entropy_stab_v1_seed3.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     },
     {
       "artifact": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
-      "row_index": 471,
+      "row_index": 511,
       "issue_code": "missing_model_file",
       "reason": "model_path points to a missing file.",
       "run_label": "sweep_mu_overtrade_fix_v3",
-      "recommendation": "Delete row 471 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223605Z_sweep_mu_overtrade_fix_v3_seed13.zip)",
-      "data_hash": "29e8c3c4d2fdafdbc525b2d9cf25d9cb9bde9ee0e34bb22810cb6e1d84e13734"
+      "recommendation": "Delete row 511 from experiment_reward_leaderboard_history.csv (model not found at /Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/model_20260506-223605Z_sweep_mu_overtrade_fix_v3_seed13.zip)",
+      "data_hash": "a06db48f3a7c0b3b73832ba1798b613615c550a0123b530f7af1016c5554a55e"
     }
   ]
 }

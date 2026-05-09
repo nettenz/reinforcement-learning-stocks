@@ -48,6 +48,7 @@ def get_interval_bars_per_year(interval: str) -> int:
 
 # Ticker presets for different training scenarios
 TICKER_PRESETS = {
+    "aapl": ("AAPL",),
     "googl": ("GOOGL",),
     "nvda": ("NVDA",),
     "amd": ("AMD",),

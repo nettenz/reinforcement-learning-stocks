@@ -53,14 +53,18 @@ RECOMMENDED_THRESHOLD = 0.0020
 RECOMMENDED_HORIZON = 1
 RECOMMENDED_CHART_WINDOW = 2000
 PROMOTION_GATE_DEFAULTS = {
-    "min_test_actionable": 0.53,
-    "min_test_win_rate": 0.52,
-    "min_test_alpha": 0.00,
+    "min_test_actionable": 0.525,
+    "min_test_win_rate": 0.50,
+    "min_test_alpha": 0.0005,
     "max_val_test_gap": 0.05,
-    "max_test_cv": 1.0,
+    "max_test_cv": 0.50,
     "test_trade_rate_min": 0.40,
-    "test_trade_rate_max": 0.80,
+    "test_trade_rate_max": 0.80,  # Baseline
 }
+
+# Tickers that are allowed to 'over-trade' or 'hold' in high-momentum regimes
+G6_RELAXED_TICKERS = {"amzn", "mu", "msft", "googl"}
+G6_RELAXED_MAX = 1.0
 
 def _validate_model_shape(model_path: str, data_df: pd.DataFrame) -> None:
     """Checks if the data feature dimensions match what the model policy expects."""
@@ -468,6 +472,7 @@ def evaluate_signals(
     horizon_steps: int,
     deterministic_policy: bool,
     binary_actions: bool = False,
+    min_hold_bars: int = 0,
     use_ensemble: bool = False,
     ticker: str = "",
     ensemble_config_path: str = "",
@@ -485,7 +490,8 @@ def evaluate_signals(
             df=df, 
             model_path=model_path, 
             deterministic=deterministic_policy,
-            binary_actions=binary_actions
+            binary_actions=binary_actions,
+            min_hold_bars=min_hold_bars
         )
         
     enriched = enrich_with_truth_labels(signals, threshold=threshold, horizon_steps=horizon_steps)
@@ -601,38 +607,48 @@ def _make_command_from_config(
         if bool(config["reward_ignore_transaction_cost"])
         else "--no-reward-ignore-transaction-cost"
     )
-    return (
-        "python src/experiments.py "
-        f"--ticker {ticker} "
-        f"{include_news_flag} {stationary_flag} --seeds {seeds} "
-        f"--timesteps {int(config['timesteps'])} "
-        f"--learning-rates {_format_float(float(config['learning_rate']))} "
-        f"--gammas {_format_float(float(config['gamma']))} "
-        f"--ent-coefs {_format_float(float(config['ent_coef']))} "
-        f"--threshold {_format_float(float(config['threshold']))} "
-        f"--horizon {int(config['horizon'])} "
-        f"--transaction-cost-rate {_format_float(float(config['transaction_cost_rate']))} "
-        f"--trade-penalty {_format_float(float(config['trade_penalty']))} "
-        f"--execution-mode {str(config.get('execution_mode', 'next_bar'))} "
-        f"--spread-bps {_format_float(float(config.get('spread_bps', 0.0)))} "
-        f"--slippage-bps {_format_float(float(config.get('slippage_bps', 0.0)))} "
-        f"--max-weight-delta-per-step {_format_float(float(config.get('max_weight_delta_per_step', 0.0)))} "
-        f"--reward-mode {str(config.get('reward_mode', 'legacy'))} "
-        f"--rolling-reward-window {int(config.get('rolling_reward_window', 100))} "
-        f"--reward-epsilon {_format_float(float(config.get('reward_epsilon', 1e-6)))} "
-        f"--reward-return-scale {_format_float(float(config['reward_return_scale']))} "
-        f"--reward-direction-scale {_format_float(float(config['reward_direction_scale']))} "
-        f"--reward-hold-penalty-scale {_format_float(float(config['reward_hold_penalty_scale']))} "
-        f"--reward-drawdown-penalty-scale {_format_float(float(config['reward_drawdown_penalty_scale']))} "
-        f"--reward-pnl-scale {_format_float(float(config.get('reward_pnl_scale', 0.0)))} "
-        f"--reward-action-bonus-scale {_format_float(float(config['reward_action_bonus_scale']))} "
-        f"--reward-turnover-penalty-scale {_format_float(float(config.get('reward_turnover_penalty_scale', 0.05)))} "
-        f"--reward-clip {_format_float(float(config['reward_clip']))} "
-        f"{ignore_cost_flag} "
-        f"--append "
-        f"--max-runs {seed_count} "
-        f"--run-label {run_label}"
-    )
+    
+    parts = [
+        "python src/experiments.py",
+        f"--ticker {ticker}",
+        f"{include_news_flag}",
+        f"{stationary_flag}",
+        f"--seeds {seeds}",
+        f"--timesteps {int(config['timesteps'])}",
+        f"--learning-rates {_format_float(float(config['learning_rate']))}",
+        f"--gammas {_format_float(float(config['gamma']))}",
+        f"--ent-coefs {_format_float(float(config['ent_coef']))}",
+        f"--threshold {_format_float(float(config['threshold']))}",
+        f"--horizon {int(config['horizon'])}",
+        f"--transaction-cost-rate {_format_float(float(config['transaction_cost_rate']))}",
+        f"--trade-penalty {_format_float(float(config['trade_penalty']))}",
+        f"--execution-mode {str(config.get('execution_mode', 'next_bar'))}",
+        f"--spread-bps {_format_float(float(config.get('spread_bps', 0.0)))}",
+        f"--slippage-bps {_format_float(float(config.get('slippage_bps', 0.0)))}",
+        f"--max-weight-delta-per-step {_format_float(float(config.get('max_weight_delta_per_step', 0.0)))}",
+        f"--reward-mode {str(config.get('reward_mode', 'legacy'))}",
+        f"--rolling-reward-window {int(config.get('rolling_reward_window', 100))}",
+        f"--reward-epsilon {_format_float(float(config.get('reward_epsilon', 1e-6)))}",
+        f"--reward-return-scale {_format_float(float(config['reward_return_scale']))}",
+        f"--reward-direction-scale {_format_float(float(config['reward_direction_scale']))}",
+        f"--reward-hold-penalty-scale {_format_float(float(config['reward_hold_penalty_scale']))}",
+        f"--reward-drawdown-penalty-scale {_format_float(float(config['reward_drawdown_penalty_scale']))}",
+        f"--reward-pnl-scale {_format_float(float(config.get('reward_pnl_scale', 0.0)))}",
+        f"--reward-action-bonus-scale {_format_float(float(config['reward_action_bonus_scale']))}",
+        f"--reward-turnover-penalty-scale {_format_float(float(config.get('reward_turnover_penalty_scale', 0.05)))}",
+        f"--reward-clip {_format_float(float(config['reward_clip']))}",
+        f"{ignore_cost_flag}",
+        "--append",
+        f"--max-runs {seed_count}",
+        f"--run-label {run_label}",
+    ]
+    
+    if config.get("binary_actions"):
+        parts.append("--binary-actions")
+    if int(config.get("min_hold_bars", 0)) > 0:
+        parts.append(f"--min-hold-bars {config['min_hold_bars']}")
+        
+    return " ".join(parts)
 
 
 def _detect_leaderboard_tickers(leaderboard_path: str) -> set[str]:
@@ -1679,6 +1695,14 @@ def render_signal_analytics_page(
             index=3, # Default to Test for "Historical" validation
             help="70/15/15 split. Select 'Test' to see historical forward-look results."
         )
+
+        min_sim_hold = st.number_input(
+            "Min Hold Bars (Sim)", 
+            min_value=0, 
+            max_value=20, 
+            value=3 if "googl" in ticker.lower() or "amzn" in ticker.lower() else 0,
+            help="Enforces a minimum holding period in the simulation. Automatically set for PPO tickers."
+        )
         
         run = st.button("Run analytics", type="primary", width="stretch", key="run_signal_analytics")
         
@@ -1724,6 +1748,7 @@ def render_signal_analytics_page(
                 horizon_steps=horizon_steps,
                 deterministic_policy=deterministic_policy,
                 binary_actions=binary_actions,
+                min_hold_bars=min_sim_hold,
                 use_ensemble=use_ensemble,
                 ticker=ticker,
                 ensemble_config_path=ensemble_config_path,

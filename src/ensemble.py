@@ -67,15 +67,14 @@ class SparseEnsemble:
             if not model_path.exists():
                 raise FileNotFoundError(f"Model file not found: {model_path}")
             
-            # Determine algorithm type from leaderboard
-            is_binary = bool(row.get("binary_actions", False))
-            
-            if is_binary:
-                # PPO for Discrete(2) space
-                model = PPO.load(model_path)
-            else:
-                # SAC for continuous Box space
+            # Robust auto-detection: try SAC first, then PPO
+            try:
                 model = SAC.load(model_path)
+            except Exception:
+                try:
+                    model = PPO.load(model_path)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to load model at {model_path} as either SAC or PPO: {e}")
                 
             self.models[seed] = model
             self.top_models_info.append(row)
