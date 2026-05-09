@@ -47,8 +47,6 @@ screenshots/
 sessions/local/
 sessions/*-local.md
 
-data/experiment_leaderboard.csv
-data/experiment_summary.json
 data/tech_news_sentiment_data.csv
 data/tech_training_data_no_news.csv
 data/tech_training_data_with_news.csv
