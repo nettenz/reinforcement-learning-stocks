@@ -161,3 +161,4 @@ print(f"Gates 6/6:       {(sweep['test_trade_rate'].between(0.40, 0.80)).sum()} 
 - **Never use `sanity_scan.py --leaderboard`** — that flag doesn't exist; it operates on results directory
 - **Always deduplicate before a new sweep** — stale duplicate rows inflate CV estimates and corrupt gate counts
 - **Raw features for now** — Stationary features are deferred until after Exp 10. Use `--use-stationary-features False` (default) for current production-aligned sweeps.
+- Last model experiment to run python src/experiments.py --ticker amd --timesteps 60000 --run-label ppo_binary_legacy_amd_wide --experiment-preset daily --binary-actions --min-hold-bars 3 --seeds 101,102,103,104,105,106,107,108,109,110,111,112,113,114,115 --reward-mode legacy --reward-return-scale 50.0 --reward-turnover-penalty-scale 0.02 --reward-action-bonus-scale 0.05 --use-stationary-features --append
