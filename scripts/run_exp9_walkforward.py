@@ -310,12 +310,10 @@ def main() -> None:
 
     results = []
     for ticker in tickers_to_run:
-        # Determine which leaderboard to use. 
-        # Foundation tickers have their own leaderboards in the script logic, 
-        # but we can try to find them in data/ too.
         lb_path = Path(args.leaderboard)
-        # Exception for foundation tickers if they are NOT in the main leaderboard
-        if ticker in ["nvda", "aapl", "amd"]:
+        if ticker in cfg and "leaderboard_csv" in cfg[ticker]:
+            lb_path = ROOT / cfg[ticker]["leaderboard_csv"]
+        elif ticker in ["nvda", "aapl", "amd"]:
             found_lb = list(ROOT.glob(f"data/*{ticker}*leaderboard.csv"))
             if found_lb:
                 lb_path = found_lb[0]

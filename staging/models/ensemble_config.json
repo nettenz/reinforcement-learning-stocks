@@ -27,16 +27,17 @@
   },
   "amd": {
     "active_seeds": [
-      5,
-      2,
-      10
+      13,
+      21,
+      7
     ],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.96,
-    "top_3_mean_val_test_gap": 0.025,
+    "top_3_mean_sharpe": 1.953,
+    "top_3_mean_val_test_gap": 0.045,
     "production_ready": true,
-    "notes": "6/10 active. production ready",
-    "leaderboard_csv": "data/exp_3_amd_10seed_foundation_leaderboard.csv"
+    "notes": "11 active seeds. production ready",
+    "run_label": "amd-ppo-hold-fix",
+    "leaderboard_csv": "data/experiment_leaderboard.csv"
   },
   "mu": {
     "active_seeds": [

@@ -1,10 +1,10 @@
 {
-  "rows": 537,
-  "generated_at_utc": "20260509-013933Z",
-  "leaderboard_path": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard.csv",
-  "reward_leaderboard_path": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard.csv",
-  "leaderboard_history_path": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_leaderboard_history.csv",
-  "reward_leaderboard_history_path": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_reward_leaderboard_history.csv",
+  "rows": 775,
+  "generated_at_utc": "20260512-235152Z",
+  "leaderboard_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_leaderboard.csv",
+  "reward_leaderboard_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_reward_leaderboard.csv",
+  "leaderboard_history_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_leaderboard_history.csv",
+  "reward_leaderboard_history_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_reward_leaderboard_history.csv",
   "leaderboard_version": 2,
   "top3": [
     {
@@ -276,7 +276,7 @@
       "test_reward_drawdown_penalty_mean": -0.0004104521993105,
       "test_reward_drawdown_mean": 0.0082090439862107,
       "val_cumulative_return": 0.17475565648396,
-      "val_sharpe_ratio": 2.1400618524191994,
+      "val_sharpe_ratio": 2.140061852419199,
       "val_sortino_ratio": 2.812924555455312,
       "val_max_drawdown": -0.0368416577528506,
       "test_cumulative_return": 0.0483532545013429,
@@ -306,10 +306,10 @@
     }
   ],
   "snapshot_paths": {
-    "leaderboard": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_snapshots\\experiment_leaderboard_20260509-013933Z_ppo_binary_legacy_aapl.csv",
-    "reward_leaderboard": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_snapshots\\experiment_reward_leaderboard_20260509-013933Z_ppo_binary_legacy_aapl.csv",
-    "leaderboard_history": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_snapshots\\experiment_leaderboard_history_20260509-013933Z_ppo_binary_legacy_aapl.csv",
-    "reward_leaderboard_history": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_snapshots\\experiment_reward_leaderboard_history_20260509-013933Z_ppo_binary_legacy_aapl.csv",
-    "summary": "D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\experiment_snapshots\\experiment_summary_20260509-013933Z_ppo_binary_legacy_aapl.json"
+    "leaderboard": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_20260512-235152Z_amd-ppo-hold-fix.csv",
+    "reward_leaderboard": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_20260512-235152Z_amd-ppo-hold-fix.csv",
+    "leaderboard_history": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_history_20260512-235152Z_amd-ppo-hold-fix.csv",
+    "reward_leaderboard_history": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_history_20260512-235152Z_amd-ppo-hold-fix.csv",
+    "summary": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_summary_20260512-235152Z_amd-ppo-hold-fix.json"
   }
 }

@@ -52,3 +52,6 @@ data/tech_training_data_no_news.csv
 data/tech_training_data_with_news.csv
 models/ppo_trading_bot_no_news.zip
 models/ppo_trading_bot_with_news.zip
+
+# Large reports
+reports/sanity_scan_report.json

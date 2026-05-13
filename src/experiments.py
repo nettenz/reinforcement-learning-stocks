@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import warnings
+warnings.filterwarnings("ignore", message="You are trying to run PPO on the GPU")
 import itertools
 import json
 import platform
@@ -698,6 +700,8 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             
         if args.binary_actions:
             # PPO supports Discrete action spaces; SAC requires a continuous Box.
+            # Force CPU on macOS for PPO as MPS with small MLPs is significantly slower and triggers warnings.
+            ppo_device = "cpu" if DEFAULT_DEVICE == "mps" else DEFAULT_DEVICE
             model = PPO(
                 "MlpPolicy",
                 env_train,
@@ -707,7 +711,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
                 gamma=gamma,
                 ent_coef=ent_coef if ent_coef > 0.0 else 0.0,
                 batch_size=args.batch_size,
-                device=DEFAULT_DEVICE,
+                device=ppo_device,
             )
         else:
             model_ent_coef = ent_coef if ent_coef > 0.0 else "auto"
@@ -819,6 +823,23 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         row.update(test_benchmark_risk)
         row["model_path"] = str(model_save_path)  # Track which file belongs to this run
         rows.append(row)
+
+        # Force garbage collection and close file descriptors to prevent Errno 24
+        if hasattr(model, "env") and model.env is not None:
+            try:
+                model.env.close()
+            except Exception:
+                pass
+        try:
+            del model
+        except Exception:
+            pass
+        try:
+            del env_train
+        except Exception:
+            pass
+        import gc
+        gc.collect()
 
     leaderboard = pd.DataFrame(rows).sort_values("ranking_score", ascending=False).reset_index(drop=True)
     leaderboard = _attach_config_stability_metrics(leaderboard)
