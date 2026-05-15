@@ -1,16 +1,16 @@
 # Project State: Reinforcement Learning Stocks
 **Date:** May 14, 2026  
-**Phase:** Binary PPO Ensemble Complete (NVDA Promoted) — AAPL Remaining
+**Phase:** Exit Signal Phase 1 (AAPL Deferred — Ensemble at 5/6)
 
 ---
 
 ## 1. Executive Summary
 
-The foundational trading architecture has undergone a **major generational shift**. While early research (SAC-based) struggled with mega-cap tech (AAPL, GOOGL, AMZN), we have discovered a definitive **"Binary Edge"** using **PPO + Binary Actions + Min-Hold Constraints**. This architecture has successfully revived GOOGL, AMZN, MU, AMD, and NVDA — all passing Exp 9 walk-forward gates.
+The foundational trading architecture has undergone a **major generational shift**. The **Binary PPO + Min-Hold Constraints** architecture has successfully promoted **5 tickers**: NVDA, AMD, MU, AMZN, and GOOGL — all passing Exp 9 walk-forward gates.
 
-**NVDA Binary PPO retrofit is now complete.** The key architectural discovery: NVDA requires `min_hold_bars=1` (not the standard 3) to avoid inaction collapse. With `min_hold_bars=1`, 7/10 configs passed all 6 gates, and the ensemble passed all 3 Exp 9 gates with 82% agreement and 85% avg confidence.
+**AAPL is formally deferred.** After 7 sweeps across all architectural levers (penalty scaling, feature space, min_hold_bars, entropy up to 0.20, 100k timesteps), AAPL produces 0.0% trade rate in *both* val and test across every config. The policy finds no reward gradient above zero in the training period itself. AAPL's signal-to-noise ratio is architecturally incompatible with Binary PPO under these constraints.
 
-Active work has shifted to **AAPL stabilization** and **Exit Signal Phase 1**.
+**Active work has shifted to Exit Signal Phase 1** — `src/exit_manager.py` with confidence-based, trailing stop, and time-based exit rules. This adds value across all 5 promoted tickers simultaneously.
 
 ---
 
@@ -91,7 +91,11 @@ We successfully recovered "dropped" tickers by switching from continuous SAC to 
 | **AMZN** | **PASS** | **+0.11** | Promoted (Stage 1 v2) |
 | **MU** | **PASS** | **+0.15** | Promoted (Stage 1 v2) |
 | **NVDA** | **PASS** | **+0.11–+0.52** | **Promoted Binary PPO** |
-| **AAPL** | *Pending* | — | Binary PPO blocked — re-screening |
+| **AAPL** | **DEFERRED** | — | Architecturally incompatible with Binary PPO |
+
+**Key Finding:** The combination of **PPO + Binary Actions (Discrete 2) + `min_hold_bars=3`** is the new "Gold Standard" for most mega-cap tech. **Exception: NVDA requires `min_hold_bars=1`** due to its short-duration signal distribution.
+
+**AAPL deferral rationale:** 7 sweeps, all levers exhausted (penalties, features, min_hold, entropy 0.02–0.20, 80–100k timesteps). Gate 4 drift=0.000 with 0.0% val+test trade rate = no reward gradient above zero in training itself. AAPL is a lower-momentum consumer tech play vs AI infrastructure (NVDA/AMD/GOOGL) — its signal is too noisy for the Binary PPO architecture.
 
 **Key Finding:** The combination of **PPO + Binary Actions (Discrete 2) + `min_hold_bars=3`** is the new "Gold Standard" for most mega-cap tech. **Exception: NVDA requires `min_hold_bars=1`** due to its short-duration signal distribution.
 
@@ -129,7 +133,7 @@ DEFAULT_TICKER = "nvda"
 | AMZN | ✅ Promoted | **PPO Binary** | +0.11 | 3 |
 | MU | ✅ Promoted | **PPO Binary** | +0.15 | 3 |
 | GOOGL | ✅ Promoted | **PPO Binary** | +0.66 | 3 |
-| AAPL | ⏳ Blocked | PPO Binary | — | — |
+| AAPL | ❌ Deferred | Incompatible | — | — |
 | ALAB | ⏳ Future | XGB/RF | — | — |
 
 ---
@@ -137,11 +141,19 @@ DEFAULT_TICKER = "nvda"
 ## 8. Active Work & Next Steps
 
 ### Immediate
-1. **AAPL Binary PPO stabilization** — NVDA is now promoted. AAPL is the only remaining blocked ticker. Apply the `min_hold_bars=1` discovery from NVDA to AAPL (prior sweeps all used `min_hold_bars=3`). Run ablation with `min_hold_bars=1` before any further penalty tuning.
-2. **Exit Signal Phase 1** — Now unblocked with NVDA promoted. `src/exit_manager.py` with confidence-based, trailing stop, and time-based rules. Backtest on NVDA test split first.
-3. **Resolve OS-Level File Descriptor Limit** — Bypassed with `--n-envs 1`. Permanent fix in `SubprocVecEnv` deferred.
+1. **Exit Signal Phase 1** — Primary focus. `src/exit_manager.py` with:
+   - **Confidence-based exit:** Exit position when ensemble confidence drops below threshold
+   - **Trailing stop:** Exit after N bars of consecutive losses vs entry price
+   - **Time-based:** Maximum hold duration guard
+   - Backtest on NVDA test split first (clearest signal, most liquid, 428 test rows)
+2. **Resolve OS-Level File Descriptor Limit** — Session workaround: `ulimit -n 65536`. Permanent fix in `SubprocVecEnv` deferred.
 
-**Next repo step:** Run AAPL `min_hold_bars=1` ablation sweep, then proceed to Exit Signal Phase 1.
+### Deferred
+- **AAPL** — Formally deferred. Architecturally incompatible with Binary PPO. May revisit with a different architecture (SAC continuous, or long/short binary) in a future phase.
+- **ALAB re-screen** — mid-2027
+- **Option B (long/short)** — full architecture rewrite after exit signal layer validated
+
+**Next repo step:** Implement `src/exit_manager.py` with Phase 1 exit rules.
 
 ### Near-term
 3. **Exit signal backtesting** — tune params on val, evaluate on test. No re-tuning on test.

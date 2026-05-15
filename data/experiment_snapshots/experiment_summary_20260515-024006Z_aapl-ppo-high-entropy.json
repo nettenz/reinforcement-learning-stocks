@@ -1,10 +1,10 @@
 {
   "rows": 930,
   "generated_at_utc": "20260515-024006Z",
-  "leaderboard_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_leaderboard.csv",
-  "reward_leaderboard_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_reward_leaderboard.csv",
-  "leaderboard_history_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_leaderboard_history.csv",
-  "reward_leaderboard_history_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_reward_leaderboard_history.csv",
+  "leaderboard_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_20260515-024006Z_aapl-ppo-high-entropy.csv",
+  "reward_leaderboard_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_20260515-024006Z_aapl-ppo-high-entropy.csv",
+  "leaderboard_history_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_history_20260515-024006Z_aapl-ppo-high-entropy.csv",
+  "reward_leaderboard_history_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_history_20260515-024006Z_aapl-ppo-high-entropy.csv",
   "leaderboard_version": 2,
   "top3": [
     {
@@ -304,12 +304,5 @@
       "binary_actions": NaN,
       "min_hold_bars": NaN
     }
-  ],
-  "snapshot_paths": {
-    "leaderboard": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_20260515-024006Z_aapl-ppo-high-entropy.csv",
-    "reward_leaderboard": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_20260515-024006Z_aapl-ppo-high-entropy.csv",
-    "leaderboard_history": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_history_20260515-024006Z_aapl-ppo-high-entropy.csv",
-    "reward_leaderboard_history": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_history_20260515-024006Z_aapl-ppo-high-entropy.csv",
-    "summary": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_summary_20260515-024006Z_aapl-ppo-high-entropy.json"
-  }
+  ]
 }
