@@ -1,6 +1,6 @@
 {
-  "rows": 775,
-  "generated_at_utc": "20260512-235152Z",
+  "rows": 905,
+  "generated_at_utc": "20260515-003536Z",
   "leaderboard_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_leaderboard.csv",
   "reward_leaderboard_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_reward_leaderboard.csv",
   "leaderboard_history_path": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_leaderboard_history.csv",
@@ -306,10 +306,10 @@
     }
   ],
   "snapshot_paths": {
-    "leaderboard": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_20260512-235152Z_amd-ppo-hold-fix.csv",
-    "reward_leaderboard": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_20260512-235152Z_amd-ppo-hold-fix.csv",
-    "leaderboard_history": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_history_20260512-235152Z_amd-ppo-hold-fix.csv",
-    "reward_leaderboard_history": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_history_20260512-235152Z_amd-ppo-hold-fix.csv",
-    "summary": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_summary_20260512-235152Z_amd-ppo-hold-fix.json"
+    "leaderboard": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_20260515-003536Z_nvda-ppo-minhold1-extended.csv",
+    "reward_leaderboard": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_20260515-003536Z_nvda-ppo-minhold1-extended.csv",
+    "leaderboard_history": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_leaderboard_history_20260515-003536Z_nvda-ppo-minhold1-extended.csv",
+    "reward_leaderboard_history": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_reward_leaderboard_history_20260515-003536Z_nvda-ppo-minhold1-extended.csv",
+    "summary": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/data/experiment_snapshots/experiment_summary_20260515-003536Z_nvda-ppo-minhold1-extended.json"
   }
 }

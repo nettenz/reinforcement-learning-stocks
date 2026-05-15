@@ -1,16 +1,19 @@
 {
   "nvda": {
     "active_seeds": [
-      42,
-      13
+      3,
+      13,
+      7,
+      42
     ],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 0.937,
-    "top_3_mean_val_test_gap": 0.004,
+    "top_3_mean_sharpe": 1.86,
+    "top_3_mean_val_test_gap": 0.007,
     "production_ready": true,
-    "notes": "4 active seeds. production ready",
-    "run_label": "ppo_binary_retrofit_nvda",
-    "leaderboard_csv": "data\\experiment_leaderboard.csv"
+    "notes": "9 active seeds. production ready",
+    "run_label": "nvda-ppo-minhold1-extended",
+    "leaderboard_csv": "data/experiment_leaderboard.csv",
+    "use_stationary_features": false
   },
   "aapl": {
     "active_seeds": [

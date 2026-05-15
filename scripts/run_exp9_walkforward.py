@@ -190,20 +190,29 @@ def run_ticker(ticker: str, config_path: Path, leaderboard_path: Path) -> dict:
 
     # Determine environment params
     ticker_env_params = ENV_PARAMS.copy()
-    
-    # Try to find parquet file
-    parquet_path = ROOT / "data" / f"tech_training_data_{ticker}_stationary.parquet"
-    if not parquet_path.exists():
-        # Fallback to non-stationary if needed, or default mapping
-        if ticker in DEFAULT_TICKER_CONFIG:
+
+    # Per-ticker obs space override: read use_stationary_features from ensemble config.
+    # Default True for backward compatibility with all existing promoted tickers.
+    use_stationary = ticker_cfg.get("use_stationary_features", True)
+
+    # Try to find parquet file — respect the feature space the model was trained with
+    if use_stationary:
+        parquet_path = ROOT / "data" / f"tech_training_data_{ticker}_stationary.parquet"
+        if not parquet_path.exists() and ticker in DEFAULT_TICKER_CONFIG:
             parquet_path = DEFAULT_TICKER_CONFIG[ticker]["parquet"]
-    
+    else:
+        # Model trained on raw (non-stationary) features
+        parquet_path = ROOT / "data" / f"tech_training_data_{ticker}.parquet"
+        if not parquet_path.exists():
+            # Fallback: try stationary parquet and strip stationary cols
+            parquet_path = ROOT / "data" / f"tech_training_data_{ticker}_stationary.parquet"
+
     if not parquet_path.exists():
         print(f"  [SKIP] No parquet found for {ticker.upper()}: {parquet_path}")
         return {"ticker": ticker, "gate_pass": False, "error": "missing parquet"}
 
-    # Infer stationary columns usage
-    if "stationary" in parquet_path.name:
+    # Set market feature columns based on the feature space used during training
+    if use_stationary:
         ticker_env_params["market_feature_columns"] = STATIONARY_COLS
     else:
         ticker_env_params["market_feature_columns"] = None

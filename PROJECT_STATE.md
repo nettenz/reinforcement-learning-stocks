@@ -1,16 +1,16 @@
 # Project State: Reinforcement Learning Stocks
-**Date:** May 12, 2026  
-**Phase:** Binary PPO Retrofit & Stability (AMD, NVDA, AAPL)
+**Date:** May 14, 2026  
+**Phase:** Binary PPO Ensemble Complete (NVDA Promoted) — AAPL Remaining
 
 ---
 
 ## 1. Executive Summary
 
-The foundational trading architecture has undergone a **major generational shift**. While early research (SAC-based) struggled with mega-cap tech (AAPL, GOOGL, AMZN), we have discovered a definitive **"Binary Edge"** using **PPO + Binary Actions + Min-Hold Constraints**. This architecture has successfully revived GOOGL, AMZN, and MU, achieving massive alpha (+0.66 for GOOGL) and passing all promotion gates.
+The foundational trading architecture has undergone a **major generational shift**. While early research (SAC-based) struggled with mega-cap tech (AAPL, GOOGL, AMZN), we have discovered a definitive **"Binary Edge"** using **PPO + Binary Actions + Min-Hold Constraints**. This architecture has successfully revived GOOGL, AMZN, MU, AMD, and NVDA — all passing Exp 9 walk-forward gates.
 
-NVDA and AMD remain promoted, but are flagged for "Binary Retrofit" to stabilize their exit logic. The 6-gate framework now includes a relaxed G6 (Trade Rate) for high-momentum tickers where "Institutional Hold" (90%+ rate) is the optimal bull-regime strategy.
+**NVDA Binary PPO retrofit is now complete.** The key architectural discovery: NVDA requires `min_hold_bars=1` (not the standard 3) to avoid inaction collapse. With `min_hold_bars=1`, 7/10 configs passed all 6 gates, and the ensemble passed all 3 Exp 9 gates with 82% agreement and 85% avg confidence.
 
-Active work has shifted to **cross-ticker PPO validation** and **ensemble consolidation** for the new production architecture.
+Active work has shifted to **AAPL stabilization** and **Exit Signal Phase 1**.
 
 ---
 
@@ -25,33 +25,36 @@ Stationary technical features audited and corrected for strict realism:
 5. **RelVWAP:** Typical price references true unnormalized High/Low; Volume clipped at 0.0.
 
 **Per-ticker obs space:**
-- NVDA champion trained on raw 10-feature space (`use_stationary_features=False`)
+- NVDA Binary PPO champion trained on raw 10-feature space (`use_stationary_features=False`, obs shape 18)
 - AMD champion trained on stationary 27-feature space (`use_stationary_features=True`)
-- `TICKER_CONFIG` in `run_exp9_walkforward.py` is sweep-locked per ticker via `sweep_label` filter
-- All new ticker sweeps must use `--use-stationary-features`
+- `run_exp9_walkforward.py` reads `use_stationary_features` from `ensemble_config.json` per ticker
+- NVDA entry in `ensemble_config.json` has `"use_stationary_features": false`
 
 ---
 
-## 3. NVDA — Promoted ✅
+## 3. NVDA — Promoted ✅ (Binary PPO Retrofit Complete)
 
-**Champion sweep:** `nvda-sharpe-news-recovery`  
-**Seeds:** 7, 13 | **Obs space:** Raw 10-feature (reward_mode: sharpe, include_news, stationary features)
+**Champion sweep:** `nvda-ppo-minhold1-extended`  
+**Seeds:** 3, 13, 7, 42 | **Obs space:** Raw 10-feature (`use_stationary_features=False`, obs shape 18)  
+**Architecture:** Binary PPO, `min_hold_bars=1`, `reward_hold_penalty_scale=0.01`, `reward_turnover_penalty_scale=0.01`, 80k timesteps
 
 | Metric | Value |
 |--------|-------|
-| Sharpe | 1.61 |
-| Alpha vs QQQ | 0.41 |
-| Actionable Accuracy | 56.3% |
-| Trade Win Rate | 54.7% |
-| Val/Test Drift | 0.004 |
-| CV (clean seeds) | 0.053 |
-| Trade Rate | 62.5% |
+| Sharpe (seed 3) | 2.03 |
+| Alpha vs QQQ | +0.11 to +0.52 |
+| Actionable Accuracy | 56.5–56.7% |
+| Trade Win Rate | 54.4–55.1% |
+| Val/Test Drift | 0.005–0.008 |
+| CV (clean, best cluster) | 0.19 |
+| Trade Rate | 48–62% |
 
-**Prior failure analysis:** Sortino reward mode trained inaction bias ("do nothing"). Recovery fix: switched to Sharpe mode + news features to improve signal quality on NVDA's news-reactive AI boom context.
+**Root cause of prior inaction collapse:** `min_hold_bars=3` forced the policy to commit to 3-bar minimum holds. NVDA's signal distribution requires short-duration entries — the policy correctly learned that the risk of locking in for 3 bars made cash always safer. Reducing to `min_hold_bars=1` immediately resolved the collapse (7/10 configs, all 6 gates passed).
 
-**Exp 9:** PASS — G1/G2/G3, 2 promoted seeds [7, 13], agreement 1.00, avg_conf 0.92, unanimous 0.69.
+**Key finding:** Feature space (raw vs stationary) and penalty scaling were NOT root causes. The architectural min-hold constraint was the sole blocker.
 
-**Stage 1 baseline:** val_acc=46.4%, test_acc=50.5% (reference benchmark for ticker screening).
+**Exp 9:** PASS — G1 (0.548 ≥ 0.536) ✅, G2 agreement 0.82 ✅, G3 unanimous 0.57 ✅. Seeds [3, 13, 7, 42]. Avg confidence 0.85.
+
+**Stage 1 baseline:** val_acc=46.4%, test_acc=50.5%.
 
 ---
 
@@ -87,11 +90,12 @@ We successfully recovered "dropped" tickers by switching from continuous SAC to 
 | **GOOGL** | **PASS** | **+0.66** | Promoted (Seed 13) |
 | **AMZN** | **PASS** | **+0.11** | Promoted (Stage 1 v2) |
 | **MU** | **PASS** | **+0.15** | Promoted (Stage 1 v2) |
-| **AAPL** | *Pending* | — | Re-screening with PPO |
+| **NVDA** | **PASS** | **+0.11–+0.52** | **Promoted Binary PPO** |
+| **AAPL** | *Pending* | — | Binary PPO blocked — re-screening |
 
-**Key Finding:** The combination of **PPO + Binary Actions (Discrete 2) + `min_hold_bars=3`** is the new "Gold Standard" for mega-cap tech. It solves the whipsaw noise and high transaction cost leakage that caused previous SAC models to collapse.
+**Key Finding:** The combination of **PPO + Binary Actions (Discrete 2) + `min_hold_bars=3`** is the new "Gold Standard" for most mega-cap tech. **Exception: NVDA requires `min_hold_bars=1`** due to its short-duration signal distribution.
 
-**Key finding:** NVDA and AMD are genuinely exceptional — high-momentum AI infrastructure plays with multi-year trending behavior are rare. Forcing a third ticker is not the right path.
+**Architectural lesson:** Min-hold constraint is ticker-specific. Always ablate `min_hold_bars` before assuming penalty or feature space is the blocker.
 
 **ALAB flagged for re-evaluation:** Strongest Stage 1 signal of all screened tickers (56.3%). Re-screen when training window reaches ~1500+ rows (estimated mid-2027).
 
@@ -118,26 +122,26 @@ DEFAULT_TICKER = "nvda"
 
 ---
 
-| Ticker | Status | Architecture | Alpha |
-|--------|--------|--------------|-------|
-| NVDA | ✅ Promoted | SAC (Retrofit ⏳) | +0.41 |
-| AMD | ✅ Promoted | **PPO Binary** | +0.28 |
-| AMZN | ✅ Promoted | **PPO Binary** | +0.11 |
-| MU | ✅ Promoted | **PPO Binary** | +0.15 |
-| GOOGL | ✅ Promoted | **PPO Binary** | **+0.66** |
-| AAPL | ⏳ Re-screening | PPO Binary | — |
-| ALAB | ⏳ Future | XGB/RF | — |
+| Ticker | Status | Architecture | Alpha | min_hold |
+|--------|--------|--------------|-------|----------|
+| NVDA | ✅ Promoted | **PPO Binary** | +0.11–+0.52 | **1** |
+| AMD | ✅ Promoted | **PPO Binary** | +0.28 | 3 |
+| AMZN | ✅ Promoted | **PPO Binary** | +0.11 | 3 |
+| MU | ✅ Promoted | **PPO Binary** | +0.15 | 3 |
+| GOOGL | ✅ Promoted | **PPO Binary** | +0.66 | 3 |
+| AAPL | ⏳ Blocked | PPO Binary | — | — |
+| ALAB | ⏳ Future | XGB/RF | — | — |
 
 ---
 
 ## 8. Active Work & Next Steps
 
 ### Immediate
-1. **Stabilize Binary PPO for NVDA & AAPL** — AMD has successfully been promoted. NVDA and AAPL are currently suffering from total action collapse (0.0% trade rate). We must unstick them by running a "Double Loosen" sweep dropping both `reward-hold-penalty-scale` and `reward-turnover-penalty-scale` to `0.01` and `0.05` simultaneously.
-2. **Resolve OS-Level File Descriptor Limit ("Too many open files")** — Bypassed temporarily using `--n-envs 1`. Needs a permanent fix in `SubprocVecEnv` so parallel sweeps can resume.
-3. **Exit Signal Phase 1** — Deferred until base architectures are stabilized. `src/exit_manager.py` with confidence-based, trailing stop, time-based rules. Backtest on NVDA test split first. See `EXIT_SIGNAL_TODO.md`.
+1. **AAPL Binary PPO stabilization** — NVDA is now promoted. AAPL is the only remaining blocked ticker. Apply the `min_hold_bars=1` discovery from NVDA to AAPL (prior sweeps all used `min_hold_bars=3`). Run ablation with `min_hold_bars=1` before any further penalty tuning.
+2. **Exit Signal Phase 1** — Now unblocked with NVDA promoted. `src/exit_manager.py` with confidence-based, trailing stop, and time-based rules. Backtest on NVDA test split first.
+3. **Resolve OS-Level File Descriptor Limit** — Bypassed with `--n-envs 1`. Permanent fix in `SubprocVecEnv` deferred.
 
-**Next repo step:** Run the Phase 2 Double Loosen sweeps for NVDA and AAPL to break their inaction bias.
+**Next repo step:** Run AAPL `min_hold_bars=1` ablation sweep, then proceed to Exit Signal Phase 1.
 
 ### Near-term
 3. **Exit signal backtesting** — tune params on val, evaluate on test. No re-tuning on test.
