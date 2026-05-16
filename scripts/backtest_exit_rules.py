@@ -72,33 +72,40 @@ BASELINES: Dict[str, Dict[str, float]] = {
         "win_rate": 0.561,
     },
     "amd": {
-        # TBD — re-run: python scripts/backtest_exit_rules.py --ticker amd --config no_exit --test-only
-        "sharpe": None,
-        "max_drawdown": None,
-        "cumulative_return": None,
+        # Captured 2026-05-16 via: backtest_exit_rules.py --ticker amd --config no_exit --test-only
+        "sharpe": 0.986,
+        "max_drawdown": -0.555,
+        "cumulative_return": 0.835,
         "exit_rate": 0.0,
-        "avg_hold_bars": None,
-        "win_rate": None,
+        "avg_hold_bars": 3.6,
+        "win_rate": 0.488,
     },
 }
 
 CONFIGS: List[Dict[str, Any]] = [
     {"name": "no_exit",          "rule": None,             "params": {}},
-    {"name": "profit_take_2pct", "rule": "profit_take",    "params": {"threshold": 0.02}},
-    {"name": "profit_take_3pct", "rule": "profit_take",    "params": {"threshold": 0.03}},
-    {"name": "profit_take_5pct", "rule": "profit_take",    "params": {"threshold": 0.05}},
-    {"name": "profit_take_8pct", "rule": "profit_take",    "params": {"threshold": 0.08}},
-    {"name": "trailing_3pct",    "rule": "trailing_stop",  "params": {"stop_pct": 0.03}},
-    {"name": "trailing_5pct",    "rule": "trailing_stop",  "params": {"stop_pct": 0.05}},
-    {"name": "trailing_8pct",    "rule": "trailing_stop",  "params": {"stop_pct": 0.08}},
-    {"name": "trailing_10pct",   "rule": "trailing_stop",  "params": {"stop_pct": 0.10}},
-    {"name": "time_10bars",      "rule": "time",           "params": {"max_bars": 10}},
-    {"name": "time_20bars",      "rule": "time",           "params": {"max_bars": 20}},
-    {"name": "time_30bars",      "rule": "time",           "params": {"max_bars": 30}},
-    {"name": "time_45bars",      "rule": "time",           "params": {"max_bars": 45}},
-    {"name": "composite_nvda",   "rule": "composite",      "params": {"rules": [
+    {"name": "profit_take_2pct",  "rule": "profit_take",    "params": {"threshold": 0.02}},
+    {"name": "profit_take_3pct",  "rule": "profit_take",    "params": {"threshold": 0.03}},
+    {"name": "profit_take_5pct",  "rule": "profit_take",    "params": {"threshold": 0.05}},
+    {"name": "profit_take_8pct",  "rule": "profit_take",    "params": {"threshold": 0.08}},
+    {"name": "profit_take_10pct", "rule": "profit_take",    "params": {"threshold": 0.10}},
+    {"name": "profit_take_15pct", "rule": "profit_take",    "params": {"threshold": 0.15}},
+    {"name": "trailing_3pct",     "rule": "trailing_stop",  "params": {"stop_pct": 0.03}},
+    {"name": "trailing_5pct",     "rule": "trailing_stop",  "params": {"stop_pct": 0.05}},
+    {"name": "trailing_8pct",     "rule": "trailing_stop",  "params": {"stop_pct": 0.08}},
+    {"name": "trailing_10pct",    "rule": "trailing_stop",  "params": {"stop_pct": 0.10}},
+    {"name": "trailing_15pct",    "rule": "trailing_stop",  "params": {"stop_pct": 0.15}},
+    {"name": "time_10bars",       "rule": "time",           "params": {"max_bars": 10}},
+    {"name": "time_20bars",       "rule": "time",           "params": {"max_bars": 20}},
+    {"name": "time_30bars",       "rule": "time",           "params": {"max_bars": 30}},
+    {"name": "time_45bars",       "rule": "time",           "params": {"max_bars": 45}},
+    {"name": "composite_nvda",    "rule": "composite",      "params": {"rules": [
         {"rule": "profit_take",  "params": {"threshold": 0.03}},
         {"rule": "trailing_stop","params": {"stop_pct": 0.05}},
+    ]}},
+    {"name": "composite_wide",    "rule": "composite",      "params": {"rules": [
+        {"rule": "profit_take",  "params": {"threshold": 0.10}},
+        {"rule": "trailing_stop","params": {"stop_pct": 0.10}},
     ]}},
 ]
 
@@ -559,6 +566,7 @@ def run_ticker(
     test_only_config: Optional[str] = None,
     debug: bool = False,
     voting_method: str = "voting",
+    exit_rate_min: float = 0.02,
 ) -> Dict:
     print(f"\n{'='*60}")
     print(f"  {ticker.upper()} — ExitManager Backtest")
@@ -611,12 +619,12 @@ def run_ticker(
 
         _print_table(val_df_out.to_dict("records"), title=f"\nVal ranking ({ticker.upper()}):")
 
-        # Select best config: highest Sharpe with exit_rate in [0.02, 0.15]
+        # Select best config: highest Sharpe with exit_rate in [exit_rate_min, 0.15]
         eligible = val_df_out[
-            (val_df_out["exit_rate"] >= 0.02) & (val_df_out["exit_rate"] <= 0.15)
+            (val_df_out["exit_rate"] >= exit_rate_min) & (val_df_out["exit_rate"] <= 0.15)
         ]
         if eligible.empty:
-            print("\n  WARNING: no config with exit_rate in [0.02, 0.15]; "
+            print(f"\n  WARNING: no config with exit_rate in [{exit_rate_min:.3f}, 0.15]; "
                   "using overall best Sharpe")
             best_cfg_name = val_df_out.iloc[0]["name"]
         else:
@@ -648,6 +656,7 @@ def run_ticker(
         "val_rows": val_rows,
         "test_metrics": test_metrics,
         "criteria": criteria,
+        "exit_rate_min": exit_rate_min,
     }
 
 # ---------------------------------------------------------------------------
@@ -680,7 +689,8 @@ def _write_summary(results: List[Dict], output_dir: Path) -> None:
             lines.append("")
 
         lines.append(f"### Selected config: `{best}`\n")
-        lines.append("**Rationale:** Highest val Sharpe with exit_rate in [0.02, 0.15].\n")
+        erm = r.get("exit_rate_min", 0.02)
+        lines.append(f"**Rationale:** Highest val Sharpe with exit_rate in [{erm:.3f}, 0.15].\n")
 
         lines.append("### Test split results\n")
         lines.append("| Metric | Baseline | Best Config |")
@@ -740,6 +750,11 @@ def main() -> None:
         "--voting-method", default="voting", choices=["voting", "weighted", "mean"],
         help="Ensemble voting method: 'voting' (majority), 'weighted' (by Sharpe), or 'mean' (average continuous outputs).",
     )
+    parser.add_argument(
+        "--exit-rate-min", type=float, default=0.02,
+        help="Minimum exit_rate for val config selection (default 0.02). "
+             "Lower to 0.005 for NVDA bull-regime where exits are naturally rare.",
+    )
     args = parser.parse_args()
 
     test_only_config = args.config if (args.test_only and args.config) else None
@@ -758,6 +773,7 @@ def main() -> None:
             test_only_config=test_only_config,
             debug=args.debug,
             voting_method=args.voting_method,
+            exit_rate_min=args.exit_rate_min,
         )
         all_results.append(result)
 

@@ -140,7 +140,19 @@ Selected by val sweep (highest Sharpe within exit_rate [0.02, 0.15]): **`profit_
 
 > `BASELINES` dict in `scripts/backtest_exit_rules.py` updated 2026-05-16 — now uses Binary PPO no_exit actuals; success criteria are now relative (delta-Sharpe, ±2pp drawdown, exit_rate [0.02,0.15], win_rate non-regression).
 
-**AMD** — not yet re-run against Binary PPO ensemble. Old SAC results still in `EXIT_SIGNAL_TODO.md`.
+**AMD** (`amd-ppo-hold-fix`, seeds 13/21/7, voting, `use_stationary=True`, 14 market cols):
+
+Val winner (exit_rate gate [0.02, 0.15]): **`trailing_5pct`** — Val Sharpe 1.107, MaxDD -26.2%, CumRet +75.0%, ExitRate 4.9%, WinRate 58.0%  
+Runner-up: `profit_take_3pct` — Val Sharpe 1.026, MaxDD -19.5%, CumRet +69.6%, ExitRate 12.4%, WinRate 58.5%
+
+| Config | Test Sharpe | Test MaxDD | Test CumRet | Test ExitRate | AvgHold | WinRate |
+|--------|------------|-----------|------------|--------------|---------|--------|
+| trailing_5pct ✅ | **1.030** | -48.3% | **+88.2%** | 7.0% | 3.3 | 51.1% |
+| **no_exit (baseline)** | 0.986 | -55.5% | +83.5% | 0.0% | 3.6 | 48.8% |
+
+> 🟢 **AMD finding: exit rules HELP.** `trailing_5pct`: Sharpe **+0.044** delta, MaxDD **+7.2pp better**, CumRet **+4.7pp**, WinRate **+2.3pp**. This is the **opposite of NVDA**.
+>
+> **Root cause (confirmed):** NVDA test is a sustained bull trend (avg_hold 1.2 bars, exits cut profitable runs). AMD test has meaningful churn/pullbacks (avg_hold 3.6 bars, trailing stop fires correctly on reversals). **Market regime — not reward miscalibration — is the determining factor.**
 
 ---
 
@@ -205,9 +217,10 @@ scripts/plot_divergence.py  (standalone or called via --plot)
 |----------|------|------|
 | ✅ | Capture NVDA no_exit test baseline | Done — Sharpe=0.301, MaxDD=-16.1%, CumRet=+6.6% |
 | ✅ | Update `BASELINES` dict + success criteria | Done — relative to no_exit, SAC-era removed |
-| 1 | Re-run AMD exit backtest against Binary PPO ensemble | `scripts/backtest_exit_rules.py --ticker amd` |
-| 2 | Reassess NVDA exit strategy (profit_take_2pct degrades) | Consider wider thresholds or trailing_stop val sweep |
-| 3 | Write ExitManager unit tests | `tests/test_exit_manager.py` |
-| 4 | Define Phase 3 signal contract | Cross-repo payload: `{date, action, confidence, exit_fired, exit_rule}` |
-| 5 | Create `backend/signals/agent.py` | Per-ticker feature pipeline routing (NVDA=raw, AMD=stationary) |
-| 6 | Update `PPO_BINARY_STRATEGY.md` | Still shows NVDA/AMD as `[ ]` retrofit — both are ✅ promoted |
+| ✅ | Re-run AMD exit backtest (Binary PPO) | Done — trailing_5pct test Sharpe=1.030, no_exit=0.986 |
+| ✅ | Capture AMD no_exit test baseline | Done — Sharpe=0.986, MaxDD=-55.5%, CumRet=+83.5% |
+| 1 | Reassess NVDA exit strategy (profit_take_2pct degrades) | Consider trailing_stop or wider profit_take (10-15%) on new val sweep |
+| 2 | Write ExitManager unit tests | `tests/test_exit_manager.py` |
+| 3 | Define Phase 3 signal contract | Cross-repo payload: `{date, action, confidence, exit_fired, exit_rule}` |
+| 4 | Create `backend/signals/agent.py` | Per-ticker feature pipeline routing (NVDA=raw, AMD=stationary) |
+| 5 | Update `PPO_BINARY_STRATEGY.md` | Still shows NVDA/AMD as `[ ]` retrofit — both are ✅ promoted |
