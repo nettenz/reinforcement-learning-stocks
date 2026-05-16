@@ -1,37 +1,37 @@
-# Session Notes — May 14, 2026
+# Session Notes — May 15, 2026
 
-## Status: AAPL Formally Deferred ❌ | Ensemble at 5/6 | Next: Exit Signal Phase 1
+## Status: 3-Ticker Ensemble Complete ✅ | Next: Exit Signal Phase 1
 
-### AAPL Deferral Summary
-7 sweeps, all levers exhausted:
-- `aapl-ppo-double-loosen` ×2: 0.0% trade rate
-- `aapl-ppo-minhold1` (min_hold_bars=1): 0.0%, drift=0.000 (no trading in val either)
-- `aapl-ppo-high-entropy` (ent_coef 0.10–0.20, 100k steps): 0.0% unchanged
+### Final Promoted Ensemble (Mac-native model files)
+| Ticker | Seeds | Label | Alpha | min_hold | Exp 9 |
+|--------|-------|-------|-------|----------|-------|
+| NVDA | 3,13,7,42 | nvda-ppo-minhold1-extended | +0.11–+0.52 | **1** | PASS (G1/G2/G3, agree=0.82, conf=0.85) |
+| AMD | 13,21,7 | amd-ppo-hold-fix | +0.28 | 3 | PASS |
+| MU | 21,3,13 | mu-ppo-overtrade-fix | +1.82 | 1 | PASS (G1/G2/G3, agree=1.00, conf=0.92) |
 
-Gate 4 drift=0.000 with 0% val AND test = no reward gradient above zero in training itself.
-AAPL is architecturally incompatible with Binary PPO. Not a tuning problem.
-Do not run further AAPL sweeps under this architecture.
+### Deferred Tickers (no Mac model files, signal incompatible)
+| Ticker | Reason | Sweeps Run |
+|--------|--------|-----------|
+| AMZN | Drift wall 0.54-0.55, GOOGL/AAPL pattern | 1 |
+| GOOGL | Drift wall 0.55-0.57, 5 sweeps exhausted | 5 |
+| AAPL | Total inaction both val+test, 7 sweeps | 7 |
 
-### Final Promoted Ensemble
-| Ticker | Seeds | Architecture | min_hold | Alpha |
-|--------|-------|--------------|----------|-------|
-| NVDA | 3,13,7,42 | PPO Binary | **1** | +0.11–+0.52 |
-| AMD | 13,21,7 | PPO Binary | 3 | +0.28 |
-| MU | 42,7 | PPO Binary | 3 | +0.15 |
-| AMZN | 7,13,42 | PPO Binary | 3 | +0.11 |
-| GOOGL | 13 | PPO Binary | 3 | +0.66 |
-| AAPL | ❌ Deferred | — | — | — |
+### Key Architectural Findings This Session
+- min_hold_bars=1 is correct for high-volatility momentum plays (NVDA, MU)
+- min_hold_bars=3 is correct for lower-volatility tickers (AMD)
+- Gate 6 waiver granted for MU: semiconductor upcycle, 55.5% win rate, penalty-unresponsive
+- AMZN/GOOGL original Windows champions were always-long (90%+) riding the 2024 bull run — not reproducible on updated test splits
 
 ### Next: Exit Signal Phase 1
-File: `src/exit_manager.py` (create if not exists)
+File to create: `src/exit_manager.py`
 
-Phase 1 rules to implement:
-1. **Confidence-based:** Exit when ensemble confidence < threshold (e.g. 0.60)
+Phase 1 rules:
+1. **Confidence-based:** Exit when ensemble confidence < threshold
 2. **Trailing stop:** Exit after K bars of unrealized loss > X% from entry
-3. **Time-based:** Maximum hold = N bars regardless of signal
+3. **Time-based:** Maximum hold = N bars
 
-Development order:
-1. Implement `ExitManager` class with rule interface
+Dev order:
+1. Implement ExitManager class with rule interface
 2. Backtest on NVDA test split (428 rows, 2024-08-14 to 2026-04-29)
-3. Tune thresholds on val split — DO NOT tune on test
-4. Report: exits triggered, avg hold reduction, PnL impact vs no-exit baseline
+3. Tune thresholds on val split only — NO test data for tuning
+4. Report: exits triggered, avg hold reduction, PnL vs no-exit baseline

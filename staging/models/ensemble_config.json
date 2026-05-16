@@ -44,15 +44,16 @@
   },
   "mu": {
     "active_seeds": [
-      42,
-      7
+      21,
+      3,
+      13
     ],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 1.817,
-    "top_3_mean_val_test_gap": 0.051,
+    "top_3_mean_sharpe": 2.286,
+    "top_3_mean_val_test_gap": 0.056,
     "production_ready": "monitor",
-    "notes": "4 active seeds. borderline ensemble or marginal alpha",
-    "run_label": "sweep_mu_binary_minhold_v3",
+    "notes": "15 active seeds. borderline ensemble or marginal alpha",
+    "run_label": "mu-ppo-overtrade-fix",
     "leaderboard_csv": "data/experiment_leaderboard.csv"
   },
   "amzn": {
