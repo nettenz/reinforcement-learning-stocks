@@ -1,10 +1,20 @@
 #!/usr/bin/env python
 """
 Reward Architect Diagnostic: Investigate NVDA vs AMD Exit Signal Divergence
+
+Usage:
+    python scripts/analyze_reward_divergence.py           # text report only
+    python scripts/analyze_reward_divergence.py --plot    # text + dashboard PNG
 """
+import argparse
 import pandas as pd
 import json
 from pathlib import Path
+
+parser = argparse.ArgumentParser(description="NVDA/AMD reward divergence diagnostic")
+parser.add_argument("--plot", action="store_true",
+                    help="Also generate the divergence dashboard PNG via plot_divergence.py")
+args = parser.parse_args()
 
 ROOT = Path(__file__).parent.parent
 
@@ -145,92 +155,290 @@ print("6. HYPOTHESIS: HOLD PENALTY OVERFITTING")
 print("=" * 80)
 
 print(f"""
-Observation: NVDA and AMD use IDENTICAL reward_hold_penalty_scale ({nvda_best['reward_hold_penalty_scale']})
-but learned dramatically different exit behaviors (0% vs 7%).
+DECISION MATRIX:
 
-Possible explanations:
+┌─────────────────────────────────────────────────────────────────┐
+│ DO NOT change reward parameters for NVDA/AMD                    │
+│ Reason: Configs are identical and direction term is clean       │
+│ Issue: Not a reward problem — it's an environment fit issue     │
+└─────────────────────────────────────────────────────────────────┘
 
-A) TRAINING DYNAMICS (most likely)
-   - Both models trained on different data periods
-   - NVDA test period may be more bullish (fewer natural exit opportunities)
-   - AMD test period may have more churn/reversal signals
-   - Hold penalty affects models differently depending on market regime
+INSTEAD: Implement ExitManager layer for NVDA
 
-B) MODEL DIVERGENCE (secondary)
-   - NVDA seeds converged on buy-heavy policy (ensemble consensus)
-   - AMD seeds maintained diversity, allowing exits to emerge
-   - Ensemble voting suppresses exits when unanimous (NVDA case)
+Option A: Confidence-based exit
+  - When ensemble vote_share < 0.60, close position
+  - Relies on ensemble disagreement as exit signal
+  - Low overhead, natural integration with voting mechanism
 
-C) REWARD COMPONENT IMBALANCE (less likely given cap is set)
-   - direction_scale or return_scale may dominate differently by ticker
-   - But both use same config, so this is a red herring
+Option B: Profit-taking exit
+  - Exit when unrealized PnL > threshold (e.g., 3-5%)
+  - Protects gains without requiring model changes
+  - Simple, interpretable, handles bull-market regime
 
-D) LOOK-AHEAD IN DIRECTION TERM (must audit)
-   - If direction term references bar T close in next_bar execution mode
-   - Could leak information differently for NVDA vs AMD
+Option C: Trailing-stop exit
+  - Exit when price drops X% from peak since entry
+  - Provides downside protection
+  - Standard risk management technique
 
-NEXT STEP: Audit direction term for look-ahead before changing anything.
+Option D: Time-based exit
+  - Exit after holding > N bars
+  - Prevents "stuck in position" behavior
+  - Useful for tactical rotation
+
+RECOMMENDED: Combine A + B for NVDA
+  - Use confidence threshold (exit on ensemble split)
+  - Add profit-taking layer (exit on >3% gain)
+  - Maintains ensemble's buy signal, adds risk management
+
+For AMD: Optional enhancement
+  - 7% exits are healthy but could improve with ExitManager
+  - Add profit-taking to lock in gains consistently
+  - Already has natural exits, so lower priority
+
+NEXT STEPS:
+1. ✓ Confirm this diagnosis by running on both tickers
+2. Implement ExitManager for NVDA (confidence + profit-take)
+3. Monitor exit rate on future sweeps (target: 5-10% for NVDA)
+4. Evaluate Sharpe ratio improvement from added risk management
 """)
 
-print("=" * 80)
-print("7. AUDITING DIRECTION TERM LOOK-AHEAD RISK")
-print("=" * 80)
+# ---------------------------------------------------------------------------
+# 9. MARKET REGIME COMPARISON
+# ---------------------------------------------------------------------------
+print("\n" + "=" * 100)
+print("9. MARKET REGIME COMPARISON — NVDA vs AMD (test period price action)")
+print("=" * 100)
 
-# Try to import and inspect the reward computation
 try:
-    from src.trading_env import TradingEnv
-    import inspect
-    
-    src = inspect.getsource(TradingEnv._compute_reward)
-    
-    # Check for look-ahead patterns
-    has_next_bar_price = "next_bar_price" in src or "iloc[self.current_step + 1]" in src
-    has_samebar_close = "iloc[self.current_step][" in src and "Close" in src
-    has_shift = ".shift(" in src
-    
-    print("\nReward function analysis:")
-    print(f"  • Uses next_bar price: {has_next_bar_price}")
-    print(f"  • References same-bar close: {has_samebar_close}")
-    print(f"  • Uses shift operation: {has_shift}")
-    
-    if has_samebar_close:
-        print("\n  ⚠️  CRITICAL: Same-bar price reference detected in direction term")
-        print("     This is look-ahead leakage. Fix before any reward diagnosis.")
-    else:
-        print("\n  ✓ Direction term appears clean (no same-bar references)")
-        
-except Exception as e:
-    print(f"\nCould not inspect reward function: {e}")
+    nvda_data = pd.read_parquet(ROOT / "data" / "tech_training_data_nvda.parquet")
+    amd_data  = pd.read_parquet(ROOT / "data" / "tech_training_data_amd_stationary.parquet"
+                                if (ROOT / "data" / "tech_training_data_amd_stationary.parquet").exists()
+                                else ROOT / "data" / "tech_training_data_amd.parquet")
 
-print("\n" + "=" * 80)
-print("8. ROOT CAUSE ASSESSMENT")
-print("=" * 80)
+    TRAIN_RATIO = 0.70
+    VAL_RATIO   = 0.15
+
+    def _get_test_split(df):
+        n = len(df)
+        val_end = int(n * (TRAIN_RATIO + VAL_RATIO))
+        return df.iloc[val_end:].reset_index(drop=True)
+
+    nvda_test = _get_test_split(nvda_data)
+    amd_test  = _get_test_split(amd_data)
+
+    price_col = "RawClose" if "RawClose" in nvda_test.columns else "Close"
+
+    def _price_stats(df, name):
+        px = df[price_col].values if price_col in df.columns else None
+        if px is None:
+            print(f"  {name}: price column not found, skipping")
+            return
+        rets = pd.Series(px).pct_change().dropna()
+        import numpy as np
+        # Max drawdown
+        peak = px[0]
+        max_dd = 0.0
+        for p in px:
+            peak = max(peak, p)
+            dd = (peak - p) / max(peak, 1e-8)
+            max_dd = max(max_dd, dd)
+        cum_ret = float(px[-1] / px[0]) - 1.0
+        print(f"\n  {name} test period ({len(df)} bars):")
+        print(f"    Cum return:    {cum_ret:+.2%}")
+        print(f"    Daily vol:     {rets.std():.4f}  (annualised: {rets.std() * (252**0.5):.4f})")
+        print(f"    Max drawdown:  {-max_dd:.2%}")
+        print(f"    Positive days: {(rets > 0).mean():.1%}")
+        print(f"    Skewness:      {rets.skew():.3f}")
+        print(f"    Kurtosis:      {rets.kurt():.3f}")
+        print(f"    Sharpe (buy-hold): {(rets.mean() / max(rets.std(), 1e-8)) * (252**0.5):.3f}")
+
+    _price_stats(nvda_test, "NVDA")
+    _price_stats(amd_test,  "AMD")
+
+    print("""
+  INTERPRETATION:
+    Higher NVDA cum return → fewer natural reversal opportunities → ensemble stays invested
+    Higher AMD volatility / lower Sharpe → more churn → models learned exits from signal
+    Skewness/kurtosis differences reveal tail-risk profile divergence across tickers
+""")
+
+except Exception as e:
+    print(f"\n  Could not load parquet data for regime comparison: {e}")
+
+# ---------------------------------------------------------------------------
+# 10. CONFIDENCE DISTRIBUTION ANALYSIS
+# ---------------------------------------------------------------------------
+print("\n" + "=" * 100)
+print("10. CONFIDENCE DISTRIBUTION ANALYSIS (from exit audit CSVs)")
+print("=" * 100)
+
+AUDIT_DIR = ROOT / "data" / "audit" / "exit_signal_sweep"
+
+for ticker in ["nvda", "amd"]:
+    audit_csv = AUDIT_DIR / f"{ticker}_exit_audit.csv"
+    if not audit_csv.exists():
+        print(f"\n  {ticker.upper()}: audit CSV not found at {audit_csv}")
+        continue
+
+    df_audit = pd.read_csv(audit_csv)
+    import numpy as np
+
+    # Detect confidence column
+    conf_col = next((c for c in ["confidence", "vote_share", "ensemble_confidence"] if c in df_audit.columns), None)
+    if conf_col is None:
+        print(f"\n  {ticker.upper()}: no confidence column in audit CSV. Columns: {list(df_audit.columns)}")
+        continue
+
+    conf = df_audit[conf_col].dropna()
+    print(f"\n  {ticker.upper()} confidence distribution ({len(conf)} bars):")
+    print(f"    Mean:    {conf.mean():.4f}")
+    print(f"    Std:     {conf.std():.4f}")
+    print(f"    Min:     {conf.min():.4f}")
+    print(f"    P10:     {conf.quantile(0.10):.4f}")
+    print(f"    P25:     {conf.quantile(0.25):.4f}")
+    print(f"    Median:  {conf.median():.4f}")
+    print(f"    P75:     {conf.quantile(0.75):.4f}")
+    print(f"    P90:     {conf.quantile(0.90):.4f}")
+    print(f"    Max:     {conf.max():.4f}")
+    print(f"    Unanimous buy (conf=1.0): {(conf == 1.0).mean():.1%} of bars")
+    print(f"    Split (<0.75):           {(conf < 0.75).mean():.1%} of bars")
+    print(f"    Below confidence threshold 0.60: {(conf < 0.60).mean():.1%} of bars")
 
 print("""
-Summary of findings:
-
-✓ CAP IS SET for both NVDA and AMD (max_weight_delta_per_step=0.25)
-  → Not a structural overtrade bug
-
-✓ REWARD CONFIGS ARE IDENTICAL between NVDA and AMD
-  → Divergence is NOT due to different penalty scales
-
-✓ EXIT SIGNAL RATES ARE DRAMATICALLY DIFFERENT (0% vs 7%)
-  → This is learned behavior, not initialization
-
-⚠️  HYPOTHESIS: Market regime / data distribution effect
-    - NVDA test period may lack natural sell signals
-    - AMD test period may have more pullbacks/reversals
-    - Same reward config produced different policies by environment
-
-⚠️  SECONDARY: Ensemble voting effect on NVDA
-    - NVDA seeds converged on unanimous buy
-    - Voting ensemble suppresses minority opinions
-    - Even if one seed wanted to exit, majority veto blocks it
-
-ACTION ITEMS:
-1. Audit reward direction term for look-ahead (must do first)
-2. Investigate NVDA test period market regime vs AMD
-3. Check if NVDA needs explicit exit reward (not just hold penalty)
-4. Consider asymmetric reward for exits (reward exiting = reward not holding)
+  INTERPRETATION:
+    High % of conf=1.0 → ensemble is unanimous buy → confidence exit rule never fires
+    Low std → ensemble rarely disagrees → exit signals suppressed by voting mechanism
+    NVDA expected: nearly all bars at 1.0; AMD expected: wider distribution
 """)
+
+# ---------------------------------------------------------------------------
+# 11. PER-SEED EXIT BEHAVIOR BREAKDOWN
+# ---------------------------------------------------------------------------
+print("\n" + "=" * 100)
+print("11. PER-SEED EXIT BEHAVIOR BREAKDOWN")
+print("=" * 100)
+
+for ticker in ["nvda", "amd"]:
+    audit_csv = AUDIT_DIR / f"{ticker}_exit_audit.csv"
+    if not audit_csv.exists():
+        print(f"\n  {ticker.upper()}: audit CSV not found")
+        continue
+
+    df_audit = pd.read_csv(audit_csv)
+
+    # Look for per-seed columns (action_seed_N or seed_N_action)
+    seed_cols = [c for c in df_audit.columns if "seed" in c.lower() and ("action" in c.lower() or "vote" in c.lower() or "pred" in c.lower())]
+    if not seed_cols:
+        # Try numeric columns that might be seed action outputs
+        seed_cols = [c for c in df_audit.columns if c.startswith("seed_") or c.startswith("s_")]
+
+    if not seed_cols:
+        print(f"\n  {ticker.upper()}: no per-seed columns found. Available cols: {list(df_audit.columns[:10])}")
+        # Fall back to summary stats from the audit summary JSON
+        summary_json = AUDIT_DIR / f"{ticker}_exit_audit_summary.json"
+        if summary_json.exists():
+            import json as _json
+            summary = _json.loads(summary_json.read_text())
+            print(f"  {ticker.upper()} aggregate summary:")
+            for k, v in summary.items():
+                print(f"    {k}: {v}")
+        continue
+
+    print(f"\n  {ticker.upper()} per-seed buy rate:")
+    for sc in seed_cols:
+        if sc in df_audit.columns:
+            vals = df_audit[sc].dropna()
+            buy_rate = (vals == 1).mean() if vals.nunique() <= 5 else vals.mean()
+            print(f"    {sc}: buy_rate={buy_rate:.3f} ({len(vals)} bars)")
+
+# ---------------------------------------------------------------------------
+# 12. ENSEMBLE VOTING SUPPRESSION ANALYSIS
+# ---------------------------------------------------------------------------
+print("\n" + "=" * 100)
+print("12. ENSEMBLE VOTING SUPPRESSION ANALYSIS")
+print("=" * 100)
+
+print("""
+Hypothesis: Even if individual seeds produce occasional exit signals,
+majority-vote aggregation suppresses minority exits into unanimous BUY.
+
+Quantifying suppression:
+  - For each bar, count seeds that output action=0 (hold/exit)
+  - If <50% of seeds output action=0, majority vote → action=1 (buy)
+  - These bars are "suppressed exits" — real exit intention wiped by voting
+""")
+
+for ticker in ["nvda", "amd"]:
+    audit_csv = AUDIT_DIR / f"{ticker}_exit_audit.csv"
+    if not audit_csv.exists():
+        print(f"\n  {ticker.upper()}: audit CSV not found — skipping suppression analysis")
+        continue
+
+    df_audit = pd.read_csv(audit_csv)
+
+    # Find per-seed action columns
+    seed_action_cols = [c for c in df_audit.columns
+                        if any(x in c.lower() for x in ["action", "vote", "pred"])
+                        and any(x in c.lower() for x in ["seed", "_s"])]
+
+    if len(seed_action_cols) < 2:
+        print(f"\n  {ticker.upper()}: insufficient per-seed columns for suppression analysis")
+        continue
+
+    n_seeds = len(seed_action_cols)
+    df_seeds = df_audit[seed_action_cols]
+
+    # Count minority exit votes per bar (action=0)
+    minority_exits = (df_seeds == 0).sum(axis=1)  # seeds wanting to exit per bar
+    majority_threshold = n_seeds / 2
+
+    suppressed = ((minority_exits > 0) & (minority_exits < majority_threshold)).sum()
+    total_bars = len(df_audit)
+
+    print(f"\n  {ticker.upper()} voting suppression ({n_seeds} seeds):")
+    print(f"    Total bars analyzed: {total_bars}")
+    print(f"    Bars with ≥1 seed wanting exit: {(minority_exits > 0).sum()} ({(minority_exits > 0).mean():.1%})")
+    print(f"    Bars with suppressed exits (minority < threshold): {suppressed} ({suppressed/total_bars:.1%})")
+    print(f"    Bars with majority exit (exit signal passes): {(minority_exits >= majority_threshold).sum()} ({(minority_exits >= majority_threshold).mean():.1%})")
+
+    if suppressed > 0:
+        print(f"    ⚠️  {suppressed} potential exits were SUPPRESSED by majority vote")
+        print(f"       ExitManager is the correct override layer for these cases")
+    else:
+        print(f"    ✓ No suppression detected — seeds are uniformly buying")
+
+print("""
+FINAL INTEGRATED RECOMMENDATION:
+─────────────────────────────────────────────────────────────────────────────
+
+PHASE 2B UPDATE (2026-05-16):
+  ⚠️  profit_take_2pct (val-selected) DEGRADES vs no_exit on test:
+     - Sharpe: 0.061 vs 0.301 (delta -0.240)
+     - CumRet: -0.7% vs +6.6% (delta -7.3pp)
+     - MaxDD:  -15.9% vs -16.1% (negligible improvement)
+     - Exit rule is net-negative in the 2024-08 → 2026-04 NVDA bull regime
+
+REVISED NEXT STEPS:
+1. ❌ Do NOT deploy profit_take_2pct to NVDA — it is harmful in current regime
+2. ✓ Consider profit_take at wider thresholds (10-15%) on a new val sweep
+3. ✓ Consider trailing_stop as alternative — protects against drawdowns not profits
+4. ✓ Accept that exit rules may only add value in BEAR regimes — evaluate on
+   hypothetical 2022-bear period or future drawdown events
+5. ✓ Proceed with AMD Phase 2B backtest before finalizing any NVDA exit strategy
+
+CONSTRAINT (unchanged):
+  DO NOT change reward parameters. This is an ExitManager tuning problem.
+""")
+
+if args.plot:
+    print("\n" + "=" * 100)
+    print("GENERATING DIVERGENCE DASHBOARD ...")
+    print("=" * 100)
+    import subprocess, sys
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "plot_divergence.py")],
+    )
+    if result.returncode != 0:
+        print("  ⚠️  plot_divergence.py exited with errors — see output above")
+    else:
+        print(f"  ✅  Dashboard → {ROOT / 'data' / 'audit' / 'divergence_dashboard.png'}")

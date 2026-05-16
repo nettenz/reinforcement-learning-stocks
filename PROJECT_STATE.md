@@ -1,16 +1,16 @@
 # Project State: Reinforcement Learning Stocks
-**Date:** May 14, 2026  
-**Phase:** Exit Signal Phase 1 (AAPL Deferred — Ensemble at 5/6)
+**Date:** May 16, 2026  
+**Phase:** Exit Signal Phase 3 — Dashboard Integration
 
 ---
 
 ## 1. Executive Summary
 
-The foundational trading architecture has undergone a **major generational shift**. The **Binary PPO + Min-Hold Constraints** architecture has successfully promoted **5 tickers**: NVDA, AMD, MU, AMZN, and GOOGL — all passing Exp 9 walk-forward gates.
+The **Binary PPO + Min-Hold Constraints** architecture has promoted **3 tickers**: NVDA, AMD, and MU. AMZN and GOOGL were re-assessed after migration to Mac — their Windows-trained champions are not reproducible on updated test splits (drift 0.54–0.57) and are formally deferred alongside AAPL.
 
-**AAPL is formally deferred.** After 7 sweeps across all architectural levers (penalty scaling, feature space, min_hold_bars, entropy up to 0.20, 100k timesteps), AAPL produces 0.0% trade rate in *both* val and test across every config. The policy finds no reward gradient above zero in the training period itself. AAPL's signal-to-noise ratio is architecturally incompatible with Binary PPO under these constraints.
+**Exit Signal Phase 1 (ExitManager implementation) and Phase 2 (backtest/tuning) are complete.** Phase 2 has been re-run against the Binary PPO ensemble (replacing the stale SAC-era results). Key finding: the Binary PPO NVDA ensemble (avg_hold 1.2–1.4 bars, `min_hold_bars=1`) behaves very differently from the prior SAC ensemble (avg_hold 6.8–9.6 bars). Baselines and success criteria in `scripts/backtest_exit_rules.py` must be updated.
 
-**Active work has shifted to Exit Signal Phase 1** — `src/exit_manager.py` with confidence-based, trailing stop, and time-based exit rules. This adds value across all 5 promoted tickers simultaneously.
+**Active work: Exit Signal Phase 3** — Define cross-repo signal contract and wire `ExitManager` into `backend/signals/agent.py`.
 
 ---
 
@@ -87,17 +87,18 @@ We successfully recovered "dropped" tickers by switching from continuous SAC to 
 
 | Ticker | Result | Alpha vs QQQ | Status |
 |--------|--------|--------------|--------|
-| **GOOGL** | **PASS** | **+0.66** | Promoted (Seed 13) |
-| **AMZN** | **PASS** | **+0.11** | Promoted (Stage 1 v2) |
-| **MU** | **PASS** | **+0.15** | Promoted (Stage 1 v2) |
-| **NVDA** | **PASS** | **+0.11–+0.52** | **Promoted Binary PPO** |
-| **AAPL** | **DEFERRED** | — | Architecturally incompatible with Binary PPO |
+| **NVDA** | **PASS** | **+0.11–+0.52** | ✅ Promoted Binary PPO |
+| **AMD** | **PASS** | **+0.28** | ✅ Promoted Binary PPO |
+| **MU** | **PASS** | **+1.82** | ✅ Promoted Binary PPO (Gate 6 waiver) |
+| **GOOGL** | **DEFERRED** | — | Drift wall 0.55–0.57, 5 sweeps exhausted |
+| **AMZN** | **DEFERRED** | — | Drift wall 0.54–0.55, always-long bias |
+| **AAPL** | **DEFERRED** | — | 7 sweeps, 0% trade rate, architecturally incompatible |
 
-**Key Finding:** The combination of **PPO + Binary Actions (Discrete 2) + `min_hold_bars=3`** is the new "Gold Standard" for most mega-cap tech. **Exception: NVDA requires `min_hold_bars=1`** due to its short-duration signal distribution.
+**Key Finding:** The combination of **PPO + Binary Actions (Discrete 2) + `min_hold_bars=3`** is the "Gold Standard" for most mega-cap tech. **Exception: NVDA requires `min_hold_bars=1`** due to its short-duration signal distribution.
 
-**AAPL deferral rationale:** 7 sweeps, all levers exhausted (penalties, features, min_hold, entropy 0.02–0.20, 80–100k timesteps). Gate 4 drift=0.000 with 0.0% val+test trade rate = no reward gradient above zero in training itself. AAPL is a lower-momentum consumer tech play vs AI infrastructure (NVDA/AMD/GOOGL) — its signal is too noisy for the Binary PPO architecture.
+**AAPL deferral rationale:** 7 sweeps, all levers exhausted. Gate 4 drift=0.000 with 0.0% val+test trade rate = no reward gradient above zero in training itself. AAPL's signal-to-noise ratio is architecturally incompatible with Binary PPO.
 
-**Key Finding:** The combination of **PPO + Binary Actions (Discrete 2) + `min_hold_bars=3`** is the new "Gold Standard" for most mega-cap tech. **Exception: NVDA requires `min_hold_bars=1`** due to its short-duration signal distribution.
+**AMZN/GOOGL deferral rationale:** Both tickers had Windows-trained champions in the leaderboard that showed strong performance, but after migration to Mac, updated test splits produced drift walls (0.54–0.57) not achievable across 5+ sweeps each.
 
 **Architectural lesson:** Min-hold constraint is ticker-specific. Always ablate `min_hold_bars` before assuming penalty or feature space is the blocker.
 
@@ -140,31 +141,29 @@ DEFAULT_TICKER = "nvda"
 
 ## 8. Active Work & Next Steps
 
-### Immediate
-1. **Exit Signal Phase 1** — Primary focus. `src/exit_manager.py` with:
-   - **Confidence-based exit:** Exit position when ensemble confidence drops below threshold
-   - **Trailing stop:** Exit after N bars of consecutive losses vs entry price
-   - **Time-based:** Maximum hold duration guard
-   - Backtest on NVDA test split first (clearest signal, most liquid, 428 test rows)
-2. **Resolve OS-Level File Descriptor Limit** — Session workaround: `ulimit -n 65536`. Permanent fix in `SubprocVecEnv` deferred.
+### Immediate (Exit Signal Phase 3)
+1. **Capture NVDA no_exit test baseline:**
+   ```zsh
+   python scripts/backtest_exit_rules.py --ticker nvda --config no_exit --test-only
+   ```
+2. **Update `BASELINES` dict and success criteria** in `scripts/backtest_exit_rules.py` — current values are SAC-era and invalid for Binary PPO.
+3. **Re-run AMD exit backtest** against Binary PPO ensemble:
+   ```zsh
+   python scripts/backtest_exit_rules.py --ticker amd
+   ```
+4. **Write `tests/test_exit_manager.py`** — boundary conditions, reset(), exit-override-hold.
+5. **Define Phase 3 cross-repo signal contract:** `{date, action, confidence, exit_fired, exit_rule}`
+6. **Create `backend/signals/agent.py`** in web-app repo — per-ticker feature pipeline (NVDA=raw, AMD=stationary).
+
+### Near-term (Phase 3–4)
+7. **Wire into `backend/app.py`** — `/api/signals/:symbol` endpoint.
+8. **Frontend: buy/exit markers on `TradingChart.jsx`**.
+9. **Alpaca live feed** — WebSocket tick → recompute signal → push to frontend.
 
 ### Deferred
-- **AAPL** — Formally deferred. Architecturally incompatible with Binary PPO. May revisit with a different architecture (SAC continuous, or long/short binary) in a future phase.
+- **AAPL** — Architecturally incompatible. May revisit with SAC continuous or long/short binary.
 - **ALAB re-screen** — mid-2027
-- **Option B (long/short)** — full architecture rewrite after exit signal layer validated
-
-**Next repo step:** Implement `src/exit_manager.py` with Phase 1 exit rules.
-
-### Near-term
-3. **Exit signal backtesting** — tune params on val, evaluate on test. No re-tuning on test.
-4. **Dashboard exit controls** — `ExitControls.jsx` with rule selector and parameter sliders.
-5. **Live signal feed** — WebSocket tick → signal update → frontend overlay.
-
-### Deferred
-6. **ALAB re-screen** — mid-2027
-7. **Option B (long/short)** — full architecture rewrite after exit signal layer validated
-8. **AI Sector Pipeline Phase 1** — FinBERT upgrade per `ai_sector_pipeline_spec.jsx`
-9. **BTC/crypto integration** — scope unresolved
+- **Option B (long/short)** — after exit signal layer validated
 
 ---
 

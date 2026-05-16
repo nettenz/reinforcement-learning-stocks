@@ -276,5 +276,80 @@ python scripts/sanity_scan.py --root-dir .
 
 See `docs/SANITIZE_APPLY_GUIDE.md` for detailed documentation.
 
+---
+
+### Exit Signal & Diagnostics (Phase 2 complete — Binary PPO)
+
+Rule-based exit layer (ExitManager) over the Binary PPO multi-seed ensemble. All scripts assume the venv is active: `source .venv/bin/activate`.
+
+#### ExitManager Backtest (val sweep → test evaluation)
+
+```zsh
+# Full val sweep + test evaluation for NVDA
+python scripts/backtest_exit_rules.py --ticker nvda
+
+# Test-only evaluation for a specific config
+python scripts/backtest_exit_rules.py --ticker nvda --config no_exit --test-only
+python scripts/backtest_exit_rules.py --ticker nvda --config profit_take_2pct --test-only
+
+# Run AMD (requires ensemble_config.json run_label = "amd-ppo-hold-fix")
+python scripts/backtest_exit_rules.py --ticker amd
+
+# Change voting method
+python scripts/backtest_exit_rules.py --ticker nvda --voting-method weighted
+```
+
+Output: `data/audit/exit_backtest/backtest_summary.md`
+
+**Phase 2B baseline (NVDA, Binary PPO — captured 2026-05-16):**
+
+| Config | Test Sharpe | Test CumRet | Test MaxDD | ExitRate |
+|--------|------------|------------|-----------|----------|
+| **no_exit** | **0.301** | +6.6% | -16.1% | 0.0% |
+| profit_take_2pct | 0.061 | -0.7% | -15.9% | 4.4% |
+
+> ⚠️ `profit_take_2pct` (val-selected) **degrades vs no_exit** in the current bull regime (Sharpe −0.240, CumRet −7.3pp). Do not deploy. See `EXIT_SIGNAL_TODO.md` for next steps.
+
+#### Reward Divergence Diagnostic
+
+12-section analysis of why NVDA produces 0% exit signals while AMD produces 7%:
+
+```zsh
+# Text report only
+python scripts/analyze_reward_divergence.py
+
+# Text report + 6-panel dashboard PNG
+python scripts/analyze_reward_divergence.py --plot
+```
+
+Or generate the dashboard standalone:
+
+```zsh
+python scripts/plot_divergence.py
+# → data/audit/divergence_dashboard.png
+```
+
+**Dashboard panels:**
+
+| Panel | Content |
+|-------|---------|
+| Top-left | NVDA vs AMD cumulative return (test period — regime comparison) |
+| Top-center | Daily return violin plots (volatility / churn divergence) |
+| Top-right | Ensemble confidence distribution (NVDA unanimous vs AMD diverse) |
+| Bottom-left | Val-Sharpe ablation across all 14 exit rule configs |
+| Bottom-center | Phase 2B scorecard: `no_exit` vs `profit_take_2pct` per metric |
+| Bottom-right | Signal composition: BUY / HOLD / EXIT fraction per ticker |
+
+Key files:
+- `scripts/analyze_reward_divergence.py` — full diagnostic (12 sections, `--plot` flag)
+- `scripts/plot_divergence.py` — standalone dashboard generator
+- `scripts/reward_divergence_diagnostic.py` — compact report (sections 1–8)
+- `scripts/backtest_exit_rules.py` — ExitManager ablation runner
+- `src/exit_manager.py` — ExitManager implementation (Phase 1 complete)
+- `EXIT_SIGNAL_TODO.md` — phase-by-phase task list with current results
+- `CONTEXT_MAP.md` — full file dependency map and open work items
+
+---
+
 ## Development Strategy:
 The long-term goal is to implement a robust **Shorting Strategy** (see `docs/PLAN.md`).

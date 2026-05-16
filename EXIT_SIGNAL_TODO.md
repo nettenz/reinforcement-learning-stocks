@@ -1,8 +1,8 @@
 # Exit Signal — TODO Plan
 **Created:** 2026-04-30  
-**Updated:** 2026-05-06 (Phase 2 complete — multi-seed backtest done)  
-**Status:** Phase 2 complete. Phase 3 (dashboard integration) is next.  
-**Approach:** Rule-based ExitManager layer on top of existing buy/hold ensemble agents
+**Updated:** 2026-05-16 (Phase 2 re-run against Binary PPO ensemble; Phase 3 starting)  
+**Status:** Phase 2 complete (Binary PPO results). Phase 3 (dashboard integration) is next.  
+**Approach:** Rule-based ExitManager layer on top of existing Binary PPO buy/hold ensemble agents
 
 ---
 
@@ -52,10 +52,9 @@
 - [x] **Create `src/exit_manager.py`** ✅
   - `ExitManager` class with `rule`, `params`, `reset()`, `should_exit()` interface
   - Implemented rules: `confidence`, `trailing_stop`, `time`, `profit_take`, `composite`
-  - **Actual best params (from Phase 2 backtest):**
-    - NVDA: `profit_take(threshold=0.08)` — best val Sharpe → test Sharpe 0.767, test alpha -0.14, dd -34%
-    - AMD: `profit_take(threshold=0.05)` — best val Sharpe → test Sharpe 0.761, dd -49%
-  - Note: `profit_take_2pct` had highest val Sharpe (2.68) but was overfit — did not hold on test
+  - Phase 2 best params (Binary PPO, see tables below):
+    - NVDA: `profit_take_2pct` selected by val sweep (exit_rate 6.1%, within [0.02, 0.15] gate); final params TBD after no_exit test run
+    - AMD: Not yet re-run against Binary PPO ensemble
 
 - [x] **Wire ExitManager into `src/ensemble.py` (SparseEnsemble) or create `src/trading_agent.py`** ✅
   - Pattern: `EnsembleAgent.step(obs, position_state)` returns `(action, confidence, exit_fired, debug_info)`
@@ -70,12 +69,15 @@
 
 ### PHASE 2 — Backtesting (Week 2)
 
+> **⚠️ IMPORTANT: Two separate result sets exist.** Phase 2 was originally run against the old SAC ensemble. After the Binary PPO migration, Phase 2 was re-run on May 16, 2026. **The SAC-era results below are stale and NOT comparable to Binary PPO.** Use the Phase 2B (Binary PPO) tables for all current decisions.
+
 - [x] **Create `scripts/backtest_exit_rules.py`** ✅
   - Outputs: `data/audit/exit_backtest/{nvda,amd}_{val,test}_result(s).csv`
+  - **Bugs fixed 2026-05-16:** (1) Windows→Mac path remapping for old leaderboard rows, (2) `run_label_filter` now wired from `ensemble_config.json` — previously loader picked globally best Sharpe per seed regardless of sweep label, (3) `_pick_market_cols(use_stationary)` now routes NVDA to 10-col RAW space — previously always returned 14 stationary cols, corrupting obs and producing avg_hold=1.0 bars
 
-- [x] **Tune exit parameters on NVDA val split only** ✅
+- [x] **Phase 2A (SAC era — STALE, do not use for Binary PPO decisions)**
 
-  **NVDA val sweep results (sorted by Sharpe):**
+  <details><summary>SAC-era NVDA val results (stale, ensemble: pre-PPO)</summary>
 
   | Config | Val Sharpe | Alpha | Max DD | Cum Return | Avg Hold | Exit Rate | Win Rate |
   |--------|-----------|-------|--------|-----------|----------|-----------|----------|
@@ -83,40 +85,62 @@
   | profit_take_3pct | 2.532 | -0.724 | -21.5% | +517% | 3.7 bars | 19.7% | 67.9% |
   | composite_nvda | 2.377 | -2.112 | -19.7% | +378% | 3.7 bars | 24.9% | 65.0% |
   | **no_exit (baseline)** | 2.340 | -1.332 | -22.2% | +456% | 6.8 bars | 0.0% | 57.4% |
-  | time_20bars | 2.293 | -1.541 | -24.3% | +435% | 6.7 bars | 0.5% | 57.4% |
   | profit_take_8pct | 2.208 | -1.854 | -22.1% | +404% | 5.3 bars | 7.3% | 60.9% |
-  | profit_take_5pct | 2.184 | -2.144 | -23.9% | +375% | 4.4 bars | 14.6% | 63.9% |
-  | trailing_10pct | 2.167 | -1.907 | -26.1% | +398% | 6.6 bars | 1.2% | 56.4% |
-  | trailing_5pct | 1.984 | -3.066 | -24.4% | +283% | 6.0 bars | 9.9% | 54.4% |
-  | trailing_3pct | 1.538 | -4.397 | -24.5% | +149% | 5.6 bars | 17.1% | 56.9% |
 
-  **NVDA test result (best val param → held out):**
+  SAC-era NVDA test result: `profit_take_8pct` → Sharpe 0.767, alpha -0.137, max_dd -34.4%, exit_rate 5.2%, avg_hold 9.6 bars
 
-  | Config | Test Sharpe | Alpha | Max DD | Cum Return | Exit Rate | Win Rate |
-  |--------|------------|-------|--------|-----------|-----------|----------|
-  | profit_take_8pct ✅ | 0.767 | -0.137 | -34.4% | +48.8% | 5.2% | 56.4% |
+  </details>
 
-  > **Note:** `profit_take_2pct` won on val (Sharpe 2.68) but was overfit to a short-hold regime. `profit_take_8pct` was selected by val metric honesty — val Sharpe 2.21, test Sharpe 0.77. Val period performance is inflated for all configs due to the 2023-2024 bull run.
+  <details><summary>SAC-era AMD val/test results (stale, ensemble: pre-PPO)</summary>
 
-- [x] **Repeat on AMD once NVDA is validated** ✅
+  SAC-era AMD test result: `profit_take_5pct` → Sharpe 0.761, alpha -0.938, max_dd -49.3%, exit_rate 10.8%, avg_hold ~4 bars
 
-  **AMD val sweep results (sorted by Sharpe):**
+  </details>
 
-  | Config | Val Sharpe | Alpha | Max DD | Cum Return | Avg Hold | Exit Rate | Win Rate |
-  |--------|-----------|-------|--------|-----------|----------|-----------|----------|
-  | profit_take_5pct | **0.670** | -0.583 | -30.6% | +38.2% | 3.7 bars | 8.7% | 51.3% |
-  | profit_take_2pct | 0.658 | -0.607 | -46.7% | +35.8% | 3.2 bars | 18.3% | 57.5% |
-  | profit_take_3pct | 0.621 | -0.630 | -52.6% | +33.6% | 3.4 bars | 13.2% | 54.8% |
-  | composite_nvda | 0.571 | -0.676 | -51.1% | +28.9% | 3.4 bars | 19.3% | 51.2% |
-  | trailing_5pct | 0.508 | -0.729 | -39.4% | +23.6% | 4.3 bars | 9.4% | 48.0% |
-  | profit_take_8pct | 0.492 | -0.742 | -38.2% | +22.4% | 4.1 bars | 4.7% | 47.4% |
-  | **no_exit (baseline)** | 0.312 | -0.890 | -39.3% | +7.5% | 4.5 bars | 0.0% | 51.4% |
+- [x] **Phase 2B (Binary PPO — current, re-run 2026-05-16)**
 
-  **AMD test result (best val param → held out):**
+  **NVDA** (`nvda-ppo-minhold1-extended`, seeds 3/13/7/42, voting):
 
-  | Config | Test Sharpe | Alpha | Max DD | Cum Return | Exit Rate | Win Rate |
-  |--------|------------|-------|--------|-----------|-----------|----------|
-  | profit_take_5pct ✅ | 0.761 | -0.938 | -49.3% | +48.9% | 10.8% | 47.4% |
+  > Architecture note: Binary PPO with `min_hold_bars=1` produces avg_hold 1.2–1.4 bars. This is **by design** — fundamentally different from SAC ensemble (avg_hold 6.8–9.6 bars). Do not compare val Sharpe values between Phase 2A and 2B.
+
+  | Config | Val Sharpe | Val ExitRate | Val AvgHold | Val Trades | Val WinRate |
+  |--------|-----------|-------------|------------|-----------|------------|
+  | profit_take_8pct | **0.673** | 0.5% | 1.4 | 75 | 57.3% |
+  | profit_take_2pct | 0.636 | 6.1% ✅ | 1.3 | 73 | 56.2% |
+  | profit_take_3pct | 0.636 | 3.8% ✅ | 1.3 | 73 | 56.2% |
+  | profit_take_5pct | 0.600 | 1.2% | 1.3 | 75 | 56.0% |
+  | no_exit (baseline) | 0.588 | 0.0% | 1.4 | 76 | 56.6% |
+  | trailing_3pct | 0.345 | 3.8% ✅ | 1.3 | 75 | 54.7% |
+  | trailing_5pct | 0.270 | 1.6% | 1.3 | 76 | 56.6% |
+
+  Selected by val sweep (highest Sharpe within exit_rate [0.02, 0.15]): **`profit_take_2pct`**
+
+  | Config | Test Sharpe | Test MaxDD | Test CumRet | Test ExitRate | AvgHold | WinRate |
+  |--------|------------|-----------|------------|--------------|---------|--------|
+  | profit_take_2pct ✅ | 0.061 | -15.9% | -0.7% | 4.4% | 1.2 | 53.7% |
+  | no_exit (baseline) | **0.301** | -16.1% | +6.6% | 0.0% | 1.2 | 56.1% |
+
+  > **🚨 Critical finding:** `profit_take_2pct` (val-selected) **degrades performance vs no_exit** on the test split: Sharpe -0.240 delta, CumRet -7.3pp delta, WinRate -2.4pp delta. MaxDD improvement is negligible (+0.2pp). The exit rule is net-negative in the current bull-market test regime (2024-08 → 2026-04).
+  >
+  > **Implication:** Exit rules as currently parameterized provide no alpha or risk benefit on NVDA test. The risk-management rationale (drawdown protection) is valid in theory but the 2024-2026 NVDA bull run does not provide enough corrective price action for profit-taking to help. Consider: (1) wider profit-take thresholds (10-15%), (2) trailing stop instead of profit-take, or (3) accept that exit rules are protective against *tail* events and evaluate on a bear-regime holdout.
+
+- [ ] **Phase 2B (Binary PPO) — AMD** — **NOT YET RUN**
+  - AMD was not re-run against the Binary PPO `amd-ppo-hold-fix` ensemble
+  - Command: `python scripts/backtest_exit_rules.py --ticker amd`
+  - AMD `ensemble_config.json` must have `run_label` set to `"amd-ppo-hold-fix"` before running
+
+- [ ] **Tune exit parameters on AMD val split only** (Binary PPO)
+
+- [x] **Update `BASELINES` dict and success criteria in script** ✅ (done 2026-05-16)
+  - NVDA no_exit baseline: Sharpe=0.301, MaxDD=-16.1%, CumRet=+6.6%, WinRate=56.1%
+  - Success criteria now **relative** to no_exit (delta-Sharpe, drawdown tolerance, exit_rate gate, win_rate gate)
+  - Removed stale SAC-era absolute thresholds (Sharpe ≥ 1.828, MaxDD > -0.045, avg_hold [10,30])
+  - AMD baselines TBD — run `--ticker amd --config no_exit --test-only` after AMD Phase 2B
+
+- [ ] **Complete `scripts/analyze_reward_divergence.py` missing functions**
+  - Script currently implements sections 1–8 (structural cap, reward config, behavior comparison, audit results, diagnosis, hypothesis, look-ahead audit, root cause)
+  - **NOT YET IMPLEMENTED:** Market regime comparison (NVDA vs AMD test period price distributions), confidence distribution plots, per-seed exit behavior breakdown, ensemble voting suppression analysis
+  - These were blocked pending Phase 2B backtest results — now unblocked
 
 ---
 

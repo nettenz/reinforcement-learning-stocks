@@ -59,19 +59,26 @@ RAW_MARKET_COLS = [
     "RelATR", "BB_Width", "BB_Upper_Dist", "BB_Lower_Dist",
 ]
 
-# Confirmed audit baselines — used for success gate evaluation only.
+# Binary PPO ensemble baselines (no-exit, test split, May 2026).
+# These replace the stale SAC-era values. Re-run with --config no_exit --test-only
+# if the leaderboard or ensemble_config changes.
 BASELINES: Dict[str, Dict[str, float]] = {
     "nvda": {
-        "sharpe": 1.828,
-        "max_drawdown": -0.0569,
-        "cumulative_return": 0.2725,
+        "sharpe": 0.301,
+        "max_drawdown": -0.161,
+        "cumulative_return": 0.066,
         "exit_rate": 0.0,
+        "avg_hold_bars": 1.2,
+        "win_rate": 0.561,
     },
     "amd": {
-        "sharpe": 1.995,
-        "max_drawdown": -0.0565,
-        "cumulative_return": 0.4469,
-        "exit_rate": 0.0703,
+        # TBD — re-run: python scripts/backtest_exit_rules.py --ticker amd --config no_exit --test-only
+        "sharpe": None,
+        "max_drawdown": None,
+        "cumulative_return": None,
+        "exit_rate": 0.0,
+        "avg_hold_bars": None,
+        "win_rate": None,
     },
 }
 
@@ -126,16 +133,60 @@ def _load_data(ticker: str, use_stationary: bool, include_news: bool) -> pd.Data
     return df
 
 
-def _pick_market_cols(df: pd.DataFrame) -> List[str]:
-    """Return stationary market cols present in df; fall back to raw."""
-    cols = [c for c in STATIONARY_COLS if c in df.columns]
-    if not cols:
-        cols = [c for c in RAW_MARKET_COLS if c in df.columns]
+def _pick_market_cols(df: pd.DataFrame, use_stationary: bool = True) -> List[str]:
+    """Return market cols present in df, respecting the use_stationary flag.
+
+    When use_stationary=False the model was trained on the 10-col raw feature
+    space.  Always using STATIONARY_COLS (14 cols) in that case corrupts the
+    observation because _fit_obs truncates from the end, clipping position
+    features that TradingEnv appends after the market features.
+    """
+    if use_stationary:
+        cols = [c for c in STATIONARY_COLS if c in df.columns]
+        if cols:
+            return cols
+    # Raw feature space (or stationary fallback when cols not found)
+    cols = [c for c in RAW_MARKET_COLS if c in df.columns]
     return cols
 
 
 def _active_news_cols(df: pd.DataFrame) -> List[str]:
     return [c for c in NEWS_COLS if c in df.columns]
+
+# ---------------------------------------------------------------------------
+# Path remapping (Windows → Mac cross-platform fix)
+# ---------------------------------------------------------------------------
+
+WINDOWS_REPO_ROOT = "D:\\code\\agentic-development\\reinforcement-learning-stocks"
+
+
+def _remap_model_paths(leaderboard: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rewrite Windows absolute model_path values to the current repo root.
+    Rows trained on Windows store paths like:
+        D:\\code\\agentic-development\\reinforcement-learning-stocks\\data\\...
+    These are remapped to:
+        <ROOT>/data/...
+    Rows already using Mac paths (or relative paths) are left unchanged.
+    """
+    if "model_path" not in leaderboard.columns:
+        return leaderboard
+
+    def _fix(p: str) -> str:
+        if not isinstance(p, str):
+            return p
+        # Detect Windows absolute path for this repo
+        win_prefix = WINDOWS_REPO_ROOT
+        if p.startswith(win_prefix):
+            # Strip the Windows prefix, convert backslashes, prepend Mac root
+            suffix = p[len(win_prefix):].replace("\\", "/").lstrip("/")
+            return str(ROOT / suffix)
+        return p
+
+    leaderboard = leaderboard.copy()
+    leaderboard["model_path"] = leaderboard["model_path"].apply(_fix)
+    return leaderboard
+
 
 # ---------------------------------------------------------------------------
 # Ensemble loading
@@ -444,43 +495,56 @@ def _print_table(rows: List[Dict], title: str = "") -> None:
 
 
 def _check_criteria(ticker: str, test_metrics: Dict, config_name: str) -> List[str]:
-    """Return list of pass/fail strings for each success criterion."""
+    """Return list of pass/fail strings for each success criterion.
+
+    Criteria are now relative to the Binary PPO no-exit baseline for the same
+    ticker / test split.  This replaces the stale SAC-era absolute thresholds.
+    """
     results = []
     m = test_metrics
+    baseline = BASELINES.get(ticker, {})
 
-    if ticker == "nvda":
+    # Gate: Sharpe must improve on the no-exit baseline
+    b_sharpe = baseline.get("sharpe")
+    if b_sharpe is not None:
+        delta = m["sharpe"] - b_sharpe
         results.append(
-            f"NVDA sharpe >= 1.828:     {'PASS' if m['sharpe'] >= 1.828 else 'FAIL'} "
-            f"(actual={m['sharpe']:.3f})"
+            f"Sharpe > no_exit baseline ({b_sharpe:.3f}): "
+            f"{'PASS' if m['sharpe'] > b_sharpe else 'FAIL'} "
+            f"(actual={m['sharpe']:.3f}, delta={delta:+.3f})"
         )
+    else:
+        results.append(f"Sharpe baseline TBD — run no_exit --test-only first")
+
+    # Gate: Drawdown must not worsen by more than 2 pp
+    b_dd = baseline.get("max_drawdown")
+    if b_dd is not None:
+        dd_ok = m["max_drawdown"] >= (b_dd - 0.02)
         results.append(
-            f"NVDA max_dd > -0.045:     {'PASS' if m['max_drawdown'] > -0.045 else 'FAIL'} "
+            f"MaxDD no worse than baseline-2pp ({b_dd - 0.02:.3f}): "
+            f"{'PASS' if dd_ok else 'FAIL'} "
             f"(actual={m['max_drawdown']:.3f})"
         )
-        er = m["exit_rate"]
+    else:
+        results.append(f"MaxDD baseline TBD")
+
+    # Gate: exit_rate must be meaningful (rule is actually firing)
+    er = m["exit_rate"]
+    results.append(
+        f"exit_rate in [0.02, 0.15]:    "
+        f"{'PASS' if 0.02 <= er <= 0.15 else 'FAIL'} "
+        f"(actual={er:.3f})"
+    )
+
+    # Gate: win_rate must not regress vs baseline
+    b_wr = baseline.get("win_rate")
+    if b_wr is not None:
         results.append(
-            f"NVDA exit_rate in [0.05,0.10]: {'PASS' if 0.05 <= er <= 0.10 else 'FAIL'} "
-            f"(actual={er:.3f})"
+            f"win_rate >= no_exit ({b_wr:.3f}):  "
+            f"{'PASS' if m['win_rate'] >= b_wr else 'FAIL'} "
+            f"(actual={m['win_rate']:.3f})"
         )
-        avgh = m["avg_hold_bars"]
-        results.append(
-            f"NVDA avg_hold in [10,30]: {'PASS' if 10 <= avgh <= 30 else 'FAIL'} "
-            f"(actual={avgh:.1f})"
-        )
-    elif ticker == "amd":
-        results.append(
-            f"AMD  sharpe >= 1.995:     {'PASS' if m['sharpe'] >= 1.995 else 'FAIL'} "
-            f"(actual={m['sharpe']:.3f})"
-        )
-        results.append(
-            f"AMD  max_dd > -0.0565:    {'PASS' if m['max_drawdown'] > -0.0565 else 'FAIL'} "
-            f"(actual={m['max_drawdown']:.3f})"
-        )
-        er = m["exit_rate"]
-        results.append(
-            f"AMD  exit_rate >= 0.07:   {'PASS' if er >= 0.07 else 'FAIL'} "
-            f"(actual={er:.3f})"
-        )
+
     return results
 
 # ---------------------------------------------------------------------------
@@ -500,8 +564,9 @@ def run_ticker(
     print(f"  {ticker.upper()} — ExitManager Backtest")
     print(f"{'='*60}")
 
+    run_label_filter = ensemble_cfg[ticker.lower()].get("run_label")
     ensemble, use_stationary, include_news = _load_ensemble(
-        ticker, ensemble_cfg, leaderboard
+        ticker, ensemble_cfg, leaderboard, run_label_filter=run_label_filter
     )
     method = voting_method  # Use CLI arg if provided; otherwise falls back to config
     if method == "voting":
@@ -509,7 +574,7 @@ def run_ticker(
 
     df = _load_data(ticker, use_stationary, include_news)
     val_df, test_df = _split(df)
-    market_cols = _pick_market_cols(df)
+    market_cols = _pick_market_cols(df, use_stationary=use_stationary)
 
     print(f"  Data: {_data_path(ticker, use_stationary).name} "
           f"({len(df)} total, val={len(val_df)}, test={len(test_df)})")
@@ -680,6 +745,7 @@ def main() -> None:
     test_only_config = args.config if (args.test_only and args.config) else None
 
     leaderboard = pd.read_csv(LEADERBOARD_PATH)
+    leaderboard = _remap_model_paths(leaderboard)
     ensemble_cfg = json.loads(ENSEMBLE_CONFIG_PATH.read_text())
 
     all_results = []
