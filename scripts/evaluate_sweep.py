@@ -61,7 +61,7 @@ GATES = [
         "name": "CV Stability",
         "col": "test_return_cv_by_config",
         "op": "<",
-        "threshold": 1.0,
+        "threshold": 0.50,
     },
     {
         "id": 6,

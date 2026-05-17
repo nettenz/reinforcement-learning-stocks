@@ -5,6 +5,48 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 from stable_baselines3 import SAC, PPO
 import time
 
+_ROOT_DIR = Path(__file__).resolve().parents[1]
+_CROSS_OS_ANCHORS = [
+    "data/experiment_snapshots/",
+    "staging/models/",
+    "models/",
+    "data/",
+]
+
+
+def _resolve_model_path_cross_os(raw_path: str) -> Path | None:
+    """Resolve a model path that may have been written on a different OS or machine."""
+    raw_str = raw_path.replace("\\", "/")
+    candidate = Path(raw_str)
+
+    if candidate.exists():
+        return candidate
+
+    if not candidate.is_absolute():
+        rooted = _ROOT_DIR / candidate
+        if rooted.exists():
+            return rooted
+
+    for anchor in _CROSS_OS_ANCHORS:
+        idx = raw_str.find(anchor)
+        if idx != -1:
+            rooted = _ROOT_DIR / raw_str[idx:]
+            if rooted.exists():
+                return rooted
+
+    filename = Path(raw_str).name
+    if filename:
+        for search_dir in [
+            _ROOT_DIR / "data" / "experiment_snapshots",
+            _ROOT_DIR / "staging" / "models",
+            _ROOT_DIR / "models",
+        ]:
+            if search_dir.exists():
+                for match in search_dir.rglob(filename):
+                    return match
+
+    return None
+
 if TYPE_CHECKING:
     from src.exit_manager import ExitManager
 
@@ -62,10 +104,14 @@ class SparseEnsemble:
         self.top_models_info = []
         
         for _, row in top_n.iterrows():
-            model_path = Path(row["model_path"])
             seed = int(row["seed"])
-            if not model_path.exists():
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+            model_path = _resolve_model_path_cross_os(str(row["model_path"]))
+            if model_path is None:
+                raise FileNotFoundError(
+                    f"Model file not found: {row['model_path']}\n"
+                    f"Searched local project root ({_ROOT_DIR}) and snapshot directories. "
+                    f"Ensure the .zip is present under data/experiment_snapshots/ or models/."
+                )
             
             # Robust auto-detection: try SAC first, then PPO
             try:

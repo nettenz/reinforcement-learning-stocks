@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
-$DashboardScript = Join-Path $Root "src\analytics_dashboard.py"
+$DashboardScript = Join-Path $Root "src\dashboard\main.py"
 $PidFile = Join-Path $Root ".streamlit_dashboard.pid"
 
 function Get-DashboardProcess {
@@ -16,7 +16,7 @@ function Get-DashboardProcess {
         Where-Object {
             $_.Name -eq "python.exe" -and
             $_.CommandLine -like "*streamlit*" -and
-            $_.CommandLine -like "*analytics_dashboard.py*" -and
+            $_.CommandLine -like "*main.py*" -and
             $_.CommandLine -like "*$Port*"
         }
     return $matches

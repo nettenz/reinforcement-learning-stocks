@@ -6,7 +6,7 @@ PORT="${2:-8501}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
-DASHBOARD_SCRIPT="$ROOT_DIR/src/analytics_dashboard.py"
+DASHBOARD_SCRIPT="$ROOT_DIR/src/dashboard/main.py"
 PID_FILE="$ROOT_DIR/.streamlit_dashboard.pid"
 
 resolve_python() {
@@ -43,7 +43,7 @@ resolve_python() {
 
 get_dashboard_pids() {
   ps -ax -o pid= -o command= | awk -v port="$PORT" '
-    /streamlit run/ && /analytics_dashboard.py/ && $0 ~ ("--server.port " port) {print $1}
+    /streamlit run/ && /main.py/ && $0 ~ ("--server.port " port) {print $1}
   '
 }
 

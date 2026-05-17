@@ -118,6 +118,16 @@ DEFAULT_TICKER = "nvda"
 
 ## 6. Infrastructure & Tooling Updates
 
+### Dashboard Refactoring & Binary PPO Alignment (May 2026)
+- **Modular Architecture:** The 3,130-line `analytics_dashboard.py` monolith was fully modularized into a clean `src/dashboard/` package (components, pages, and pure function utilities).
+- **PPO Sweep Integration:** The Experiments page UI now exposes `binary_actions` and ticker-specific `min_hold_bars` inputs for triggering native PPO sweeps without CLI fallback.
+- **Windows OS FD Bypass:** Dashboard sweep generator strictly applies `--n-envs 1` to prevent Windows socket/file descriptor limits from crashing multi-seed parallel runs.
+- **Gate Synchronization:**
+  - Gate 5's stability limit in `evaluate_sweep.py` was officially tightened to `< 0.50` to match PPO standards.
+  - Gate 6 Waiver check was integrated into the dashboard UI, properly clearing high-momentum assets (`MU`, `AMZN`, `MSFT`, `GOOGL`) at >80% trade rates.
+- **Metric Cleanup:** Legacy Stage 1 continuous metrics (like `test_r2` and `model_type`) were purged from the Performance Analytics page in favor of Sharpe, Alpha, and Maximum Drawdown.
+
+### Previous Infrastructure Updates
 - **Gate 6 added:** `test_trade_rate ∈ [0.40, 0.80]` — blocks degenerate always-long policies
 - **evaluate_sweep.py:** CV recomputed over active seeds only; Gate 5 uses `clean_cv`
 - **ensemble.py:** `load_top_n_models` accepts `seed_filter` and `run_label_filter`
