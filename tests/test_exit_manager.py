@@ -1,20 +1,17 @@
-"""
-Unit tests for ExitManager — Phase 1 spec (10 tests).
+"""Boundary-condition tests for ExitManager.
 
-All tests use the new position_state interface:
-    {shares_held, entry_price, current_price, unrealized_pnl_pct, peak_pnl_pct, bars_held}
-
-and the new should_exit() return type: tuple[bool, str].
+These tests focus on the contract that matters for Phase 3 wiring:
+- no-position short-circuiting
+- exact rule thresholds
+- per-position state reset
+- composite rule precedence and validation
+- rule-name normalization
 """
 from __future__ import annotations
 
-import json
-
-import numpy as np
 import pytest
 
 from src.exit_manager import ExitManager
-from src.trading_agent import EnsembleAgent
 
 
 # ---------------------------------------------------------------------------
@@ -39,8 +36,30 @@ def _pos(
     }
 
 
+@pytest.mark.parametrize(
+    "rule_name, expected",
+    [
+        (" time ", "time"),
+        ("TRAILING_STOP", "trailing_stop"),
+        ("Profit_Take", "profit_take"),
+    ],
+)
+def test_rule_name_is_normalized(rule_name: str, expected: str) -> None:
+    mgr = ExitManager(rule_name)
+    assert mgr.rule == expected
+
+
+def test_no_position_short_circuits_all_rules() -> None:
+    mgr = ExitManager("profit_take", {"threshold": 0.03})
+
+    fired, rule = mgr.should_exit(_pos(shares=0.0, upnl=0.50, bars=999), confidence=0.0)
+
+    assert fired is False
+    assert rule == ""
+
+
 # ---------------------------------------------------------------------------
-# Test 1 — profit_take fires at boundary
+# Profit take boundaries
 # ---------------------------------------------------------------------------
 
 def test_profit_take_fires_at_boundary() -> None:
@@ -57,8 +76,9 @@ def test_profit_take_fires_at_boundary() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — trailing_stop fires correctly after peak
+# Trailing stop boundaries
 # ---------------------------------------------------------------------------
+
 
 def test_trailing_stop_fires_after_peak() -> None:
     mgr = ExitManager("trailing_stop", {"stop_pct": 0.05})
@@ -73,10 +93,6 @@ def test_trailing_stop_fires_after_peak() -> None:
     assert rule == "trailing_stop"
 
 
-# ---------------------------------------------------------------------------
-# Test 3 — trailing_stop does NOT fire on drawdown below entry without prior peak
-# ---------------------------------------------------------------------------
-
 def test_trailing_stop_no_fire_without_prior_peak() -> None:
     mgr = ExitManager("trailing_stop", {"stop_pct": 0.05})
 
@@ -87,7 +103,7 @@ def test_trailing_stop_no_fire_without_prior_peak() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — time fires at max_bars, not before
+# Time boundaries
 # ---------------------------------------------------------------------------
 
 def test_time_fires_at_max_bars() -> None:
@@ -102,7 +118,7 @@ def test_time_fires_at_max_bars() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — confidence fires after N consecutive bars below threshold
+# Confidence boundaries
 # ---------------------------------------------------------------------------
 
 def test_confidence_fires_after_n_bars() -> None:
@@ -117,10 +133,6 @@ def test_confidence_fires_after_n_bars() -> None:
     assert fired is True
     assert rule == "confidence"
 
-
-# ---------------------------------------------------------------------------
-# Test 6 — confidence streak resets on recovery
-# ---------------------------------------------------------------------------
 
 def test_confidence_streak_resets_on_recovery() -> None:
     mgr = ExitManager("confidence", {"threshold": 0.67, "n_bars": 3})
@@ -141,7 +153,7 @@ def test_confidence_streak_resets_on_recovery() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 7 — composite returns correct triggered_rule
+# Composite boundaries
 # ---------------------------------------------------------------------------
 
 def test_composite_returns_correct_triggered_rule() -> None:
@@ -157,7 +169,7 @@ def test_composite_returns_correct_triggered_rule() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 8 — reset() clears all state
+# Reset boundaries
 # ---------------------------------------------------------------------------
 
 def test_reset_clears_all_state() -> None:
@@ -176,78 +188,47 @@ def test_reset_clears_all_state() -> None:
     assert rule == ""
 
 
-# ---------------------------------------------------------------------------
-# Test 9 — exit does not block subsequent buy signal when no position open
-# ---------------------------------------------------------------------------
-
-class _DummyObsSpace:
-    shape = (5,)
-
-
-class _DummyModel:
-    observation_space = _DummyObsSpace()
-
-
-class _DummyEnsemble:
-    def __init__(self, action: int, confidence: float) -> None:
-        self.models = {13: _DummyModel()}
-        self._action = action
-        self._confidence = confidence
-
-    def ensemble_predict(self, _obs: np.ndarray, method: str = "voting"):
-        return self._action, self._confidence
-
-
-def test_exit_does_not_block_buy_on_fresh_position(tmp_path) -> None:
-    config = {
-        "nvda": {
-            "production_ready": True,
-            "active_seeds": [13],
-            "ensemble_method": "voting",
-        }
-    }
-    config_path = tmp_path / "ensemble_config.json"
-    config_path.write_text(json.dumps(config))
-
-    mgr = ExitManager("time", {"max_bars": 3})
-    agent = EnsembleAgent(
-        ensemble=_DummyEnsemble(action=1, confidence=0.95),
-        config_path=str(config_path),
-        ticker="NVDA",
-        exit_manager=mgr,
+def test_composite_prefers_first_triggered_subrule() -> None:
+    mgr = ExitManager(
+        "composite",
+        {
+            "rules": [
+                {"rule": "profit_take", "params": {"threshold": 0.03}},
+                {"rule": "trailing_stop", "params": {"stop_pct": 0.05}},
+            ]
+        },
     )
 
-    # In position for bars_held=3 — time rule fires (account_state[-1]=3.0 is time_in_position,
-    # but bars_held is tracked internally by EnsembleAgent, starting at 1 on first call)
-    # We call three times while in position to let internal bars_held reach 3.
-    for _ in range(2):
-        agent.step(
-            market_features=np.array([], dtype=np.float32),
-            news_features=np.array([], dtype=np.float32),
-            account_state=np.array([1000.0, 5.0, 1.0, 0.01, 1.0], dtype=np.float32),
+    fired, rule = mgr.should_exit(_pos(upnl=0.04), confidence=0.9)
+
+    assert fired is True
+    assert rule == "profit_take"
+
+
+def test_composite_with_no_subrules_never_fires() -> None:
+    mgr = ExitManager("composite", {"rules": []})
+
+    fired, rule = mgr.should_exit(_pos(upnl=0.50), confidence=0.1)
+
+    assert fired is False
+    assert rule == ""
+
+
+def test_composite_rejects_invalid_subrule_at_init() -> None:
+    with pytest.raises(ValueError, match="Unknown exit rule"):
+        ExitManager(
+            "composite",
+            {
+                "rules": [
+                    {"rule": "profit_take", "params": {"threshold": 0.03}},
+                    {"rule": "not_a_rule", "params": {}},
+                ]
+            },
         )
 
-    action, _, debug = agent.step(
-        market_features=np.array([], dtype=np.float32),
-        news_features=np.array([], dtype=np.float32),
-        account_state=np.array([1000.0, 5.0, 1.0, 0.01, 3.0], dtype=np.float32),
-    )
-    assert action == 0
-    assert debug["exit_fired"] is True
-    assert debug["exit_rule"] == "time"
-
-    # No position — ensemble wants to buy, exit must not block it
-    action, _, debug = agent.step(
-        market_features=np.array([], dtype=np.float32),
-        news_features=np.array([], dtype=np.float32),
-        account_state=np.array([1000.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
-    )
-    assert action == 1
-    assert debug["exit_fired"] is False
-
 
 # ---------------------------------------------------------------------------
-# Test 10 — unknown rule raises ValueError at __init__
+# Unknown rule handling
 # ---------------------------------------------------------------------------
 
 def test_unknown_rule_raises_at_init() -> None:

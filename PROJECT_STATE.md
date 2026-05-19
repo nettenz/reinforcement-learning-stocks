@@ -151,24 +151,64 @@ DEFAULT_TICKER = "nvda"
 
 ## 8. Active Work & Next Steps
 
-### Immediate (Exit Signal Phase 3)
-1. **Capture NVDA no_exit test baseline:**
-   ```zsh
-   python scripts/backtest_exit_rules.py --ticker nvda --config no_exit --test-only
-   ```
-2. **Update `BASELINES` dict and success criteria** in `scripts/backtest_exit_rules.py` — current values are SAC-era and invalid for Binary PPO.
-3. **Re-run AMD exit backtest** against Binary PPO ensemble:
-   ```zsh
-   python scripts/backtest_exit_rules.py --ticker amd
-   ```
-4. **Write `tests/test_exit_manager.py`** — boundary conditions, reset(), exit-override-hold.
-5. **Define Phase 3 cross-repo signal contract:** `{date, action, confidence, exit_fired, exit_rule}`
-6. **Create `backend/signals/agent.py`** in web-app repo — per-ticker feature pipeline (NVDA=raw, AMD=stationary).
+### Exit Signal Phase 3 — Dashboard Integration
 
-### Near-term (Phase 3–4)
-7. **Wire into `backend/app.py`** — `/api/signals/:symbol` endpoint.
-8. **Frontend: buy/exit markers on `TradingChart.jsx`**.
-9. **Alpaca live feed** — WebSocket tick → recompute signal → push to frontend.
+**Current decision:**
+- **AMD:** use `trailing_5pct`
+- **MU:** use `trailing_3pct`
+- **NVDA:** keep `no_exit` by default; only use an exit rule if a defensive override path is explicitly desired
+
+**Phase 3 next steps:**
+1. **Lock the cross-repo signal contract** before coding.
+   - Canonical payload: `{date, action, confidence, exit_fired, exit_rule}`
+   - Keep the payload stable once consumed by the dashboard
+   - Document binary action semantics so buy/hold is not misread by the frontend
+2. **Create `backend/signals/agent.py`** in the web-app repo.
+   - Load `EnsembleAgent` from `staging/models/ensemble_config.json`
+   - Load `ExitManager` with the selected per-ticker rule
+   - Route feature pipelines by ticker: NVDA uses raw features, AMD/MU use stationary features
+3. **Wire `/api/signals/:symbol` into `backend/app.py`.**
+   - Return `signals[]` alongside existing `candles[]` and `indicators[]`
+   - Preserve the Phase 3 contract exactly
+4. **Add chart overlays in `TradingChart.jsx`.**
+   - Buy markers for `action=1`
+   - Exit markers for `exit_fired=true`
+   - Confidence overlay if the UI needs it for debugging/inspection
+5. **Add `ExitControls.jsx`.**
+   - Rule selector and parameter display
+   - Default to the validated Phase 2B rule per ticker
+   - Keep `no_exit` view mode available for comparison
+6. **Validate end-to-end behavior.**
+   - Verify backend payload shape matches the contract
+   - Verify feature routing does not drift from training
+   - Verify AMD and MU reproduce the current winners
+   - Verify NVDA stays better on `no_exit` under the current test anchor
+
+**Priority order:**
+1. Contract definition
+2. Backend adapter
+3. API endpoint
+4. Frontend overlays
+5. UI controls
+6. End-to-end validation
+
+**Acceptance criteria:**
+- AMD signals render with `trailing_5pct` without contract drift
+- MU signals render with `trailing_3pct` without contract drift
+- NVDA remains `no_exit` by default
+- No look-ahead is introduced in the live signal path
+- The same payload works for backend and frontend consumers
+
+### Immediate follow-through
+1. **Write `tests/test_exit_manager.py`** — boundary conditions, reset(), exit-override-hold.
+2. **Optional sanity rerun:**
+   ```zsh
+   python scripts/backtest_exit_rules.py --ticker amd mu
+   ```
+3. **If needed for NVDA safety work, run the defensive baseline check:**
+   ```zsh
+   python scripts/backtest_exit_rules.py --ticker nvda --exit-rate-min 0.005
+   ```
 
 ### Deferred
 - **AAPL** — Architecturally incompatible. May revisit with SAC continuous or long/short binary.

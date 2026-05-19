@@ -64,6 +64,7 @@ RAW_MARKET_COLS = [
 # if the leaderboard or ensemble_config changes.
 BASELINES: Dict[str, Dict[str, float]] = {
     "nvda": {
+        # Captured 2026-05-18
         "sharpe": 0.301,
         "max_drawdown": -0.161,
         "cumulative_return": 0.066,
@@ -72,13 +73,22 @@ BASELINES: Dict[str, Dict[str, float]] = {
         "win_rate": 0.561,
     },
     "amd": {
-        # Captured 2026-05-16 via: backtest_exit_rules.py --ticker amd --config no_exit --test-only
+        # Captured 2026-05-18
         "sharpe": 0.986,
         "max_drawdown": -0.555,
         "cumulative_return": 0.835,
         "exit_rate": 0.0,
         "avg_hold_bars": 3.6,
         "win_rate": 0.488,
+    },
+    "mu": {
+        # Captured 2026-05-18
+        "sharpe": 1.270,
+        "max_drawdown": -0.470,
+        "cumulative_return": 1.396,
+        "exit_rate": 0.0,
+        "avg_hold_bars": 2.6,
+        "win_rate": 0.576,
     },
 }
 
@@ -731,8 +741,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--ticker", nargs="+", default=["nvda"],
-        choices=["nvda", "amd"],
-        help="Ticker(s) to run. E.g. --ticker nvda amd",
+        choices=["nvda", "amd", "mu"],
+        help="Ticker(s) to run. E.g. --ticker nvda amd mu",
     )
     parser.add_argument(
         "--config", default=None,
