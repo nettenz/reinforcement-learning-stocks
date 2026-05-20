@@ -88,11 +88,25 @@ def _run_single_seed(model, test_df: pd.DataFrame, env_params: dict) -> dict:
     buy_total   = 0
     done        = False
 
+    is_maskable = "MaskablePPO" in str(type(model))
+
     while not done:
-        raw_action, _ = model.predict(obs, deterministic=True)
+        if is_maskable and hasattr(env, "action_masks"):
+            action_masks = env.action_masks()
+            raw_action, _ = model.predict(obs, action_masks=action_masks, deterministic=True)
+        else:
+            raw_action, _ = model.predict(obs, deterministic=True)
         
         # Algorithm-agnostic binary action conversion
-        if isinstance(model, PPO):
+        is_ppo = isinstance(model, PPO)
+        if not is_ppo:
+            try:
+                from sb3_contrib import MaskablePPO
+                is_ppo = isinstance(model, MaskablePPO)
+            except ImportError:
+                pass
+
+        if is_ppo:
             binary_action = int(raw_action.item() if isinstance(raw_action, np.ndarray) else raw_action)
         else:
             # SAC / Continuous
@@ -134,9 +148,9 @@ def _run_ensemble(ensemble: SparseEnsemble, agent: EnsembleAgent, test_df: pd.Da
         news_feat   = row[news_cols].values.astype(np.float32) if news_cols else np.array([], dtype=np.float32)
 
         pm = env.pm
+        cur_price = max(float(test_df.loc[env.current_step, env.price_column]), 1e-8)
         unrealized_pnl = 0.0
         if pm.entry_price > 0:
-            cur_price = max(float(test_df.loc[env.current_step, env.price_column]), 1e-8)
             ratio = cur_price / pm.entry_price
             unrealized_pnl = ratio - 1.0 if pm.shares_held > 0 else 1.0 - ratio
 
@@ -145,7 +159,7 @@ def _run_ensemble(ensemble: SparseEnsemble, agent: EnsembleAgent, test_df: pd.Da
             pm.current_weight, unrealized_pnl, float(pm.time_in_position),
         ], dtype=np.float32)
 
-        action, confidence, _ = agent.step(market_feat, news_feat, account_state)
+        action, confidence, _ = agent.step(market_feat, news_feat, account_state, current_price=cur_price)
 
         # Convert discrete action back to environment-compatible value
         # If env is in binary_actions mode, it expects 0/1 or continuous weight
@@ -190,6 +204,9 @@ def run_ticker(ticker: str, config_path: Path, leaderboard_path: Path) -> dict:
 
     # Determine environment params
     ticker_env_params = ENV_PARAMS.copy()
+    ticker_env_params["min_hold_bars"] = ticker_cfg.get("min_hold_bars", 0)
+    ticker_env_params["use_cooldown_obs"] = ticker_cfg.get("use_cooldown_obs", False)
+    ticker_env_params["binary_actions"] = ticker_cfg.get("binary_actions", True)
 
     # Per-ticker obs space override: read use_stationary_features from ensemble config.
     # Default True for backward compatibility with all existing promoted tickers.

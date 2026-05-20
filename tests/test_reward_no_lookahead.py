@@ -21,13 +21,13 @@ from src.trading_env import TradingEnv
 def test_no_future_price_in_reward():
     """Verify reward calculation doesn't use future prices."""
     
-    # Create simple test data with predictable price movements
+    # Create simple test data with predictable price movements (length 6 to allow 5 steps)
     test_data = pd.DataFrame({
-        'Open': [100, 105, 110, 108, 112],
-        'High': [102, 107, 112, 110, 115],
-        'Low': [99, 104, 109, 107, 111],
-        'Close': [101, 106, 111, 109, 113],
-        'Volume': [1000, 1100, 1200, 1150, 1250],
+        'Open': [100, 105, 110, 108, 112, 115],
+        'High': [102, 107, 112, 110, 115, 118],
+        'Low': [99, 104, 109, 107, 111, 114],
+        'Close': [101, 106, 111, 109, 113, 116],
+        'Volume': [1000, 1100, 1200, 1150, 1250, 1300],
     })
     
     env = TradingEnv(
@@ -39,6 +39,7 @@ def test_no_future_price_in_reward():
         reward_drawdown_penalty_scale=0.0,
         reward_action_bonus_scale=0.0,
         transaction_cost_rate=0.0,
+        execution_mode="same_bar",
     )
     
     obs, info = env.reset()
@@ -104,11 +105,41 @@ def test_no_future_price_in_reward():
     assert abs(info['realized_return'] - expected_realized) < 0.001, \
         f"Step 2 realized_return should be {expected_realized:.4f}, got {info['realized_return']:.4f}"
     
-    # Directional reward for SHORT should be negative when price goes up
-    assert info['reward_direction'] < 0, \
-        f"Short position with positive realized return should give negative directional reward"
+    # Pre-trade weight at step 2 was LONG (+1.0), so directional reward is positive
+    assert info['reward_direction'] > 0, "Pre-trade LONG position should give positive directional reward"
+    print("  [OK] Step 2: Pre-trade LONG correctly rewarded for price rise")
     
-    print("  [OK] Step 2: Short position correctly uses realized return")
+    # Step 3: Price goes from 111 to 109 (-1.80%)
+    print("\n[STEP 3] Taking SHORT action at price 109")
+    obs, reward, terminated, truncated, info = env.step(-1)  # Short (Weight -1.0)
+    
+    print(f"  Current step: {env.current_step}")
+    print(f"  Reward direction: {info['reward_direction']:.6f}")
+    print(f"  Realized return: {info['realized_return']:.6f}")
+    
+    expected_realized_step3 = (109 / 111) - 1.0
+    assert abs(info['realized_return'] - expected_realized_step3) < 0.001, \
+        f"Step 3 realized_return should be {expected_realized_step3:.4f}, got {info['realized_return']:.4f}"
+    
+    # Pre-trade weight was SHORT (-1.0) and price went down (-1.80%), so directional reward is positive
+    assert info['reward_direction'] > 0, "Short position with negative realized return should give positive directional reward"
+    print("  [OK] Step 3: Short position correctly gains from price drop")
+    
+    # Step 4: Price goes from 109 to 113 (+3.67%)
+    print("\n[STEP 4] Taking FLAT action at price 113")
+    obs, reward, terminated, truncated, info = env.step(0)  # Flat
+    
+    print(f"  Current step: {env.current_step}")
+    print(f"  Reward direction: {info['reward_direction']:.6f}")
+    print(f"  Realized return: {info['realized_return']:.6f}")
+    
+    expected_realized_step4 = (113 / 109) - 1.0
+    assert abs(info['realized_return'] - expected_realized_step4) < 0.001, \
+        f"Step 4 realized_return should be {expected_realized_step4:.4f}, got {info['realized_return']:.4f}"
+    
+    # Pre-trade weight was SHORT (-1.0) and price went up (+3.67%), so directional reward is negative
+    assert info['reward_direction'] < 0, "Short position with positive realized return should give negative directional reward"
+    print("  [OK] Step 4: Short position correctly loses from price rise")
     
     print("\n" + "=" * 60)
     print("[OK] ALL TESTS PASSED - NO LOOK-AHEAD BIAS DETECTED")
@@ -137,6 +168,7 @@ def test_portfolio_valuation_no_lookahead():
         reward_drawdown_penalty_scale=0.0,
         reward_action_bonus_scale=0.0,
         transaction_cost_rate=0.0,
+        execution_mode="same_bar",
     )
     
     obs, info = env.reset()

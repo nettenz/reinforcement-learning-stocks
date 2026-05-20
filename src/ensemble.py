@@ -113,14 +113,21 @@ class SparseEnsemble:
                     f"Ensure the .zip is present under data/experiment_snapshots/ or models/."
                 )
             
-            # Robust auto-detection: try SAC first, then PPO
+            # Robust auto-detection: try SAC first, then MaskablePPO, then PPO
             try:
                 model = SAC.load(model_path)
             except Exception:
                 try:
-                    model = PPO.load(model_path)
+                    try:
+                        from sb3_contrib import MaskablePPO
+                        model = MaskablePPO.load(model_path)
+                    except ImportError:
+                        model = PPO.load(model_path)
                 except Exception as e:
-                    raise RuntimeError(f"Failed to load model at {model_path} as either SAC or PPO: {e}")
+                    try:
+                        model = PPO.load(model_path)
+                    except Exception as e2:
+                        raise RuntimeError(f"Failed to load model at {model_path} as either SAC, MaskablePPO, or PPO: {e2}")
                 
             self.models[seed] = model
             self.top_models_info.append(row)

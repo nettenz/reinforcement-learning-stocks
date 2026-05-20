@@ -155,9 +155,16 @@ def _simulate_with_model(model, df: pd.DataFrame, env_kwargs: dict[str, float | 
     obs, _ = env.reset()
     rows: list[dict[str, float | int | pd.Timestamp]] = []
 
+    # Detect if the model is a MaskablePPO policy
+    is_maskable = "MaskablePPO" in str(type(model))
+
     while True:
         step_idx = env.current_step
-        action, _ = model.predict(obs, deterministic=True)
+        if is_maskable and hasattr(env, "action_masks"):
+            action_masks = env.action_masks()
+            action, _ = model.predict(obs, action_masks=action_masks, deterministic=True)
+        else:
+            action, _ = model.predict(obs, deterministic=True)
         price = float(df.loc[step_idx, env.price_column])
         date_value = pd.to_datetime(df.loc[step_idx, "Date"]) if "Date" in df.columns else step_idx
 
@@ -646,6 +653,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
         "min_hold_bars": args.min_hold_bars,
         "max_episode_steps": args.max_episode_steps,
         "random_start": args.random_start,
+        "use_cooldown_obs": args.use_cooldown_obs,
     }
 
     reward_return_scales = _parse_float_list(args.reward_return_scale)
@@ -693,26 +701,51 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "rolling_reward_window": rolling_window,
         })
 
+        env_kwargs_train = env_kwargs_run.copy()
+        if args.train_zero_friction:
+            env_kwargs_train["transaction_cost_rate"] = 0.0
+            env_kwargs_train["trade_penalty"] = 0.0
+
         if args.n_envs > 1:
-            env_train = SubprocVecEnv([make_env(train_df, env_kwargs_run) for _ in range(args.n_envs)])
+            env_train = SubprocVecEnv([make_env(train_df, env_kwargs_train) for _ in range(args.n_envs)])
         else:
-            env_train = TradingEnv(train_df, **env_kwargs_run)
+            env_train = TradingEnv(train_df, **env_kwargs_train)
             
         if args.binary_actions:
             # PPO supports Discrete action spaces; SAC requires a continuous Box.
             # Force CPU on macOS for PPO as MPS with small MLPs is significantly slower and triggers warnings.
             ppo_device = "cpu" if DEFAULT_DEVICE == "mps" else DEFAULT_DEVICE
-            model = PPO(
-                "MlpPolicy",
-                env_train,
-                verbose=0,
-                seed=seed,
-                learning_rate=lr_arg,
-                gamma=gamma,
-                ent_coef=ent_coef if ent_coef > 0.0 else 0.0,
-                batch_size=args.batch_size,
-                device=ppo_device,
-            )
+            
+            if args.use_action_masking:
+                try:
+                    from sb3_contrib import MaskablePPO
+                except ImportError:
+                    print("ERROR: sb3-contrib is required for action masking but not installed. Run 'pip install sb3-contrib'")
+                    raise
+                
+                model = MaskablePPO(
+                    "MlpPolicy",
+                    env_train,
+                    verbose=0,
+                    seed=seed,
+                    learning_rate=lr_arg,
+                    gamma=gamma,
+                    ent_coef=ent_coef if ent_coef > 0.0 else 0.0,
+                    batch_size=args.batch_size,
+                    device=ppo_device,
+                )
+            else:
+                model = PPO(
+                    "MlpPolicy",
+                    env_train,
+                    verbose=0,
+                    seed=seed,
+                    learning_rate=lr_arg,
+                    gamma=gamma,
+                    ent_coef=ent_coef if ent_coef > 0.0 else 0.0,
+                    batch_size=args.batch_size,
+                    device=ppo_device,
+                )
         else:
             model_ent_coef = ent_coef if ent_coef > 0.0 else "auto"
             model = SAC(
@@ -793,6 +826,7 @@ def run_experiments(args: argparse.Namespace) -> pd.DataFrame:
             "reward_ignore_transaction_cost": int(args.reward_ignore_transaction_cost),
             "binary_actions": int(args.binary_actions),
             "min_hold_bars": args.min_hold_bars,
+            "use_cooldown_obs": int(args.use_cooldown_obs),
             "bars_per_year": bars_per_year,
             "val_overall_accuracy": val_metrics.overall_accuracy,
             "val_actionable_accuracy": val_metrics.actionable_accuracy,
@@ -914,8 +948,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reward-ignore-transaction-cost",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Exclude transaction costs/penalties from reward shaping while keeping execution unchanged.",
+    )
+    parser.add_argument(
+        "--use-cooldown-obs",
+        action="store_true",
+        help="Append the active cooldown boolean to the agent's observation state (1.0 for active, 0.0 otherwise).",
+    )
+    parser.add_argument(
+        "--train-zero-friction",
+        action="store_true",
+        help="Train the agent in a friction-free environment (no transaction costs or trade penalties) to prevent observation pollution, while maintaining realistic friction for out-of-sample evaluations.",
+    )
+    parser.add_argument(
+        "--use-action-masking",
+        action="store_true",
+        help="Use Discrete Action Masking (sb3_contrib.MaskablePPO) during PPO sweeps.",
     )
     parser.add_argument("--use-stationary-features", action="store_true", help="Use log returns and normalized technical indicators.")
     parser.add_argument("--long-only", action="store_true", help="Clip actions to [0, 1] — no short positions.")

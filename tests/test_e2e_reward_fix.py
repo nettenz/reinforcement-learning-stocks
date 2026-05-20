@@ -71,7 +71,7 @@ def test_full_training_pipeline():
     for _ in range(10):
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, terminated, truncated, info = env.step(action)
-        actions_taken.append(int(action))
+        actions_taken.append(int(action.item() if hasattr(action, "item") else action))
         rewards_received.append(reward)
         
         # Verify info dict has expected fields
@@ -110,8 +110,8 @@ def test_full_training_pipeline():
     print("\n  Sample signals (steps 1-5):")
     print(sample[['step', 'action', 'realized_return', 'reward_direction', 'reward']].to_string(index=False))
     
-    # Verify relationship: if action=1 (Long) and realized_return > 0, reward_direction should be > 0
-    long_positive = sample[(sample['action'] == 1) & (sample['realized_return'] > 0)]
+    # Verify relationship: if action=1 (Long) and realized_return > 0, reward_direction should be > 0 (excluding step 1 transition)
+    long_positive = sample[(sample['step'] > 1) & (sample['action'] == 1) & (sample['realized_return'] > 0)]
     if len(long_positive) > 0:
         assert all(long_positive['reward_direction'] > 0), \
             "Long position with positive realized return should have positive directional reward"

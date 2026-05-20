@@ -206,7 +206,7 @@ class TradingEnv(gym.Env):
         reward_action_bonus_scale=0.02,
         reward_turnover_penalty_scale=0.05,
         reward_clip=1.0,
-        reward_ignore_transaction_cost=True,
+        reward_ignore_transaction_cost=False,
         execution_mode="next_bar",
         spread_bps=0.0,
         slippage_bps=0.0,
@@ -221,6 +221,7 @@ class TradingEnv(gym.Env):
         max_episode_steps=0,
         random_start=False,
         min_hold_bars=0,
+        use_cooldown_obs=False,
     ):
         super(TradingEnv, self).__init__()
         self.df = df
@@ -237,6 +238,7 @@ class TradingEnv(gym.Env):
         self.reward_ignore_transaction_cost = bool(reward_ignore_transaction_cost)
         self.max_weight_delta_per_step = float(max_weight_delta_per_step)
         self.min_hold_bars = int(min_hold_bars)
+        self.use_cooldown_obs = bool(use_cooldown_obs)
         if self.max_weight_delta_per_step < 0.0:
             raise ValueError("max_weight_delta_per_step must be >= 0.0")
         if self.max_weight_delta_per_step > 2.0:
@@ -300,6 +302,9 @@ class TradingEnv(gym.Env):
         if self.include_position:
             state_count += 3
 
+        if self.use_cooldown_obs:
+            state_count += 1
+
         observation_size = len(self.market_feature_columns) + len(self.active_news_columns) + state_count
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(observation_size,), dtype=np.float32)
 
@@ -320,11 +325,42 @@ class TradingEnv(gym.Env):
         market_values = [float(row[col]) for col in self.market_feature_columns]
         news_values = [float(row[col]) for col in self.active_news_columns]
         
-        account_state = [self.pm.balance, self.pm.shares_held]
+        if self.use_cooldown_obs:
+            current_price = max(float(row[self.price_column]), 1e-8)
+            norm_balance = self.pm.balance / self.pm.initial_balance
+            norm_shares = (self.pm.shares_held * current_price) / self.pm.initial_balance
+            account_state = [norm_balance, norm_shares]
+        else:
+            account_state = [self.pm.balance, self.pm.shares_held]
+            
         if self.include_position:
             account_state.extend([self.pm.current_weight, unrealized_pnl, self.pm.time_in_position])
             
+        if self.use_cooldown_obs:
+            cooldown_active = self.min_hold_bars > 0 and self.bars_since_last_trade < self.min_hold_bars
+            account_state.append(1.0 if cooldown_active else 0.0)
+            
         return np.array(market_values + news_values + account_state, dtype=np.float32)
+
+    def action_masks(self) -> np.ndarray:
+        """
+        Returns a boolean array indicating which actions are valid.
+        Used by sb3_contrib.MaskablePPO for discrete action spaces.
+        """
+        if not self.binary_actions:
+            return np.array([True, True])
+            
+        cooldown_active = self.min_hold_bars > 0 and self.bars_since_last_trade < self.min_hold_bars
+        if cooldown_active:
+            # If cooldown is active, the agent cannot trade and must stick to the current position.
+            # Map pm.current_weight to action indices (0: flat/cash, 1: long).
+            current_is_long = self.pm.current_weight > 0.5
+            if current_is_long:
+                return np.array([False, True])  # Only Action 1 is valid
+            else:
+                return np.array([True, False])  # Only Action 0 is valid
+        else:
+            return np.array([True, True])  # Both actions are valid
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)

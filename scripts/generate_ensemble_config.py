@@ -101,6 +101,10 @@ def main():
             ready = False
             notes = "Sharpe below threshold or insufficient active seeds"
             
+        first_row = ensemble.active_seeds_df.iloc[0] if not ensemble.active_seeds_df.empty else {}
+        min_hold = int(first_row.get("min_hold_bars", 0)) if "min_hold_bars" in first_row else 0
+        use_cooldown = bool(first_row.get("use_cooldown_obs", 0)) if "use_cooldown_obs" in first_row else False
+
         config[ticker] = {
             "active_seeds": active_seed_list,
             "ensemble_method": "voting",
@@ -109,7 +113,9 @@ def main():
             "production_ready": ready,
             "notes": f"{active_seeds_count} active seeds. {notes}",
             "run_label": label_filter if label_filter else "N/A",
-            "leaderboard_csv": str(leaderboard_path.relative_to(ROOT_DIR)) if leaderboard_path.is_relative_to(ROOT_DIR) else str(leaderboard_path)
+            "leaderboard_csv": str(leaderboard_path.relative_to(ROOT_DIR)) if leaderboard_path.is_relative_to(ROOT_DIR) else str(leaderboard_path),
+            "min_hold_bars": min_hold,
+            "use_cooldown_obs": use_cooldown
         }
         
     with open(config_out, "w") as f:

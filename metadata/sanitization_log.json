@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "generated_at_utc": "2026-05-19T23:38:36.293407+00:00",
+    "sanitizer_version": "0.1.0"
+  },
+  "mutations": [
+    {
+      "timestamp": "2026-05-19T23:38:36.245294+00:00",
+      "file_path": "data/experiment_leaderboard_history.csv",
+      "file_name": "experiment_leaderboard_history.csv",
+      "original_row_count": 593,
+      "final_row_count": 479,
+      "rows_removed": 114,
+      "sha256_before": "8e6d5549e678091f9c189007ee9f3e486ffff9573959991c3f2f5135738cca7d",
+      "sha256_after": "db5444d92a27787b082eeebd1997f75a1d68111088155dc4451985e8c5f2c5cd",
+      "backup_file": "backups/sanity_backup_2026-05-19T233836+0000/experiment_leaderboard_history.csv",
+      "archive_file": "archives/experiment_leaderboard_history_2026-05-19T233836+0000.csv",
+      "quarantine_file": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/quarantine/experiment_leaderboard_history_bad_rows_2026-05-19T233836+0000.csv",
+      "reason": null
+    },
+    {
+      "timestamp": "2026-05-19T23:38:36.293152+00:00",
+      "file_path": "data/experiment_reward_leaderboard_history.csv",
+      "file_name": "experiment_reward_leaderboard_history.csv",
+      "original_row_count": 593,
+      "final_row_count": 372,
+      "rows_removed": 221,
+      "sha256_before": "a587f2bdf36a53c14761cf7c45be680762b34164aed504e4333f240121ca5fac",
+      "sha256_after": "4faea07a1fcf1bd6625a873915d39949c7828a7674938b1215b1350ce190402d",
+      "backup_file": "backups/sanity_backup_2026-05-19T233836+0000/experiment_reward_leaderboard_history.csv",
+      "archive_file": "archives/experiment_reward_leaderboard_history_2026-05-19T233836+0000.csv",
+      "quarantine_file": "/Users/nettenz/Projects/agentic-dev/reinforcement-learning-stocks/quarantine/experiment_reward_leaderboard_history_bad_rows_2026-05-19T233836+0000.csv",
+      "reason": null
+    }
+  ]
+}

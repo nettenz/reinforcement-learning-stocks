@@ -322,9 +322,9 @@ def simulate_ensemble_signals(
         news_feat    = row[news_cols].values.astype(np.float32) if news_cols else np.array([], dtype=np.float32)
 
         pm = env.pm
+        cur_price = max(float(row[env.price_column]), 1e-8)
         unrealized_pnl = 0.0
         if pm.entry_price > 0:
-            cur_price = max(float(row[env.price_column]), 1e-8)
             ratio = cur_price / pm.entry_price
             unrealized_pnl = ratio - 1.0 if pm.shares_held > 0 else 1.0 - ratio
 
@@ -333,7 +333,7 @@ def simulate_ensemble_signals(
             pm.current_weight, unrealized_pnl, float(pm.time_in_position),
         ], dtype=np.float32)
 
-        action, confidence, _ = agent.step(market_feat, news_feat, account_state)
+        action, confidence, _ = agent.step(market_feat, news_feat, account_state, current_price=cur_price)
 
         # Convert discrete action back to continuous for env.step
         # 1.0 = Buy, -1.0 = Hold (mapped by binary_actions=True)

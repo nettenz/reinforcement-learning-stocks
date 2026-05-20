@@ -65,6 +65,9 @@ class EnsembleAgent:
 
         self.active_seeds = ticker_cfg.get("active_seeds", [])
         self.ensemble_method = ticker_cfg.get("ensemble_method", "voting")
+        self.use_cooldown_obs = ticker_cfg.get("use_cooldown_obs", False)
+        self.min_hold_bars = ticker_cfg.get("min_hold_bars", 0)
+        self.initial_balance = ticker_cfg.get("initial_balance", 1000.0)
 
         if not ensemble.models:
             raise ValueError(
@@ -94,6 +97,8 @@ class EnsembleAgent:
         self._in_position = False
         self._bars_held = 0
         self._entry_price = 0.0
+        self._bars_since_last_trade = self.min_hold_bars
+        self._prev_shares_held = 0.0
 
     def _build_position_state(
         self, account_state: np.ndarray, shares_held: float
@@ -131,11 +136,42 @@ class EnsembleAgent:
         if self._in_position:
             self._bars_held += 1
 
+    def _build_obs(
+        self,
+        market_features: np.ndarray,
+        news_features: np.ndarray,
+        account_state: np.ndarray,
+        current_price: Optional[float] = None,
+    ) -> np.ndarray:
+        market_feat = np.asarray(market_features, dtype=np.float32)
+        news_feat = np.asarray(news_features, dtype=np.float32)
+        state = np.asarray(account_state, dtype=np.float32).copy().reshape(-1)
+
+        if self.use_cooldown_obs:
+            if current_price is None:
+                raise ValueError("current_price is required for EnsembleAgent when use_cooldown_obs=True")
+            price = max(float(current_price), 1e-8)
+            norm_balance = state[0] / self.initial_balance
+            norm_shares = (state[1] * price) / self.initial_balance
+            
+            cooldown_active = self.min_hold_bars > 0 and self._bars_since_last_trade < self.min_hold_bars
+            cooldown_val = 1.0 if cooldown_active else 0.0
+            
+            if state.size > 2:
+                adj_state = [norm_balance, norm_shares] + list(state[2:]) + [cooldown_val]
+            else:
+                adj_state = [norm_balance, norm_shares, cooldown_val]
+        else:
+            adj_state = list(state)
+
+        return np.concatenate([market_feat, news_feat, np.asarray(adj_state, dtype=np.float32)])
+
     def step(
         self,
         market_features: np.ndarray,
         news_features: np.ndarray,
         account_state: np.ndarray,
+        current_price: Optional[float] = None,
     ) -> Tuple[int, float, Dict[str, Any]]:
         """
         Args:
@@ -146,17 +182,25 @@ class EnsembleAgent:
             account_state: portfolio state matching training obs
                            [balance, shares_held] or
                            [balance, shares_held, current_weight, unrealized_pnl, time_in_position]
+            current_price: raw closing price of current bar, required if use_cooldown_obs=True
 
         Returns:
             action: 0 (Hold) or 1 (Buy)
             confidence: fraction of seeds agreeing — 0.33 / 0.67 / 1.0 for 3-seed ensemble
             debug_info: dict with obs_shape, action, agreement, ticker, step, exit_fired, exit_rule
         """
-        obs = np.concatenate([
-            np.asarray(market_features, dtype=np.float32),
-            np.asarray(news_features, dtype=np.float32),
-            np.asarray(account_state, dtype=np.float32),
-        ])
+        state = np.asarray(account_state, dtype=np.float32).reshape(-1)
+        shares_held = float(state[1]) if state.size > 1 else 0.0
+
+        # Update cooldown tracking
+        trade_executed = abs(shares_held - self._prev_shares_held) > 1e-8
+        if trade_executed:
+            self._bars_since_last_trade = 0
+        else:
+            self._bars_since_last_trade = min(self._bars_since_last_trade + 1, self.min_hold_bars)
+        self._prev_shares_held = shares_held
+
+        obs = self._build_obs(market_features, news_features, account_state, current_price)
 
         if obs.shape != self.expected_obs_shape:
             raise AssertionError(
@@ -167,9 +211,6 @@ class EnsembleAgent:
 
         model_action, confidence = self.ensemble.ensemble_predict(obs, method=self.ensemble_method)
         action = model_action
-
-        state = np.asarray(account_state, dtype=np.float32).reshape(-1)
-        shares_held = float(state[1]) if state.size > 1 else 0.0
 
         self._update_position_tracking(shares_held)
 
@@ -210,6 +251,7 @@ class EnsembleAgent:
         market_features: np.ndarray,
         news_features: np.ndarray,
         account_state: np.ndarray,
+        current_price: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Run ensemble prediction with ExitManager override; returns structured result dict.
@@ -218,19 +260,24 @@ class EnsembleAgent:
 
         Returns dict with keys: action, raw_action, confidence, exit_fired, exit_rule.
         """
-        obs = np.concatenate([
-            np.asarray(market_features, dtype=np.float32),
-            np.asarray(news_features, dtype=np.float32),
-            np.asarray(account_state, dtype=np.float32),
-        ])
+        state = np.asarray(account_state, dtype=np.float32).reshape(-1)
+        shares_held = float(state[1]) if state.size > 1 else 0.0
+
+        # Update cooldown tracking
+        trade_executed = abs(shares_held - self._prev_shares_held) > 1e-8
+        if trade_executed:
+            self._bars_since_last_trade = 0
+        else:
+            self._bars_since_last_trade = min(self._bars_since_last_trade + 1, self.min_hold_bars)
+        self._prev_shares_held = shares_held
+
+        obs = self._build_obs(market_features, news_features, account_state, current_price)
 
         if obs.shape != self.expected_obs_shape:
             raise AssertionError(
                 f"Obs shape mismatch: got {obs.shape}, expected {self.expected_obs_shape}."
             )
 
-        state = np.asarray(account_state, dtype=np.float32).reshape(-1)
-        shares_held = float(state[1]) if state.size > 1 else 0.0
         self._update_position_tracking(shares_held)
         position_state = self._build_position_state(state, shares_held)
 

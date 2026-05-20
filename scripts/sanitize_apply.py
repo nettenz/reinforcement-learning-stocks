@@ -179,7 +179,7 @@ def extract_quarantine_info(report_json: dict[str, Any]) -> dict[str, list[int]]
         # Collect quarantine row indices for this artifact
         rows_to_remove: list[int] = []
         for issue in artifact.get("issues", []):
-            if issue.get("action_class") == "sanitize":
+            if issue.get("action_class") in ("sanitize", "sanitize_row"):
                 row_idx = issue.get("row_index")
                 if row_idx is not None and row_idx not in rows_to_remove:
                     rows_to_remove.append(row_idx)

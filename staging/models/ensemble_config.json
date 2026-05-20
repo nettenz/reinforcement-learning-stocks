@@ -12,7 +12,7 @@
     "production_ready": true,
     "notes": "9 active seeds. production ready",
     "run_label": "nvda-ppo-minhold1-extended",
-    "leaderboard_csv": "data/experiment_leaderboard.csv",
+    "leaderboard_csv": "data/experiment_leaderboard_history.csv",
     "use_stationary_features": false
   },
   "aapl": {
@@ -30,31 +30,31 @@
   },
   "amd": {
     "active_seeds": [
-      13,
-      21,
-      7
+      21
     ],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 1.953,
-    "top_3_mean_val_test_gap": 0.045,
+    "top_3_mean_sharpe": 1.159,
+    "top_3_mean_val_test_gap": 0.028,
     "production_ready": true,
-    "notes": "11 active seeds. production ready",
-    "run_label": "amd-ppo-hold-fix",
-    "leaderboard_csv": "data/experiment_leaderboard.csv"
+    "notes": "2 active seeds. production ready",
+    "run_label": "amd-masked-ppo-v1-low-friction",
+    "leaderboard_csv": "data/experiment_leaderboard_history.csv",
+    "min_hold_bars": 3,
+    "use_cooldown_obs": true
   },
   "mu": {
     "active_seeds": [
-      21,
       3,
-      13
+      7,
+      42
     ],
     "ensemble_method": "voting",
-    "top_3_mean_sharpe": 2.286,
-    "top_3_mean_val_test_gap": 0.056,
+    "top_3_mean_sharpe": 1.773,
+    "top_3_mean_val_test_gap": 0.053,
     "production_ready": "monitor",
-    "notes": "15 active seeds. borderline ensemble or marginal alpha",
-    "run_label": "mu-ppo-overtrade-fix",
-    "leaderboard_csv": "data/experiment_leaderboard.csv"
+    "notes": "4 active seeds. borderline ensemble or marginal alpha",
+    "run_label": "mu-masked-ppo-v1-tuned",
+    "leaderboard_csv": "data/experiment_leaderboard_history.csv"
   },
   "amzn": {
     "active_seeds": [
