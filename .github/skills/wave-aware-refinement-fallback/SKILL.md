@@ -1,6 +1,5 @@
 ---
-id: wave-aware-refinement-fallback
-name: Wave-Aware RL Refinement & Fallback Exit Workflow
+name: wave-aware-refinement-fallback
 description: 'Use when refining Binary PPO trading strategies with Elliott-style wave awareness, cleaner exits, telemetry-first diagnostics, and a conservative fallback path if wave features do not improve expectancy.'
 version: 1.0.0
 capabilities:
@@ -106,3 +105,27 @@ The agent must return a concise refinement plan in the following order:
 > ❌ Keeping wave features after they fail the fallback check.
 >
 > ❌ Optimizing for raw return only and ignoring drawdown, turnover, and generalization.
+
+## Example Prompts
+
+- "Run the `wave-aware-refinement-fallback` workflow for NVDA seeds 1-10 and report the refinement plan."
+- "Draft a conservative fallback exit rule set after adding wave features to AMD experiments."
+- "Summarize why the wave-aware features failed on MU and propose a rollback plan."
+
+## What This Skill Produces
+
+When invoked, the skill returns a concise refinement plan with these sections (in order):
+
+1. Strategy Health Summary — active ticker/model set, behavior diagnosis, constraint classification
+2. Wave-Aware Feature Plan — proposed features, look-ahead risk check, expected effect
+3. Exit Design Plan — selected exit rules, fallback, and comparison baseline
+4. Fallback Decision — keep/drop/revert and reasoning
+5. Validation Plan — metrics, seeds/splits, promotion criteria
+
+## Iteration Notes / Ambiguities
+
+- Clarify which tickers are in-scope (e.g., NVDA, AMD, MU) when running the workflow.
+- Confirm the canonical `ExitManager` API to wire proposed exit rules into experiments.
+- Decide whether to persist temporary feature variants in `staging/` or `experiments/`.
+
+If any of the above are unclear, ask the user which tickers, branches, or ExitManager bindings to use before executing changes.

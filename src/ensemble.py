@@ -214,13 +214,13 @@ class SparseEnsemble:
         elif method == "mean":
             # Average continuous model outputs and threshold the mean.
             # This avoids tie fragility in small ensembles (e.g., 2 seeds).
-            mean_raw = float(np.mean(votes))  # votes here are the binary thresholded outputs
-            # Instead, collect raw continuous outputs
+            # Collect raw continuous outputs from each model (PPO will give 0/1)
             raws = []
+            model_types = []
             for info in self.top_models_info:
                 seed = int(info["seed"])
                 model = self.models[seed]
-                
+
                 model_obs_shape = model.observation_space.shape[0]
                 if observation.shape[0] < model_obs_shape:
                     padded_obs = np.concatenate([observation, np.zeros(model_obs_shape - observation.shape[0], dtype=np.float32)])
@@ -228,25 +228,28 @@ class SparseEnsemble:
                     padded_obs = observation[:model_obs_shape]
                 else:
                     padded_obs = observation
-                
+
                 action, _ = model.predict(padded_obs, deterministic=True)
-                
+
                 if isinstance(model, PPO):
-                    # PPO discrete: map 0->0, 1->1
                     raw = float(action.item() if isinstance(action, np.ndarray) else action)
+                    model_types.append("discrete")
                 else:
-                    # SAC continuous
                     raw = action.item() if isinstance(action, np.ndarray) else float(action)
+                    model_types.append("continuous")
+
                 raws.append(raw)
-            
+
             mean_raw = float(np.mean(raws))
-            # Thresholding mean_raw:
-            # For PPO (0/1), > 0.5 is Buy
-            # For SAC (-1/1), > 0.0 is Buy
-            # To unify, we use the binary thresholded votes from before if possible,
-            # but here we'll use a conservative threshold.
-            winning_action = 1 if mean_raw > 0.5 else 0
-            confidence = float(np.mean([1.0 if r > 0.5 else 0.0 for r in raws]))
+
+            # Choose threshold based on model types present in ensemble:
+            # - If any continuous models (SAC-like) exist, use 0.0 threshold
+            # - Otherwise (pure PPO discrete ensemble), use 0.5 threshold
+            threshold = 0.0 if any(t == "continuous" for t in model_types) else 0.5
+
+            winning_action = 1 if mean_raw > threshold else 0
+            # Confidence: fraction of models whose raw output exceeds the threshold
+            confidence = float(np.mean([1.0 if r > threshold else 0.0 for r in raws]))
             return winning_action, confidence
             
         elif method == "weighted":

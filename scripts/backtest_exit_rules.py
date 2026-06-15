@@ -232,8 +232,12 @@ def _load_ensemble(
 
     if run_label_filter:
         filtered = ticker_rows[ticker_rows["run_label"] == run_label_filter]
-        if not filtered.empty:
+        # If the filter yields rows but they have no trades (collapsed), fall
+        # back to using the best available run_label for this seed set.
+        if not filtered.empty and int(filtered.get("test_trade_count", 0).sum()) > 0:
             ticker_rows = filtered
+        else:
+            print(f"  [{ticker.upper()}] run_label filter '{run_label_filter}' produced no active rows; falling back to best available run_label")
 
     # Best by test_sharpe_ratio; one model per seed
     ticker_rows = ticker_rows.sort_values("test_sharpe_ratio", ascending=False)
@@ -757,6 +761,10 @@ def main() -> None:
         help="Print debug info (first 50 ensemble actions) during simulation.",
     )
     parser.add_argument(
+        "--leaderboard", default=str(LEADERBOARD_PATH),
+        help="Path to leaderboard CSV (defaults to data/experiment_leaderboard.csv).",
+    )
+    parser.add_argument(
         "--voting-method", default="voting", choices=["voting", "weighted", "mean"],
         help="Ensemble voting method: 'voting' (majority), 'weighted' (by Sharpe), or 'mean' (average continuous outputs).",
     )
@@ -769,7 +777,17 @@ def main() -> None:
 
     test_only_config = args.config if (args.test_only and args.config) else None
 
-    leaderboard = pd.read_csv(LEADERBOARD_PATH)
+    # Allow overriding the leaderboard path; fall back to history CSV if provided path missing
+    lb_path = Path(args.leaderboard)
+    if not lb_path.exists():
+        history_path = ROOT / "data" / "experiment_leaderboard_history.csv"
+        if history_path.exists():
+            print(f"Leaderboard {lb_path} not found — falling back to {history_path}")
+            lb_path = history_path
+        else:
+            raise FileNotFoundError(f"Leaderboard file not found: {lb_path}")
+
+    leaderboard = pd.read_csv(lb_path)
     leaderboard = _remap_model_paths(leaderboard)
     ensemble_cfg = json.loads(ENSEMBLE_CONFIG_PATH.read_text())
 

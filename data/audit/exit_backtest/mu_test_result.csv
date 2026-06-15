@@ -1,2 +1,2 @@
 name,sharpe,alpha_vs_qqq,max_drawdown,cumulative_return,avg_hold_bars,exit_rate,trade_count,win_rate
-trailing_3pct,1.4153,-3.2534,-0.2881,1.6749,2.27,0.1311,109,0.5963
+profit_take_8pct,1.4762,-3.036,-0.3216,1.8923,3.41,0.0773,83,0.5663
